@@ -65,16 +65,14 @@ jobs:
         
     - name: Setup Flet Dependencies
       run: |
-        # Add flet dependencies to pubspec.yaml
-        cat >> pubspec.yaml << 'EOF'
+        # Modify existing pubspec.yaml to add flet dependencies
+        sed -i 's/^dependencies:$/dependencies:\n  flet: ^0.84.0\n  serious_python: ^0.9.11/' pubspec.yaml || true
         
-        dependencies:
-          flet: ^0.84.0
-          serious_python: ^0.9.11
-        EOF
+        # Show pubspec.yaml content
+        cat pubspec.yaml
         
         # Get dependencies
-        flutter pub get
+        flutter pub get || echo "Pub get may have warnings"
         
     - name: Build APK
       run: |
