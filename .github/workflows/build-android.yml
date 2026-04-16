@@ -40,41 +40,35 @@ jobs:
         flutter-version: '3.41.4'
         channel: 'stable'
 
-    - name: Set Python Site-Packages (关键！持久化环境变量)
+    - name: Set Python Site-Packages
       run: |
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])')" >> $GITHUB_ENV
 
-    - name: (可选) 确保有 main.py(没有就创建一个示例)
+    - name: Ensure main.py exists
       run: |
         if [ ! -f "main.py" ]; then
-          cat > main.py << 'EOF'
-import flet as ft
-
-def main(page: ft.Page):
-    page.title = "小说智读"
-    page.add(ft.Text("Hello, 小说智读!", size=30))
-
-ft.app(target=main)
-EOF
+          echo "import flet as ft" > main.py
+          echo "" >> main.py
+          echo "def main(page: ft.Page):" >> main.py
+          echo "    page.title = '小说智读'" >> main.py
+          echo "    page.add(ft.Text('Hello, 小说智读!', size=30))" >> main.py
+          echo "" >> main.py
+          echo "ft.app(target=main)" >> main.py
         fi
+        cat main.py
 
-    - name: 核心：直接用 Flet 构建 APK
+    - name: Build APK with Flet
       run: |
-        # 这一条命令会自动处理：
-        # 1. 创建 Flutter 项目结构
-        # 2. 生成 pubspec.yaml
-        # 3. 嵌入 Python 环境 (serious_python)
-        # 4. 编译出最终 APK
         flet build apk --no-pub
 
-    - name: 上传 APK 产物
+    - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
         name: novel-reader-apk
         path: build/apk/*.apk
         if-no-files-found: error
 
-    - name: 推送 Tag 时自动发布 Release
+    - name: Release on Tag
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
       uses: softprops/action-gh-release@v2
       with:
