@@ -10,135 +10,74 @@ on:
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
-      
+
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-        
-    - name: Install dependencies
+
+    - name: Install Flet CLI
       run: |
         pip install flet==0.84.0
-        pip install -r requirements.txt || echo "No requirements.txt"
-        
+        pip install -r requirements.txt || true
+
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '21'
-        
+
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
-      
-    - name: Install Android NDK
-      run: |
-        sdkmanager --install "ndk;27.0.12077973" --channel=0
-        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-        
+
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
         flutter-version: '3.41.4'
         channel: 'stable'
-        
-    - name: Verify Flutter
+
+    - name: Set Python Site-Packages (关键！持久化环境变量)
       run: |
-        flutter --version
-        flutter doctor -v
-        
-    - name: Create Flet Project Structure
+        echo "SERIOUS_PYTHON_SITE_PACKAGES=$(python -c 'import site; print(site.getsitepackages()[0])')" >> $GITHUB_ENV
+
+    - name: (可选) 确保有 main.py(没有就创建一个示例)
       run: |
-        # Set SERIOUS_PYTHON_SITE_PACKAGES
-        export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
-        
-        # Create proper Flet project structure
-        mkdir -p android/app/src/main/kotlin/com/example/novel_reader
-        mkdir -p android/app/src/main/res
-        
-        # Create pubspec.yaml for Flet project
-        cat > pubspec.yaml << 'EOF'
-        name: novel_reader
-        description: 小说智读 Android App
-        publish_to: 'none'
-        version: 1.0.0+1
+        if [ ! -f "main.py" ]; then
+          cat > main.py << 'EOF'
+import flet as ft
 
-        environment:
-          sdk: '>=3.0.0 <4.0.0'
+def main(page: ft.Page):
+    page.title = "小说智读"
+    page.add(ft.Text("Hello, 小说智读!", size=30))
 
-        dependencies:
-          flutter:
-            sdk: flutter
-          flet: ^0.84.0
-          serious_python: ^0.9.11
-          cupertino_icons: ^1.0.2
-
-        dev_dependencies:
-          flutter_test:
-            sdk: flutter
-          flutter_lints: ^2.0.0
-
-        flutter:
-          uses-material-design: true
-        EOF
-        
-        # Create main.dart that loads main.py
-        mkdir -p lib
-        cat > lib/main.dart << 'EOF'
-        import 'package:flutter/material.dart';
-        import 'package:flet/flet.dart';
-        import 'package:serious_python/serious_python.dart';
-
-        void main() async {
-          WidgetsFlutterBinding.ensureInitialized();
-          
-          // Run Python main.py
-          await SeriousPython.run("main.py");
-          
-          // Start Flet app
-          runApp(FletApp(
-            pageTitle: "小说智读",
-          ));
-        }
-        EOF
-        
-        # Copy main.py to project root
-        if [ -f "main.py" ]; then
-          echo "main.py is ready"
-          head -20 main.py
+ft.app(target=main)
+EOF
         fi
-        
-        # Get Flutter dependencies
-        flutter pub get
-        
-    - name: Build APK
+
+    - name: 核心：直接用 Flet 构建 APK
       run: |
-        # Set SERIOUS_PYTHON_SITE_PACKAGES for the build
-        export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
-        
-        # Build APK with flutter
-        flutter build apk --debug
-        
-    - name: Upload APK
+        # 这一条命令会自动处理：
+        # 1. 创建 Flutter 项目结构
+        # 2. 生成 pubspec.yaml
+        # 3. 嵌入 Python 环境 (serious_python)
+        # 4. 编译出最终 APK
+        flet build apk --no-pub
+
+    - name: 上传 APK 产物
       uses: actions/upload-artifact@v4
       with:
         name: novel-reader-apk
-        path: |
-          build/app/outputs/flutter-apk/*.apk
-          build/apk/*.apk
-        if-no-files-found: warn
-        
-    - name: Release APK
+        path: build/apk/*.apk
+        if-no-files-found: error
+
+    - name: 推送 Tag 时自动发布 Release
       if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
-        files: |
-          build/app/outputs/flutter-apk/*.apk
-          build/apk/*.apk
+        files: build/apk/*.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
