@@ -55,8 +55,26 @@ jobs:
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        # Create Flutter project using flet create
-        flet create --template app --project-name novel_reader . || echo "Project already exists"
+        # Create Flutter project structure manually
+        flutter create --project-name novel_reader --org com.example . || echo "Project already exists"
+        
+        # Copy main.py to project if needed
+        if [ -f "main.py" ]; then
+          echo "main.py exists"
+        fi
+        
+    - name: Setup Flet Dependencies
+      run: |
+        # Add flet dependencies to pubspec.yaml
+        cat >> pubspec.yaml << 'EOF'
+        
+        dependencies:
+          flet: ^0.84.0
+          serious_python: ^0.9.11
+        EOF
+        
+        # Get dependencies
+        flutter pub get
         
     - name: Build APK
       run: |
