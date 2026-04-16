@@ -52,16 +52,8 @@ jobs:
         
     - name: Create Flutter Project
       run: |
-        export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
-        
         # Create Flutter project structure manually
         flutter create --project-name novel_reader --org com.example . || echo "Project already exists"
-        
-        # Copy main.py to project if needed
-        if [ -f "main.py" ]; then
-          echo "main.py exists"
-        fi
         
     - name: Setup Flet Dependencies
       run: |
@@ -76,6 +68,10 @@ jobs:
         
     - name: Build APK
       run: |
+        # Set SERIOUS_PYTHON_SITE_PACKAGES for the build
+        export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
+        echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
+        
         # Build APK directly with flutter
         flutter build apk --debug
         
