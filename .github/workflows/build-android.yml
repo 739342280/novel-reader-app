@@ -60,8 +60,8 @@ jobs:
           cp "小说智读-0.3.5.py" main.py
         fi
         
-        # Build APK
-        flet build apk --verbose || flutter build apk --debug
+        # Build APK - 已移除错误的 fallback 命令，且不使用 --no-pub
+        flet build apk --verbose
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
