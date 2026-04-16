@@ -50,18 +50,18 @@ jobs:
         flutter --version
         flutter doctor -v
         
-    - name: Build Flet APK
+    - name: Create Flutter Project
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        # Create main.py if not exists
-        if [ ! -f main.py ]; then
-          cp "小说智读-0.3.5.py" main.py
-        fi
+        # Create Flutter project using flet create
+        flet create --template app --project-name novel_reader . || echo "Project already exists"
         
-        # Build APK with --no-android-studio flag to skip interactive prompts
-        yes | flet build apk --verbose --no-android-studio || flutter build apk --debug
+    - name: Build APK
+      run: |
+        # Build APK directly with flutter
+        flutter build apk --debug
         
     - name: Upload APK
       uses: actions/upload-artifact@v4
