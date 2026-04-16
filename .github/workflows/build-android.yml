@@ -50,18 +50,70 @@ jobs:
         flutter --version
         flutter doctor -v
         
-    - name: Create Flet Project
+    - name: Create Flet Project Structure
       run: |
-        # Set SERIOUS_PYTHON_SITE_PACKAGES for flet build
+        # Set SERIOUS_PYTHON_SITE_PACKAGES
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        # Create android directory for flet build
-        mkdir -p android
+        # Create proper Flet project structure
+        mkdir -p android/app/src/main/kotlin/com/example/novel_reader
+        mkdir -p android/app/src/main/res
         
-        # Run flet build to create proper project structure
-        # Use --android to skip interactive prompts
-        echo "y" | flet build apk --android || echo "Flet build may need manual setup"
+        # Create pubspec.yaml for Flet project
+        cat > pubspec.yaml << 'EOF'
+        name: novel_reader
+        description: 小说智读 Android App
+        publish_to: 'none'
+        version: 1.0.0+1
+
+        environment:
+          sdk: '>=3.0.0 <4.0.0'
+
+        dependencies:
+          flutter:
+            sdk: flutter
+          flet: ^0.84.0
+          serious_python: ^0.9.11
+          cupertino_icons: ^1.0.2
+
+        dev_dependencies:
+          flutter_test:
+            sdk: flutter
+          flutter_lints: ^2.0.0
+
+        flutter:
+          uses-material-design: true
+        EOF
+        
+        # Create main.dart that loads main.py
+        mkdir -p lib
+        cat > lib/main.dart << 'EOF'
+        import 'package:flutter/material.dart';
+        import 'package:flet/flet.dart';
+        import 'package:serious_python/serious_python.dart';
+
+        void main() async {
+          WidgetsFlutterBinding.ensureInitialized();
+          
+          // Run Python main.py
+          await SeriousPython.run("main.py");
+          
+          // Start Flet app
+          runApp(FletApp(
+            pageTitle: "小说智读",
+          ));
+        }
+        EOF
+        
+        # Copy main.py to project root
+        if [ -f "main.py" ]; then
+          echo "main.py is ready"
+          head -20 main.py
+        fi
+        
+        # Get Flutter dependencies
+        flutter pub get
         
     - name: Build APK
       run: |
