@@ -59,12 +59,12 @@ class NovelEngine:
 
 
 # ==========================================
-# 表现层 (Flet UI) - 适配 Android 交互与布局
+# 表现层 (Flet UI) - 适配 0.84.0 原生规范
 # ==========================================
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.5"
+        self.version = "0.3.6"
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -87,6 +87,7 @@ class NovelReaderApp:
         self.paragraph_spacing = 10      
         self.filtered_toc_mapping = []
         self.last_search_query = None  
+        self.is_immersive = False  
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -108,86 +109,81 @@ class NovelReaderApp:
         self.build_home_view()
             
     # ==========================
-    # 动态环境自适应弹窗调度器
+    # 终极弹窗与抽屉调度器
     # ==========================
+    def _universal_open(self, control):
+        if hasattr(self.page, "overlay") and control not in self.page.overlay:
+            self.page.overlay.append(control)
+
+        try: control.open = True
+        except Exception: pass
+
+        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
+            try: self.page.open(control)
+            except Exception: pass
+
+        try:
+            if control.page: control.update()
+        except Exception: pass
+        self.page.update()
+
+    def _universal_close(self, control):
+        try: control.open = False
+        except Exception: pass
+
+        if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
+            try: self.page.close(control)
+            except Exception: pass
+
+        try:
+            if control.page: control.update()
+        except Exception: pass
+        self.page.update()
+
     def show_snack_bar(self, msg):
-        for c in self.page.overlay[:]:
-            if isinstance(c, ft.SnackBar):
-                try:
-                    self.page.overlay.remove(c)
-                except ValueError:
-                    pass
-        
         self.snack_counter += 1
         new_snack = ft.SnackBar(content=ft.Text(msg), key=f"snack_{self.snack_counter}")
-        
-        if hasattr(self.page, "open"):
-            self.page.open(new_snack)
-        elif hasattr(self.page, "show_snack_bar"):
-            self.page.show_snack_bar(new_snack)
-        else:
-            new_snack.open = True
-            self.page.overlay.append(new_snack)
-            self.page.update()
+        self._universal_open(new_snack)
 
     def _open_dialog(self):
-        if hasattr(self.page, "open"):
-            self.page.open(self.global_dialog)
-        elif hasattr(self.page, "show_dialog"):
-            self.page.show_dialog(self.global_dialog)
-        else:
-            self.global_dialog.open = True
-            if self.global_dialog not in self.page.overlay:
-                self.page.overlay.append(self.global_dialog)
-            self.page.update()
+        self._universal_open(self.global_dialog)
 
     def _close_dialog(self):
-        if hasattr(self.page, "close"):
-            self.page.close(self.global_dialog)
-        elif hasattr(self.page, "close_dialog"):
-            try:
-                self.page.close_dialog(self.global_dialog)
-            except TypeError:
-                self.page.close_dialog()
-        else:
-            self.global_dialog.open = False
-            self.page.update()
+        self._universal_close(self.global_dialog)
 
     def _open_toc_sheet(self, e=None):
-        if hasattr(self.page, "open"):
-            self.page.open(self.toc_sheet)
-        elif hasattr(self.page, "show_bottom_sheet"):
-            self.page.show_bottom_sheet(self.toc_sheet)
-        else:
-            self.toc_sheet.open = True
-            if self.toc_sheet not in self.page.overlay:
-                self.page.overlay.append(self.toc_sheet)
-            self.page.update()
-            
+        self._universal_open(self.toc_sheet)
         self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
 
     def _close_toc_sheet(self, e=None):
-        if hasattr(self.page, "close"):
-            self.page.close(self.toc_sheet)
-        elif hasattr(self.page, "close_bottom_sheet"):
-            try:
-                self.page.close_bottom_sheet(self.toc_sheet)
-            except TypeError:
-                self.page.close_bottom_sheet()
-        else:
-            self.toc_sheet.open = False
-            self.page.update()
+        self._universal_close(self.toc_sheet)
 
     def _open_settings_sheet(self, e=None):
-        if hasattr(self.page, "open"):
-            self.page.open(self.settings_sheet)
-        elif hasattr(self.page, "show_bottom_sheet"):
-            self.page.show_bottom_sheet(self.settings_sheet)
-        else:
-            self.settings_sheet.open = True
-            if self.settings_sheet not in self.page.overlay:
-                self.page.overlay.append(self.settings_sheet)
-            self.page.update()
+        self._universal_open(self.settings_sheet)
+
+    def _close_settings_sheet(self, e=None):
+        self._universal_close(self.settings_sheet)
+
+    def toggle_immersive(self, e=None):
+        self.is_immersive = not getattr(self, "is_immersive", False)
+        
+        # 仅在移动端调用全屏隐藏状态栏
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
+                
+        if hasattr(self, "reader_top_bar"):
+            self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
+            self.reader_top_bar.update()
+
+        if hasattr(self, "reader_bottom_bar"):
+            self.reader_bottom_bar.offset = ft.Offset(0, 1) if self.is_immersive else ft.Offset(0, 0)
+            self.reader_bottom_bar.update()
+            
+        self.page.update()
 
     # ==========================
     # 数据存取逻辑
@@ -259,9 +255,6 @@ class NovelReaderApp:
             except Exception:
                 pass
 
-    # ==========================
-    # 核心算法
-    # ==========================
     def _find_valid_chapter(self, start_idx, step=1):
         idx = start_idx
         while 0 <= idx < len(self.engine.chapters_info):
@@ -288,10 +281,13 @@ class NovelReaderApp:
             padding=ft.Padding(left=30, top=20, right=30, bottom=10)
         )
 
-        self.bookshelf_grid = ft.Row(
-            wrap=True,
+        self.bookshelf_grid = ft.GridView(
+            expand=True,
+            max_extent=170,           
+            child_aspect_ratio=0.72,  
             spacing=20,
-            run_spacing=20
+            run_spacing=20,
+            padding=30
         )
         
         self.status_text = ft.Text("等待导入...", size=12, color=ft.Colors.GREY_500, visible=False)
@@ -300,11 +296,7 @@ class NovelReaderApp:
 
         self.home_view = ft.Column([
             header,
-            ft.Column(
-                [ft.Container(self.bookshelf_grid, padding=30)], 
-                scroll=ft.ScrollMode.AUTO, 
-                expand=True
-            ),
+            self.bookshelf_grid,
             ft.Container(status_area, alignment=ft.Alignment(0, 0), padding=10)
         ], expand=True)
 
@@ -327,9 +319,9 @@ class NovelReaderApp:
             self._close_dialog()
             self.show_snack_bar(f"✅ 《{current_name}》已移出书架")
 
-        def on_export(e):
+        async def on_export(e):
             self._close_dialog()
-            self.page.run_task(self.trigger_export_picker, path, current_name)
+            await self.trigger_export_picker(path, current_name)
 
         export_btn = ft.Button(
             content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], alignment=ft.MainAxisAlignment.CENTER),
@@ -368,16 +360,18 @@ class NovelReaderApp:
         plus_border = ft.border.Border(top=plus_side, bottom=plus_side, left=plus_side, right=plus_side)
         
         plus_card = ft.Container(
-            width=160, height=220, 
             alignment=ft.Alignment(0, 0),
-            border=plus_border,
-            bgcolor="surfaceVariant",
-            ink=True,
-            on_click=self.trigger_file_picker, 
-            content=ft.Column([
-                ft.Icon(ft.Icons.ADD, size=48, color=ft.Colors.BLUE),
-                ft.Text("导入本地TXT", size=13, color=ft.Colors.GREY)
-            ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            content=ft.Container(
+                width=160, height=220, 
+                border=plus_border,
+                bgcolor="surface", # <--- 修正 1：改为绝对安全的 "surface"
+                ink=True,
+                on_click=self.trigger_file_picker, 
+                content=ft.Column([
+                    ft.Icon(ft.Icons.ADD, size=48, color=ft.Colors.BLUE),
+                    ft.Text("导入本地TXT", size=13, color=ft.Colors.GREY)
+                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            )
         )
         self.bookshelf_grid.controls.append(plus_card)
 
@@ -386,7 +380,6 @@ class NovelReaderApp:
             card_border = ft.border.Border(top=card_side, bottom=card_side, left=card_side, right=card_side)
 
             card = ft.Container(
-                width=160, height=220,
                 alignment=ft.Alignment(0, 0),
                 content=ft.GestureDetector(
                     on_tap=lambda e, p=book['path']: self.check_and_load_book(p),
@@ -417,9 +410,6 @@ class NovelReaderApp:
             return
         self.start_parsing(path)
 
-    # ==========================
-    # 解析及原生 FilePicker 逻辑
-    # ==========================
     async def trigger_file_picker(self, e):
         try:
             files = await ft.FilePicker().pick_files(allowed_extensions=["txt"])
@@ -505,9 +495,9 @@ class NovelReaderApp:
             valid_idx = self._find_valid_chapter(0, 1)
             self.load_chapter(valid_idx if valid_idx != -1 else 0)
 
-    # ==========================
+    # ==========================================
     # 视图：阅读沉浸页面
-    # ==========================
+    # ==========================================
     def build_reader_view(self):
         self.last_search_query = None
 
@@ -530,11 +520,17 @@ class NovelReaderApp:
         self.line_height_text = ft.Text(f"{self.line_height:.1f}", weight=ft.FontWeight.BOLD)
         self.para_spacing_text = ft.Text(str(self.paragraph_spacing), weight=ft.FontWeight.BOLD)
 
+        copy_btn = ft.Button(
+            content=ft.Row([ft.Icon(ft.Icons.COPY), ft.Text("复制本章内容")], alignment=ft.MainAxisAlignment.CENTER),
+            on_click=self.copy_current,
+            style=ft.ButtonStyle(bgcolor="surface") # <--- 修正 2：改为绝对安全的 "surface"
+        )
+
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
                 padding=25,
                 content=ft.Column([
-                    ft.Text("排版设置", size=20, weight=ft.FontWeight.BOLD),
+                    ft.Text("排版与操作", size=20, weight=ft.FontWeight.BOLD),
                     ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
                     ft.Row([
                         ft.Text("字号:", width=50), 
@@ -553,41 +549,54 @@ class NovelReaderApp:
                         ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_paragraph_spacing(-5)),
                         self.para_spacing_text,
                         ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_paragraph_spacing(5)),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    copy_btn 
                 ], tight=True)
             )
         )
 
-        top_bar = ft.Container(
+        self.reader_top_bar = ft.Container(
+            top=0, left=0, right=0,
             content=ft.Row([
                 ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.go_back_home),
                 ft.IconButton(icon=ft.Icons.MENU_BOOK, tooltip="目录", on_click=self._open_toc_sheet),
                 ft.Text(self.current_book_name, size=18, weight=ft.FontWeight.BOLD, expand=True, overflow=ft.TextOverflow.ELLIPSIS),
                 ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
             ]),
-            padding=10, bgcolor="surfaceVariant"
+            padding=ft.Padding(top=40, left=10, right=10, bottom=10),
+            bgcolor="surface", # <--- 修正 3：改为绝对安全的 "surface" 拒绝透明 bug
+            shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, 2)), 
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
 
         self.text_panel = ft.Container(
-            expand=True,
-            padding=20
+            top=0, bottom=0, left=0, right=0,
+            padding=20,
+            on_click=self.toggle_immersive, 
+            bgcolor=ft.Colors.TRANSPARENT
         )
 
-        bottom_bar = ft.Container(
-            padding=10, bgcolor="surfaceVariant",
+        self.reader_bottom_bar = ft.Container(
+            bottom=0, left=0, right=0,
+            padding=10, 
+            bgcolor="surface", # <--- 修正 4：改为绝对安全的 "surface" 拒绝透明 bug
+            shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
             content=ft.Row([
                 ft.Button(content=ft.Text("✨ AI总结"), icon=ft.Icons.AUTO_AWESOME, on_click=self.show_ai_dialog, style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.DEEP_PURPLE_400)),
-                ft.Button(content=ft.Text("复制"), icon=ft.Icons.COPY, on_click=self.copy_current), 
                 self._btn_prev(),
                 self._btn_next()
-            ], alignment=ft.MainAxisAlignment.SPACE_AROUND) 
+            ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
 
-        self.reader_view = ft.Column([
-            top_bar,
+        self.reader_view = ft.Stack([
             self.text_panel,
-            bottom_bar
-        ], expand=True, spacing=0, key="reader_view_main_col")
+            self.reader_top_bar,
+            self.reader_bottom_bar
+        ], expand=True, key="reader_view_main_stack")
         
         self.main_container.content = self.reader_view
         self.page.update()
@@ -601,6 +610,9 @@ class NovelReaderApp:
         return self.btn_next
 
     def go_back_home(self, e):
+        if getattr(self, "is_immersive", False):
+            self.toggle_immersive(None)
+            
         self.refresh_bookshelf_ui()
         self.main_container.content = self.home_view
         self.page.update()
@@ -683,7 +695,6 @@ class NovelReaderApp:
             ft.Text(
                 p, 
                 size=self.font_size, 
-                selectable=True, 
                 style=ft.TextStyle(height=self.line_height) 
             ) 
             for p in paragraphs
@@ -770,6 +781,11 @@ class NovelReaderApp:
         text = self.engine.get_chapter_text(self.current_chapter_idx)
         self._execute_copy(text)
         self.show_snack_bar("✅ 本章内容已复制到剪贴板")
+        try:
+            self._close_toc_sheet() 
+            self.page.close(self.settings_sheet)
+        except Exception:
+            pass
 
     # ==========================
     # 弹窗逻辑
@@ -798,13 +814,16 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.5】阅读排版升级
+        log_text = """【v0.3.6】沉浸式阅读UI革新
+- 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
+- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
+
+【v0.3.5】阅读排版升级
 - 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
 
 【v0.3.4】移动端交互与综合管理适配
-- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能，完全贴合手机用户的使用习惯，防误触。
-- 书籍管理：在长按面板中集成了修改书名与无损原文件克隆导出功能，体验更完整。
-- 空间释放：废除了原本占用宽度的侧边栏布局。在阅读界面顶部导航栏左侧新增“📖 目录”按钮，以移动端原生的 BottomSheet（底部抽屉）形式展示章节列表，点击自动收回，使得手机屏幕的正文阅读面积达到了 100%。
+- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
+- 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
 
 【v0.3.3】...
 """
@@ -921,7 +940,7 @@ class NovelReaderApp:
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
             content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
-            width=600, height=400, bgcolor="surfaceVariant", padding=15, border_radius=10
+            width=600, height=400, bgcolor="surface", padding=15, border_radius=10 # <--- 修正 5：改为绝对安全的 "surface"
         )
         self.global_dialog.actions = [
             btn_start, 
