@@ -7,6 +7,7 @@ import json
 import threading
 import asyncio
 import shutil
+import time  # 新增 time 模块用于防抖判断
 from datetime import datetime
 
 # ==========================================
@@ -65,7 +66,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.8"  # 【修改点1】版本号升至0.3.8，代表路由重构版
+        self.version = "0.3.9"  # 【修改点】版本号升至 0.3.9
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -90,7 +91,6 @@ class NovelReaderApp:
         self.last_search_query = None  
         self.is_immersive = False  
 
-        self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
 
         self.ai_config = {
@@ -100,13 +100,16 @@ class NovelReaderApp:
             "prompt": "# 指令\n请对以下小说章节内容进行深度总结。\n\n# 输出限制\n- 字数控制在300字以内。\n- 严禁评价剧情“好不好看”，只做客观梳理。"
         }
         self.bookshelf = []
+        
+        # 【新增防御】用于记录由于原生滑动导致弹窗关闭的极短时间戳
+        self._last_overlay_dismiss_time = 0
+        self.global_dialog = ft.AlertDialog(title=ft.Text(""), on_dismiss=self._on_overlay_dismiss)
 
         self._load_config_from_appdata()
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
         
-        # 【修改点2】将主视图嵌入 Flet 官方原生路由中，并开启系统返回键拦截器
         if len(self.page.views) == 0:
             self.page.views.append(ft.View(route="/", controls=[self.main_container], padding=0))
         else:
@@ -120,8 +123,33 @@ class NovelReaderApp:
 
         self.build_home_view()
 
-    # 【新增拦截器】拦截并处理系统的物理返回/侧滑动作
+    # 【新增逻辑】同步组件状态，防止假打开
+    def _on_overlay_dismiss(self, e):
+        self._last_overlay_dismiss_time = time.time()
+        try:
+            if e.control:
+                e.control.open = False
+        except Exception:
+            pass
+
+    # 【修改点】加入了完善的侧滑防抖和状态拦截保护机制
     def view_pop_handler(self, e):
+        # 拦截 1：系统物理防抖（如果 0.3 秒内刚刚触发了弹窗关闭，直接吞掉事件，防止连带退出）
+        if time.time() - getattr(self, "_last_overlay_dismiss_time", 0) < 0.3:
+            return
+            
+        # 拦截 2：如果代码层面检测到任何弹窗处于打开状态，将其关闭并吞掉返回事件
+        if getattr(self.global_dialog, "open", False):
+            self._close_dialog()
+            return
+        if hasattr(self, "toc_sheet") and getattr(self.toc_sheet, "open", False):
+            self._close_toc_sheet()
+            return
+        if hasattr(self, "settings_sheet") and getattr(self.settings_sheet, "open", False):
+            self._close_settings_sheet()
+            return
+            
+        # 安全：没有弹窗挡路，执行退回书架逻辑
         self.go_back_home(None)
 
     async def _update_clock_task(self):
@@ -195,7 +223,6 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        # 彻底回滚：不再乱动状态栏，保障正文绝对不跳动
         platform_str = str(self.page.platform).lower()
         if "android" in platform_str or "ios" in platform_str:
             try:
@@ -581,7 +608,9 @@ class NovelReaderApp:
         self.search_tf = ft.TextField(label="搜索章节", height=40, on_change=self.filter_toc)
         self.toc_listview = ft.ListView(expand=True, spacing=2, key="toc_listview")
         
+        # 【修改点】将抽屉组件绑定同步处理函数
         self.toc_sheet = ft.BottomSheet(
+            on_dismiss=self._on_overlay_dismiss,
             content=ft.Container(
                 content=ft.Column([
                     ft.Text("📚 章节目录", size=20, weight=ft.FontWeight.BOLD),
@@ -603,7 +632,9 @@ class NovelReaderApp:
             style=ft.ButtonStyle(bgcolor="surface")
         )
 
+        # 【修改点】绑定 on_dismiss
         self.settings_sheet = ft.BottomSheet(
+            on_dismiss=self._on_overlay_dismiss,
             content=ft.Container(
                 padding=25,
                 content=ft.Column([
@@ -700,7 +731,6 @@ class NovelReaderApp:
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
         
-        # 【修改点3】采用压入新路由视图的方式代替生硬替换，使 Flet 底层可拦截安卓物理返回
         reader_v = ft.View(route="/reader", controls=[self.reader_view], padding=0)
         if len(self.page.views) > 1:
             self.page.views[-1] = reader_v
@@ -717,7 +747,6 @@ class NovelReaderApp:
         self.btn_next = ft.Button(content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=self.load_next)
         return self.btn_next
 
-    # 【修改点4】重构返回逻辑，使其兼容路由出栈
     def go_back_home(self, e):
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
@@ -930,15 +959,14 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.8】原生手势返回适配
+        log_text = """【v0.3.9】手势返回逻辑完善
+- 交互修复：完善了侧滑返回的逻辑判断。现在阅读界面中打开的菜单（如AI总结、排版设置、目录抽屉）在触发侧滑返回时，会优先关闭弹窗而保留在阅读界面，只有在无弹窗状态下侧滑才会退回书架。
+
+【v0.3.8】原生手势返回适配
 - 交互升级：全方位接管安卓原生侧边滑动手势（物理返回键）。阅读时侧滑可优雅地退回书架，完美解决了以往阅读页面下侧滑会导致软件直接退出的顽疾。
 - 架构梳理：彻底回滚了0.3.7中受框架约束导致体验不佳的状态栏实验，维持0.3.6极其稳固的沉浸排版，保障阅读时的正文视觉绝对静止。
 
-【v0.3.6】沉浸式阅读UI革新
-- 界面重构：阅读界面摒弃了传统的线性排版，升级为分层堆叠的悬浮式 UI。
-- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
-
-【v0.3.5】...
+【v0.3.6】...
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
