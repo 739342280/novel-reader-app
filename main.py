@@ -65,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.7"
+        self.version = "0.3.8"  # 【修改点1】版本号升至0.3.8，代表路由重构版
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -105,11 +105,24 @@ class NovelReaderApp:
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
-        self.page.add(self.main_container)
+        
+        # 【修改点2】将主视图嵌入 Flet 官方原生路由中，并开启系统返回键拦截器
+        if len(self.page.views) == 0:
+            self.page.views.append(ft.View(route="/", controls=[self.main_container], padding=0))
+        else:
+            self.page.views[0].padding = 0
+            self.page.views[0].controls.clear()
+            self.page.views[0].controls.append(self.main_container)
+            
+        self.page.on_view_pop = self.view_pop_handler
         
         self.page.run_task(self._update_clock_task)
 
         self.build_home_view()
+
+    # 【新增拦截器】拦截并处理系统的物理返回/侧滑动作
+    def view_pop_handler(self, e):
+        self.go_back_home(None)
 
     async def _update_clock_task(self):
         while True:
@@ -182,10 +195,13 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        try:
-            self.page.window.full_screen = self.is_immersive
-        except Exception:
-            pass
+        # 彻底回滚：不再乱动状态栏，保障正文绝对不跳动
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -198,7 +214,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑
+    # 数据存取逻辑 
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -655,8 +671,6 @@ class NovelReaderApp:
             expand=True
         )
 
-        # 【修改点：化繁为简，彻底移除 SafeArea】
-        # 还原回最纯粹的 Container + Column，让正文与屏幕物理边缘彻底绑定，绝不在切换状态栏时发生位移跳动。
         self.reading_base_layer = ft.Container(
             top=0, bottom=0, left=0, right=0,
             bgcolor=ft.Colors.TRANSPARENT,
@@ -686,7 +700,13 @@ class NovelReaderApp:
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
         
-        self.main_container.content = self.reader_view
+        # 【修改点3】采用压入新路由视图的方式代替生硬替换，使 Flet 底层可拦截安卓物理返回
+        reader_v = ft.View(route="/reader", controls=[self.reader_view], padding=0)
+        if len(self.page.views) > 1:
+            self.page.views[-1] = reader_v
+        else:
+            self.page.views.append(reader_v)
+            
         self.page.update()
 
     def _btn_prev(self):
@@ -697,12 +717,17 @@ class NovelReaderApp:
         self.btn_next = ft.Button(content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=self.load_next)
         return self.btn_next
 
+    # 【修改点4】重构返回逻辑，使其兼容路由出栈
     def go_back_home(self, e):
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
             
+        if len(self.page.views) > 1:
+            self.page.views.pop()
+        else:
+            self.main_container.content = self.home_view
+            
         self.refresh_bookshelf_ui()
-        self.main_container.content = self.home_view
         self.page.update()
 
     def filter_toc(self, e=None):
@@ -905,17 +930,15 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.7】状态栏沉浸同步适配
-- 交互优化：打通了沉浸式阅读与系统状态栏的联动。现在点击正文隐藏菜单时，将同步触发安卓底层的全屏指令隐藏状态栏。且保证正文完全锁定不动，避免由于状态栏挤压导致的文字跳动，让沉浸感与视觉稳定性兼得。
+        log_text = """【v0.3.8】原生手势返回适配
+- 交互升级：全方位接管安卓原生侧边滑动手势（物理返回键）。阅读时侧滑可优雅地退回书架，完美解决了以往阅读页面下侧滑会导致软件直接退出的顽疾。
+- 架构梳理：彻底回滚了0.3.7中受框架约束导致体验不佳的状态栏实验，维持0.3.6极其稳固的沉浸排版，保障阅读时的正文视觉绝对静止。
 
 【v0.3.6】沉浸式阅读UI革新
-- 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
-- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
+- 界面重构：阅读界面摒弃了传统的线性排版，升级为分层堆叠的悬浮式 UI。
+- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
 
-【v0.3.5】阅读排版升级
-- 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
-
-【v0.3.4】...
+【v0.3.5】...
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
