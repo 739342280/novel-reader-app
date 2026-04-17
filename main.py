@@ -364,7 +364,7 @@ class NovelReaderApp:
             content=ft.Container(
                 width=160, height=220, 
                 border=plus_border,
-                bgcolor="surface", # <--- 修正 1：改为绝对安全的 "surface"
+                bgcolor="surface",
                 ink=True,
                 on_click=self.trigger_file_picker, 
                 content=ft.Column([
@@ -410,13 +410,36 @@ class NovelReaderApp:
             return
         self.start_parsing(path)
 
+    # ==========================
+    # 纯净 0.84 FilePicker 异步直接调用 (含移动端持久化转存)
+    # ==========================
     async def trigger_file_picker(self, e):
         try:
             files = await ft.FilePicker().pick_files(allowed_extensions=["txt"])
             if files and len(files) > 0:
-                path = files[0].path
-                if path and path.lower().endswith('.txt'):
-                    self.start_parsing(path)
+                picked_path = files[0].path
+                original_name = files[0].name
+                if picked_path and picked_path.lower().endswith('.txt'):
+                    
+                    # --- 核心修正：应对安卓沙盒机制，进行文件持久化转存 ---
+                    # 1. 在 App 的私有数据目录下创建一个专用的 books 文件夹
+                    books_dir = os.path.join(self._get_base_dir(), "books")
+                    if not os.path.exists(books_dir):
+                        try: os.makedirs(books_dir)
+                        except Exception: pass
+
+                    # 2. 拼接出安全的、绝对不会被系统自动删除的持久化路径
+                    persistent_path = os.path.join(books_dir, original_name)
+
+                    # 3. 将系统的临时缓存文件，强行拷贝到我们的持久化目录中
+                    try:
+                        shutil.copy2(picked_path, persistent_path)
+                    except Exception as copy_ex:
+                        self.show_snack_bar(f"文件转存失败: {str(copy_ex)}")
+                        return
+
+                    # 4. 让引擎去解析我们持久化目录下的文件，而不是系统那个随时会消失的缓存文件
+                    self.start_parsing(persistent_path)
                 else:
                     self.show_snack_bar("仅支持 TXT 文本文件")
         except Exception as ex:
@@ -523,7 +546,7 @@ class NovelReaderApp:
         copy_btn = ft.Button(
             content=ft.Row([ft.Icon(ft.Icons.COPY), ft.Text("复制本章内容")], alignment=ft.MainAxisAlignment.CENTER),
             on_click=self.copy_current,
-            style=ft.ButtonStyle(bgcolor="surface") # <--- 修正 2：改为绝对安全的 "surface"
+            style=ft.ButtonStyle(bgcolor="surface")
         )
 
         self.settings_sheet = ft.BottomSheet(
@@ -565,7 +588,7 @@ class NovelReaderApp:
                 ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
             ]),
             padding=ft.Padding(top=40, left=10, right=10, bottom=10),
-            bgcolor="surface", # <--- 修正 3：改为绝对安全的 "surface" 拒绝透明 bug
+            bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, 2)), 
             offset=ft.Offset(0, 0),
             animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
@@ -581,7 +604,7 @@ class NovelReaderApp:
         self.reader_bottom_bar = ft.Container(
             bottom=0, left=0, right=0,
             padding=10, 
-            bgcolor="surface", # <--- 修正 4：改为绝对安全的 "surface" 拒绝透明 bug
+            bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
             content=ft.Row([
                 ft.Button(content=ft.Text("✨ AI总结"), icon=ft.Icons.AUTO_AWESOME, on_click=self.show_ai_dialog, style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.DEEP_PURPLE_400)),
@@ -940,7 +963,7 @@ class NovelReaderApp:
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
             content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
-            width=600, height=400, bgcolor="surface", padding=15, border_radius=10 # <--- 修正 5：改为绝对安全的 "surface"
+            width=600, height=400, bgcolor="surface", padding=15, border_radius=10
         )
         self.global_dialog.actions = [
             btn_start, 
