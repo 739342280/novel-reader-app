@@ -7,6 +7,7 @@ import json
 import threading
 import asyncio
 import shutil
+from datetime import datetime
 
 # ==========================================
 # 核心引擎 (NovelEngine) - 100% 完美复用
@@ -64,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.6"
+        self.version = "0.3.6"  # 严格保持 0.3.6
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -100,11 +101,18 @@ class NovelReaderApp:
         }
         self.bookshelf = []
         
+        # ==========================================
+        # 稳定挂载：放弃 extend，使用多次 append 确信组件注册
+        # ==========================================
         self.file_picker = ft.FilePicker()
         self.file_picker.on_result = self.on_file_picked
         
         self.export_picker = ft.FilePicker()
         self.export_picker.on_result = self.on_export_picked
+        
+        self.page.overlay.append(self.file_picker)
+        self.page.overlay.append(self.export_picker)
+        self.page.update()
         
         self.pending_export_path = None
 
@@ -114,7 +122,21 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
+        self.page.run_task(self._update_clock_task)
+
         self.build_home_view()
+
+    async def _update_clock_task(self):
+        while True:
+            if hasattr(self, "info_time") and getattr(self.info_time, "page", None):
+                now_str = datetime.now().strftime("%H:%M")
+                if self.info_time.value != now_str:
+                    self.info_time.value = now_str
+                    try:
+                        self.info_time.update()
+                    except Exception:
+                        pass
+            await asyncio.sleep(5)
             
     # ==========================
     # 终极弹窗与抽屉调度器
@@ -175,7 +197,6 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        # 仅在移动端调用全屏隐藏状态栏
         platform_str = str(self.page.platform).lower()
         if "android" in platform_str or "ios" in platform_str:
             try:
@@ -327,9 +348,9 @@ class NovelReaderApp:
             self._close_dialog()
             self.show_snack_bar(f"✅ 《{current_name}》已移出书架")
 
-        def on_export(e):
+        async def on_export(e):
             self._close_dialog()
-            self.trigger_export_picker(path, current_name)
+            await self.trigger_export_picker(path, current_name)
 
         export_btn = ft.Button(
             content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], alignment=ft.MainAxisAlignment.CENTER),
@@ -419,14 +440,15 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 纯净 0.84 FilePicker 延时挂载调用 (杜绝安卓启动静默闪退)
+    # 文件选择与导出逻辑 (彻底解决 Flutter Assert 红屏)
     # ==========================
-    def trigger_file_picker(self, e):
+    async def trigger_file_picker(self, e):
         try:
-            if self.file_picker not in self.page.overlay:
-                self.page.overlay.append(self.file_picker)
-                self.page.update()
-            self.file_picker.pick_files(allowed_extensions=["txt"])
+            # 核心修正：当且仅当 file_type 为 CUSTOM 时，Flutter 才会允许传入 allowed_extensions
+            await self.file_picker.pick_files(
+                file_type=ft.FilePickerFileType.CUSTOM, 
+                allowed_extensions=["txt"]
+            )
         except Exception as ex:
             self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
 
@@ -460,18 +482,19 @@ class NovelReaderApp:
         except Exception as ex:
             self.show_snack_bar(f"文件处理发生异常: {str(ex)}")
 
-    def trigger_export_picker(self, src_path, default_name):
+    async def trigger_export_picker(self, src_path, default_name):
         try:
             if not os.path.exists(src_path):
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
             
-            if self.export_picker not in self.page.overlay:
-                self.page.overlay.append(self.export_picker)
-                self.page.update()
-                
             self.pending_export_path = src_path
-            self.export_picker.save_file(allowed_extensions=["txt"], file_name=f"{default_name}.txt")
+            # 核心修正：同样补齐 file_type
+            await self.export_picker.save_file(
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["txt"], 
+                file_name=f"{default_name}.txt"
+            )
         except Exception as ex:
             self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
 
@@ -606,14 +629,20 @@ class NovelReaderApp:
             )
         )
 
+        self.top_bar_book_name = ft.Text(self.current_book_name, size=13, color=ft.Colors.GREY_500, overflow=ft.TextOverflow.ELLIPSIS)
+        self.top_bar_chapter_name = ft.Text("", size=17, weight=ft.FontWeight.BOLD, overflow=ft.TextOverflow.ELLIPSIS)
+
         self.reader_top_bar = ft.Container(
             top=0, left=0, right=0,
             content=ft.Row([
                 ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.go_back_home),
                 ft.IconButton(icon=ft.Icons.MENU_BOOK, tooltip="目录", on_click=self._open_toc_sheet),
-                ft.Text(self.current_book_name, size=18, weight=ft.FontWeight.BOLD, expand=True, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Column([
+                    self.top_bar_book_name,
+                    self.top_bar_chapter_name
+                ], expand=True, spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START, alignment=ft.MainAxisAlignment.CENTER),
                 ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
-            ]),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding(top=40, left=10, right=10, bottom=10),
             bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, 2)), 
@@ -621,11 +650,30 @@ class NovelReaderApp:
             animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
 
-        self.text_panel = ft.Container(
-            top=0, bottom=0, left=0, right=0,
-            padding=20,
-            on_click=self.toggle_immersive, 
+        self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, expand=True, overflow=ft.TextOverflow.ELLIPSIS)
+        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500)
+        
+        self.info_bar = ft.Container(
+            content=ft.Row([self.info_chapter_name, self.info_time], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            padding=ft.Padding(left=20, right=20, top=10, bottom=0),
+            on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
+        )
+
+        self.text_panel = ft.Container(
+            padding=ft.Padding(left=20, right=20, top=5, bottom=20),
+            on_click=self.toggle_immersive, 
+            bgcolor=ft.Colors.TRANSPARENT,
+            expand=True
+        )
+
+        self.reading_base_layer = ft.Container(
+            top=0, bottom=0, left=0, right=0,
+            bgcolor=ft.Colors.TRANSPARENT,
+            content=ft.Column([
+                self.info_bar,
+                self.text_panel
+            ], spacing=0)
         )
 
         self.reader_bottom_bar = ft.Container(
@@ -643,7 +691,7 @@ class NovelReaderApp:
         )
 
         self.reader_view = ft.Stack([
-            self.text_panel,
+            self.reading_base_layer,  
             self.reader_top_bar,
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
@@ -737,8 +785,11 @@ class NovelReaderApp:
         ch_info = self.engine.chapters_info[idx]
         title = ch_info['title']
         text = self.engine.get_chapter_text(idx)
-
-        self.reader_title = ft.Text(title, size=24, weight=ft.FontWeight.BOLD)
+        
+        if hasattr(self, "top_bar_chapter_name"):
+            self.top_bar_chapter_name.value = title
+        if hasattr(self, "info_chapter_name"):
+            self.info_chapter_name.value = title
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
         self.reader_text_controls = [
@@ -751,7 +802,7 @@ class NovelReaderApp:
         ]
 
         self.text_scroll_col = ft.Column(
-            [self.reader_title] + self.reader_text_controls, 
+            self.reader_text_controls, 
             scroll=ft.ScrollMode.ALWAYS, 
             expand=True, 
             key="text_scroll_col",
@@ -1002,6 +1053,5 @@ class NovelReaderApp:
 def main(page: ft.Page):
     app = NovelReaderApp(page)
 
-# <--- 核心修正：弃用已被废弃的 ft.app()，全面拥抱 Flet 0.84 原生的 ft.run() --->
 if __name__ == "__main__":
     ft.run(main)
