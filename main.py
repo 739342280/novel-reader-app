@@ -100,16 +100,9 @@ class NovelReaderApp:
             "prompt": "# 指令\n请对以下小说章节内容进行深度总结。\n\n# 输出限制\n- 字数控制在300字以内。\n- 严禁评价剧情“好不好看”，只做客观梳理。"
         }
         self.bookshelf = []
-        
-        # ⚠️核心修正 1：实例化，但绝不在此刻放入 overlay，防止触发 Unknown control
-        self.file_picker = ft.FilePicker()
-        self.file_picker.on_result = self.on_file_picked
-        
-        self.export_picker = ft.FilePicker()
-        self.export_picker.on_result = self.on_export_picked
-        
-        self.pending_export_path = None
 
+        # 🌟 核心修正：彻底删除了 self.file_picker 和 self.export_picker 的实例化与挂载
+        
         self._load_config_from_appdata()
         self._load_bookshelf()
 
@@ -119,19 +112,6 @@ class NovelReaderApp:
         self.page.run_task(self._update_clock_task)
 
         self.build_home_view()
-        
-        # 🌟核心修正 2：派遣后台潜行任务，在界面渲染稳固后安全挂载
-        self.page.run_task(self._safe_mount_services)
-
-    async def _safe_mount_services(self):
-        # 强行休眠 1.5 秒，让底层 Flutter 彻底完成生命周期握手
-        await asyncio.sleep(1.5)
-        if self.file_picker not in self.page.overlay:
-            self.page.overlay.extend([self.file_picker, self.export_picker])
-            try:
-                self.page.update()
-            except Exception:
-                pass
 
     async def _update_clock_task(self):
         while True:
@@ -447,30 +427,20 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 文件选择与导出逻辑 (终极核心修复区)
+    # 文件选择与导出逻辑 (Flet 0.80+ 全新异步内联 API)
     # ==========================
     async def trigger_file_picker(self, e):
         try:
-            # 🌟核心修正 3：双重保险。如果用户手速极快，在App启动1.5秒内就点到了加号，
-            # 此处做紧急后备挂载，并强制长达 0.8 秒的睡眠，保证安卓底层有充分时间创建原生通道，杜绝 Timeout。
-            if self.file_picker not in self.page.overlay:
-                self.page.overlay.append(self.file_picker)
-                self.page.update()
-                await asyncio.sleep(0.8) 
-            
-            # 必须严格保留 CUSTOM，这是使用 allowed_extensions 的必要条件
-            await self.file_picker.pick_files(
+            # 🌟 彻底抛弃手动干预！利用 Flet 0.84 机制直接内联 await，获得原生极速响应
+            files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["txt"]
             )
-        except Exception as ex:
-            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
-
-    def on_file_picked(self, e):
-        try:
-            if e.files and len(e.files) > 0:
-                picked_path = e.files[0].path
-                original_name = e.files[0].name
+            
+            # 如果取消选择，files 会是 None，直接跳过即可
+            if files and len(files) > 0:
+                picked_path = files[0].path
+                original_name = files[0].name
                 
                 if not picked_path:
                     self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
@@ -494,7 +464,7 @@ class NovelReaderApp:
                 else:
                     self.show_snack_bar("仅支持 TXT 文本文件")
         except Exception as ex:
-            self.show_snack_bar(f"文件处理发生异常: {str(ex)}")
+            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
 
     async def trigger_export_picker(self, src_path, default_name):
         try:
@@ -502,29 +472,21 @@ class NovelReaderApp:
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
             
-            # 导出同理，做双重保险
-            if self.export_picker not in self.page.overlay:
-                self.page.overlay.append(self.export_picker)
-                self.page.update()
-                await asyncio.sleep(0.8)
-                
-            self.pending_export_path = src_path
-            await self.export_picker.save_file(
+            # 同理，直接 await save_file 获取保存路径
+            saved_path = await ft.FilePicker().save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["txt"], 
                 file_name=f"{default_name}.txt"
             )
+            
+            if saved_path:
+                try:
+                    shutil.copy2(src_path, saved_path)
+                    self.show_snack_bar("✅ 书籍导出成功")
+                except Exception as ex:
+                    self.show_snack_bar(f"导出失败: {str(ex)}")
         except Exception as ex:
             self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
-
-    def on_export_picked(self, e):
-        if e.path and getattr(self, "pending_export_path", None):
-            try:
-                shutil.copy2(self.pending_export_path, e.path)
-                self.show_snack_bar("✅ 书籍导出成功")
-            except Exception as ex:
-                self.show_snack_bar(f"导出失败: {str(ex)}")
-            self.pending_export_path = None
 
     def _sync_progress(self, progress, msg):
         self.progress_bar.value = progress
