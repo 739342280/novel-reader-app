@@ -99,6 +99,13 @@ class NovelReaderApp:
             "prompt": "# 指令\n请对以下小说章节内容进行深度总结。\n\n# 输出限制\n- 字数控制在300字以内。\n- 严禁评价剧情“好不好看”，只做客观梳理。"
         }
         self.bookshelf = []
+        
+        # <--- 核心修正 1：初始化时就挂载 FilePicker 到全局 Overlay --->
+        self.file_picker = ft.FilePicker(on_result=self.on_file_picked)
+        self.export_picker = ft.FilePicker(on_result=self.on_export_picked)
+        if hasattr(self.page, "overlay"):
+            self.page.overlay.extend([self.file_picker, self.export_picker])
+        self.pending_export_path = None
 
         self._load_config_from_appdata()
         self._load_bookshelf()
@@ -319,9 +326,10 @@ class NovelReaderApp:
             self._close_dialog()
             self.show_snack_bar(f"✅ 《{current_name}》已移出书架")
 
-        async def on_export(e):
+        # <--- 核心修正 2：改为同步调用 --->
+        def on_export(e):
             self._close_dialog()
-            await self.trigger_export_picker(path, current_name)
+            self.trigger_export_picker(path, current_name)
 
         export_btn = ft.Button(
             content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], alignment=ft.MainAxisAlignment.CENTER),
@@ -411,17 +419,28 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 纯净 0.84 FilePicker 异步直接调用 (含移动端持久化转存)
+    # 纯净 0.84 FilePicker 原生挂载调用 (含移动端持久化转存)
     # ==========================
-    async def trigger_file_picker(self, e):
+    # <--- 核心修正 3：使用同步方法向系统请求弹窗 --->
+    def trigger_file_picker(self, e):
         try:
-            files = await ft.FilePicker().pick_files(allowed_extensions=["txt"])
-            if files and len(files) > 0:
-                picked_path = files[0].path
-                original_name = files[0].name
-                if picked_path and picked_path.lower().endswith('.txt'):
-                    
-                    # --- 核心修正：应对安卓沙盒机制，进行文件持久化转存 ---
+            self.file_picker.pick_files(allowed_extensions=["txt"])
+        except Exception as ex:
+            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
+
+    # <--- 核心修正 4：通过系统事件接收选择结果，并执行安全拷贝 --->
+    def on_file_picked(self, e: ft.FilePickerResultEvent):
+        try:
+            if e.files and len(e.files) > 0:
+                picked_path = e.files[0].path
+                original_name = e.files[0].name
+                
+                # 有些安卓机型严格沙盒下可能会丢掉路径，增加一次拦截保护
+                if not picked_path:
+                    self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
+                    return
+
+                if picked_path.lower().endswith('.txt'):
                     # 1. 在 App 的私有数据目录下创建一个专用的 books 文件夹
                     books_dir = os.path.join(self._get_base_dir(), "books")
                     if not os.path.exists(books_dir):
@@ -438,24 +457,31 @@ class NovelReaderApp:
                         self.show_snack_bar(f"文件转存失败: {str(copy_ex)}")
                         return
 
-                    # 4. 让引擎去解析我们持久化目录下的文件，而不是系统那个随时会消失的缓存文件
+                    # 4. 让引擎去解析我们持久化目录下的文件
                     self.start_parsing(persistent_path)
                 else:
                     self.show_snack_bar("仅支持 TXT 文本文件")
         except Exception as ex:
-            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
+            self.show_snack_bar(f"文件处理发生异常: {str(ex)}")
 
-    async def trigger_export_picker(self, src_path, default_name):
+    def trigger_export_picker(self, src_path, default_name):
         try:
             if not os.path.exists(src_path):
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
-            save_path = await ft.FilePicker().save_file(allowed_extensions=["txt"], file_name=f"{default_name}.txt")
-            if save_path:
-                shutil.copy2(src_path, save_path)
-                self.show_snack_bar("✅ 书籍导出成功")
+            self.pending_export_path = src_path
+            self.export_picker.save_file(allowed_extensions=["txt"], file_name=f"{default_name}.txt")
         except Exception as ex:
-            self.show_snack_bar(f"导出失败: {str(ex)}")
+            self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
+
+    def on_export_picked(self, e: ft.FilePickerResultEvent):
+        if e.path and getattr(self, "pending_export_path", None):
+            try:
+                shutil.copy2(self.pending_export_path, e.path)
+                self.show_snack_bar("✅ 书籍导出成功")
+            except Exception as ex:
+                self.show_snack_bar(f"导出失败: {str(ex)}")
+            self.pending_export_path = None
 
     def _sync_progress(self, progress, msg):
         self.progress_bar.value = progress
