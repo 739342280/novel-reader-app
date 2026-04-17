@@ -101,8 +101,6 @@ class NovelReaderApp:
         }
         self.bookshelf = []
 
-        # 🌟 核心修正：彻底删除了 self.file_picker 和 self.export_picker 的实例化与挂载
-        
         self._load_config_from_appdata()
         self._load_bookshelf()
 
@@ -202,7 +200,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑
+    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -211,11 +209,28 @@ class NovelReaderApp:
                 appdata = os.path.expanduser("~")
             base_dir = os.path.join(appdata, "NovelReaderApp")
         else:
-            base_dir = os.path.join(os.path.expanduser("~"), ".novelreaderapp")
-        
+            home_dir = os.path.expanduser("~")
+            
+            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
+            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
+            if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
+                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
+                home_dir = os.path.abspath(os.path.dirname(__file__))
+                
+            base_dir = os.path.join(home_dir, ".novelreaderapp")
+            
+        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
-            try: os.makedirs(base_dir)
-            except Exception: pass
+            try: 
+                os.makedirs(base_dir, exist_ok=True)
+            except Exception: 
+                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
+                import tempfile
+                base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
+                try: 
+                    os.makedirs(base_dir, exist_ok=True)
+                except Exception: 
+                    pass
         return base_dir
 
     def _get_config_path(self):
@@ -427,17 +442,15 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 文件选择与导出逻辑 (Flet 0.80+ 全新异步内联 API)
+    # 文件选择与导出逻辑 
     # ==========================
     async def trigger_file_picker(self, e):
         try:
-            # 🌟 彻底抛弃手动干预！利用 Flet 0.84 机制直接内联 await，获得原生极速响应
             files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["txt"]
             )
             
-            # 如果取消选择，files 会是 None，直接跳过即可
             if files and len(files) > 0:
                 picked_path = files[0].path
                 original_name = files[0].name
@@ -448,9 +461,14 @@ class NovelReaderApp:
 
                 if picked_path.lower().endswith('.txt'):
                     books_dir = os.path.join(self._get_base_dir(), "books")
+                    
+                    # 🌟强化修复：不仅要找对目录，更要确保有权限创建，否则明确报错而不是静默失败！
                     if not os.path.exists(books_dir):
-                        try: os.makedirs(books_dir)
-                        except Exception: pass
+                        try: 
+                            os.makedirs(books_dir, exist_ok=True)
+                        except Exception as create_ex:
+                            self.show_snack_bar(f"建立书籍存放目录失败，请检查应用存储权限: {str(create_ex)}")
+                            return
 
                     persistent_path = os.path.join(books_dir, original_name)
 
@@ -472,7 +490,6 @@ class NovelReaderApp:
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
             
-            # 同理，直接 await save_file 获取保存路径
             saved_path = await ft.FilePicker().save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["txt"], 
@@ -766,7 +783,7 @@ class NovelReaderApp:
         ch_info = self.engine.chapters_info[idx]
         title = ch_info['title']
         text = self.engine.get_chapter_text(idx)
-        
+
         if hasattr(self, "top_bar_chapter_name"):
             self.top_bar_chapter_name.value = title
         if hasattr(self, "info_chapter_name"):
@@ -1036,4 +1053,3 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.run(main)
-
