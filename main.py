@@ -65,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.6"  # 严格保持 0.3.6
+        self.version = "0.3.7"
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -182,12 +182,10 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        platform_str = str(self.page.platform).lower()
-        if "android" in platform_str or "ios" in platform_str:
-            try:
-                self.page.window.full_screen = self.is_immersive
-            except Exception:
-                pass
+        try:
+            self.page.window.full_screen = self.is_immersive
+        except Exception:
+            pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -200,7 +198,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
+    # 数据存取逻辑
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -210,21 +208,14 @@ class NovelReaderApp:
             base_dir = os.path.join(appdata, "NovelReaderApp")
         else:
             home_dir = os.path.expanduser("~")
-            
-            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
-            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
             if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
-                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
                 home_dir = os.path.abspath(os.path.dirname(__file__))
-                
             base_dir = os.path.join(home_dir, ".novelreaderapp")
             
-        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
             try: 
                 os.makedirs(base_dir, exist_ok=True)
             except Exception: 
-                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
                 import tempfile
                 base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
                 try: 
@@ -462,7 +453,6 @@ class NovelReaderApp:
                 if picked_path.lower().endswith('.txt'):
                     books_dir = os.path.join(self._get_base_dir(), "books")
                     
-                    # 🌟强化修复：不仅要找对目录，更要确保有权限创建，否则明确报错而不是静默失败！
                     if not os.path.exists(books_dir):
                         try: 
                             os.makedirs(books_dir, exist_ok=True)
@@ -665,6 +655,8 @@ class NovelReaderApp:
             expand=True
         )
 
+        # 【修改点：化繁为简，彻底移除 SafeArea】
+        # 还原回最纯粹的 Container + Column，让正文与屏幕物理边缘彻底绑定，绝不在切换状态栏时发生位移跳动。
         self.reading_base_layer = ft.Container(
             top=0, bottom=0, left=0, right=0,
             bgcolor=ft.Colors.TRANSPARENT,
@@ -913,18 +905,17 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.6】沉浸式阅读UI革新
+        log_text = """【v0.3.7】状态栏沉浸同步适配
+- 交互优化：打通了沉浸式阅读与系统状态栏的联动。现在点击正文隐藏菜单时，将同步触发安卓底层的全屏指令隐藏状态栏。且保证正文完全锁定不动，避免由于状态栏挤压导致的文字跳动，让沉浸感与视觉稳定性兼得。
+
+【v0.3.6】沉浸式阅读UI革新
 - 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
 - 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
 
 【v0.3.5】阅读排版升级
 - 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
 
-【v0.3.4】移动端交互与综合管理适配
-- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
-- 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
-
-【v0.3.3】...
+【v0.3.4】...
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
