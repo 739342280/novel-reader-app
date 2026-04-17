@@ -102,7 +102,8 @@ class NovelReaderApp:
         self.bookshelf = []
         
         # ==========================================
-        # 稳定挂载：放弃 extend，使用多次 append 确信组件注册
+        # 🌟 终极解决方案：DOM 实体化强制挂载
+        # 彻底废弃 page.overlay，用 0x0 容器硬编码进视图树！
         # ==========================================
         self.file_picker = ft.FilePicker()
         self.file_picker.on_result = self.on_file_picked
@@ -110,9 +111,11 @@ class NovelReaderApp:
         self.export_picker = ft.FilePicker()
         self.export_picker.on_result = self.on_export_picked
         
-        self.page.overlay.append(self.file_picker)
-        self.page.overlay.append(self.export_picker)
-        self.page.update()
+        # 将不可见的引擎组件封入透明胶囊
+        self.hidden_services = ft.Container(
+            content=ft.Row([self.file_picker, self.export_picker]),
+            width=0, height=0, opacity=0, padding=0, margin=0
+        )
         
         self.pending_export_path = None
 
@@ -120,7 +123,9 @@ class NovelReaderApp:
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
-        self.page.add(self.main_container)
+        
+        # 在应用入口直接随着主结构一同添加，逼迫底层老老实实注册它
+        self.page.add(self.hidden_services, self.main_container)
         
         self.page.run_task(self._update_clock_task)
 
@@ -440,11 +445,11 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 文件选择与导出逻辑 (彻底解决 Flutter Assert 红屏)
+    # 文件选择与导出逻辑 (最终脱离 overlay 方案)
     # ==========================
     async def trigger_file_picker(self, e):
         try:
-            # 核心修正：当且仅当 file_type 为 CUSTOM 时，Flutter 才会允许传入 allowed_extensions
+            # 此时 FilePicker 已经是页面树实体的一部分，可以直接放心调唤
             await self.file_picker.pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["txt"]
@@ -489,7 +494,6 @@ class NovelReaderApp:
                 return
             
             self.pending_export_path = src_path
-            # 核心修正：同样补齐 file_type
             await self.export_picker.save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["txt"], 
