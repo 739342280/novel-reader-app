@@ -100,10 +100,12 @@ class NovelReaderApp:
         }
         self.bookshelf = []
         
-        self.file_picker = ft.FilePicker(on_result=self.on_file_picked)
-        self.export_picker = ft.FilePicker(on_result=self.on_export_picked)
-        if hasattr(self.page, "overlay"):
-            self.page.overlay.extend([self.file_picker, self.export_picker])
+        self.file_picker = ft.FilePicker()
+        self.file_picker.on_result = self.on_file_picked
+        
+        self.export_picker = ft.FilePicker()
+        self.export_picker.on_result = self.on_export_picked
+        
         self.pending_export_path = None
 
         self._load_config_from_appdata()
@@ -417,44 +419,41 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 纯净 0.84 FilePicker 原生挂载调用 (含移动端持久化转存)
+    # 纯净 0.84 FilePicker 延时挂载调用 (杜绝安卓启动静默闪退)
     # ==========================
     def trigger_file_picker(self, e):
         try:
+            if self.file_picker not in self.page.overlay:
+                self.page.overlay.append(self.file_picker)
+                self.page.update()
             self.file_picker.pick_files(allowed_extensions=["txt"])
         except Exception as ex:
             self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
 
-    # <--- 核心修正 1：移除事件参数的类型提示 --->
     def on_file_picked(self, e):
         try:
             if e.files and len(e.files) > 0:
                 picked_path = e.files[0].path
                 original_name = e.files[0].name
                 
-                # 有些安卓机型严格沙盒下可能会丢掉路径，增加一次拦截保护
                 if not picked_path:
                     self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
                     return
 
                 if picked_path.lower().endswith('.txt'):
-                    # 1. 在 App 的私有数据目录下创建一个专用的 books 文件夹
                     books_dir = os.path.join(self._get_base_dir(), "books")
                     if not os.path.exists(books_dir):
                         try: os.makedirs(books_dir)
                         except Exception: pass
 
-                    # 2. 拼接出安全的、绝对不会被系统自动删除的持久化路径
                     persistent_path = os.path.join(books_dir, original_name)
 
-                    # 3. 将系统的临时缓存文件，强行拷贝到我们的持久化目录中
                     try:
                         shutil.copy2(picked_path, persistent_path)
                     except Exception as copy_ex:
                         self.show_snack_bar(f"文件转存失败: {str(copy_ex)}")
                         return
 
-                    # 4. 让引擎去解析我们持久化目录下的文件
                     self.start_parsing(persistent_path)
                 else:
                     self.show_snack_bar("仅支持 TXT 文本文件")
@@ -466,12 +465,16 @@ class NovelReaderApp:
             if not os.path.exists(src_path):
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
+            
+            if self.export_picker not in self.page.overlay:
+                self.page.overlay.append(self.export_picker)
+                self.page.update()
+                
             self.pending_export_path = src_path
             self.export_picker.save_file(allowed_extensions=["txt"], file_name=f"{default_name}.txt")
         except Exception as ex:
             self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
 
-    # <--- 核心修正 2：移除事件参数的类型提示 --->
     def on_export_picked(self, e):
         if e.path and getattr(self, "pending_export_path", None):
             try:
@@ -536,4 +539,469 @@ class NovelReaderApp:
 
         self.build_reader_view()
 
-        i
+        if target_idx != -1 and target_idx < len(self.engine.chapters_info):
+            self.load_chapter(target_idx)
+        else:
+            valid_idx = self._find_valid_chapter(0, 1)
+            self.load_chapter(valid_idx if valid_idx != -1 else 0)
+
+    # ==========================================
+    # 视图：阅读沉浸页面
+    # ==========================================
+    def build_reader_view(self):
+        self.last_search_query = None
+
+        self.search_tf = ft.TextField(label="搜索章节", height=40, on_change=self.filter_toc)
+        self.toc_listview = ft.ListView(expand=True, spacing=2, key="toc_listview")
+        
+        self.toc_sheet = ft.BottomSheet(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Text("📚 章节目录", size=20, weight=ft.FontWeight.BOLD),
+                    self.search_tf, 
+                    self.toc_listview
+                ], expand=True),
+                padding=20,
+                height=self.page.height * 0.7 if self.page.height else 600
+            )
+        )
+
+        self.font_size_text = ft.Text(str(self.font_size), weight=ft.FontWeight.BOLD)
+        self.line_height_text = ft.Text(f"{self.line_height:.1f}", weight=ft.FontWeight.BOLD)
+        self.para_spacing_text = ft.Text(str(self.paragraph_spacing), weight=ft.FontWeight.BOLD)
+
+        copy_btn = ft.Button(
+            content=ft.Row([ft.Icon(ft.Icons.COPY), ft.Text("复制本章内容")], alignment=ft.MainAxisAlignment.CENTER),
+            on_click=self.copy_current,
+            style=ft.ButtonStyle(bgcolor="surface")
+        )
+
+        self.settings_sheet = ft.BottomSheet(
+            content=ft.Container(
+                padding=25,
+                content=ft.Column([
+                    ft.Text("排版与操作", size=20, weight=ft.FontWeight.BOLD),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    ft.Row([
+                        ft.Text("字号:", width=50), 
+                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_font(-1)),
+                        self.font_size_text,
+                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_font(1)),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([
+                        ft.Text("行距:", width=50), 
+                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_line_height(-0.1)),
+                        self.line_height_text,
+                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_line_height(0.1)),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Row([
+                        ft.Text("段距:", width=50), 
+                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_paragraph_spacing(-5)),
+                        self.para_spacing_text,
+                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_paragraph_spacing(5)),
+                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    copy_btn 
+                ], tight=True)
+            )
+        )
+
+        self.reader_top_bar = ft.Container(
+            top=0, left=0, right=0,
+            content=ft.Row([
+                ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.go_back_home),
+                ft.IconButton(icon=ft.Icons.MENU_BOOK, tooltip="目录", on_click=self._open_toc_sheet),
+                ft.Text(self.current_book_name, size=18, weight=ft.FontWeight.BOLD, expand=True, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
+            ]),
+            padding=ft.Padding(top=40, left=10, right=10, bottom=10),
+            bgcolor="surface",
+            shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, 2)), 
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
+        )
+
+        self.text_panel = ft.Container(
+            top=0, bottom=0, left=0, right=0,
+            padding=20,
+            on_click=self.toggle_immersive, 
+            bgcolor=ft.Colors.TRANSPARENT
+        )
+
+        self.reader_bottom_bar = ft.Container(
+            bottom=0, left=0, right=0,
+            padding=10, 
+            bgcolor="surface",
+            shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
+            content=ft.Row([
+                ft.Button(content=ft.Text("✨ AI总结"), icon=ft.Icons.AUTO_AWESOME, on_click=self.show_ai_dialog, style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.DEEP_PURPLE_400)),
+                self._btn_prev(),
+                self._btn_next()
+            ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+            offset=ft.Offset(0, 0),
+            animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
+        )
+
+        self.reader_view = ft.Stack([
+            self.text_panel,
+            self.reader_top_bar,
+            self.reader_bottom_bar
+        ], expand=True, key="reader_view_main_stack")
+        
+        self.main_container.content = self.reader_view
+        self.page.update()
+
+    def _btn_prev(self):
+        self.btn_prev = ft.Button(content=ft.Text("上一章"), icon=ft.Icons.NAVIGATE_BEFORE, on_click=self.load_prev)
+        return self.btn_prev
+
+    def _btn_next(self):
+        self.btn_next = ft.Button(content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=self.load_next)
+        return self.btn_next
+
+    def go_back_home(self, e):
+        if getattr(self, "is_immersive", False):
+            self.toggle_immersive(None)
+            
+        self.refresh_bookshelf_ui()
+        self.main_container.content = self.home_view
+        self.page.update()
+
+    def filter_toc(self, e=None):
+        if e is not None and getattr(e, "name", "") != "change":
+            return
+
+        query = self.search_tf.value.lower() if self.search_tf.value else ""
+        
+        if getattr(self, "last_search_query", None) == query:
+            return 
+        self.last_search_query = query
+        
+        new_controls = []
+        new_mapping = []
+        for i, ch in enumerate(self.engine.chapters_info):
+            if query in ch['title'].lower():
+                def make_click(idx):
+                    def click_handler(e):
+                        self._close_toc_sheet()
+                        self.load_chapter(idx)
+                    return click_handler
+                
+                color = ft.Colors.BLUE if i == self.current_chapter_idx else None
+                item = ft.Container(
+                    key=f"toc_{i}", 
+                    content=ft.Text(ch['title'], color=color),
+                    padding=10, border_radius=5,
+                    height=42, 
+                    ink=True, on_click=make_click(i)
+                )
+                new_controls.append(item)
+                new_mapping.append(i)
+        
+        self.toc_listview.controls.clear()
+        self.toc_listview.controls.extend(new_controls)
+        self.filtered_toc_mapping = new_mapping
+        self.page.update()
+
+    def _update_toc_highlight(self):
+        for i, idx in enumerate(self.filtered_toc_mapping):
+            if i < len(self.toc_listview.controls):
+                try:
+                    text_ctrl = self.toc_listview.controls[i].content
+                    expected_color = ft.Colors.BLUE if idx == self.current_chapter_idx else None
+                    if text_ctrl.color != expected_color:
+                        text_ctrl.color = expected_color
+                        text_ctrl.update()
+                except Exception:
+                    pass
+
+    async def _delayed_scroll_to_chapter(self, idx, delay=0.1):
+        display_idx = -1
+        try:
+            display_idx = self.filtered_toc_mapping.index(idx)
+        except ValueError:
+            pass
+            
+        if display_idx != -1:
+            await asyncio.sleep(delay) 
+            try:
+                calculated_offset = display_idx * 44
+                await self.toc_listview.scroll_to(offset=calculated_offset, duration=300)
+            except Exception:
+                pass
+
+    def load_chapter(self, idx):
+        if not self.engine.chapters_info: return
+        self.current_chapter_idx = idx
+        
+        ch_info = self.engine.chapters_info[idx]
+        title = ch_info['title']
+        text = self.engine.get_chapter_text(idx)
+
+        self.reader_title = ft.Text(title, size=24, weight=ft.FontWeight.BOLD)
+        
+        paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
+        self.reader_text_controls = [
+            ft.Text(
+                p, 
+                size=self.font_size, 
+                style=ft.TextStyle(height=self.line_height) 
+            ) 
+            for p in paragraphs
+        ]
+
+        self.text_scroll_col = ft.Column(
+            [self.reader_title] + self.reader_text_controls, 
+            scroll=ft.ScrollMode.ALWAYS, 
+            expand=True, 
+            key="text_scroll_col",
+            spacing=self.paragraph_spacing 
+        )
+        
+        self.text_panel.content = self.text_scroll_col
+
+        prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
+        next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
+        self.btn_prev.disabled = prev_valid == -1
+        self.btn_next.disabled = next_valid == -1
+
+        for book in self.bookshelf:
+            if book['path'] == self.current_book_path:
+                book['last_chapter_idx'] = idx
+                book['last_chapter_title'] = title
+                self._save_bookshelf()
+                break
+
+        if not self.toc_listview.controls:
+            self.filter_toc(None) 
+        else:
+            self._update_toc_highlight()
+            
+        self.page.update()
+        
+        self.page.run_task(self._delayed_scroll_to_chapter, idx)
+
+    def load_prev(self, e):
+        if self.current_chapter_idx > 0:
+            valid_idx = self._find_valid_chapter(self.current_chapter_idx - 1, -1)
+            if valid_idx != -1: self.load_chapter(valid_idx)
+
+    def load_next(self, e):
+        if self.current_chapter_idx < len(self.engine.chapters_info) - 1:
+            valid_idx = self._find_valid_chapter(self.current_chapter_idx + 1, 1)
+            if valid_idx != -1: self.load_chapter(valid_idx)
+
+    def change_font(self, delta):
+        new_size = self.font_size + delta
+        if 12 <= new_size <= 48:
+            self.font_size = new_size
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.size = self.font_size
+                    ctrl.update()
+            if hasattr(self, "font_size_text"):
+                self.font_size_text.value = str(self.font_size)
+                self.font_size_text.update()
+
+    def change_line_height(self, delta):
+        new_height = round(self.line_height + delta, 1)
+        if 1.0 <= new_height <= 3.0:
+            self.line_height = new_height
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.style = ft.TextStyle(height=self.line_height)
+                    ctrl.update()
+            if hasattr(self, "line_height_text"):
+                self.line_height_text.value = f"{self.line_height:.1f}"
+                self.line_height_text.update()
+
+    def change_paragraph_spacing(self, delta):
+        new_spacing = int(self.paragraph_spacing + delta)
+        if 0 <= new_spacing <= 50:
+            self.paragraph_spacing = new_spacing
+            if hasattr(self, "text_scroll_col"):
+                self.text_scroll_col.spacing = self.paragraph_spacing
+                self.text_scroll_col.update()
+            if hasattr(self, "para_spacing_text"):
+                self.para_spacing_text.value = str(self.paragraph_spacing)
+                self.para_spacing_text.update()
+
+    async def copy_current(self, e):
+        if not self.engine.chapters_info: return
+        text = self.engine.get_chapter_text(self.current_chapter_idx)
+        self._execute_copy(text)
+        self.show_snack_bar("✅ 本章内容已复制到剪贴板")
+        try:
+            self._close_toc_sheet() 
+            self.page.close(self.settings_sheet)
+        except Exception:
+            pass
+
+    # ==========================
+    # 弹窗逻辑
+    # ==========================
+    def show_settings_dialog(self, e):
+        url_tf = ft.TextField(label="API URL", value=self.ai_config["url"])
+        key_tf = ft.TextField(label="API Key", value=self.ai_config["key"], password=True, can_reveal_password=True)
+        model_tf = ft.TextField(label="模型名称", value=self.ai_config["model"])
+        prompt_tf = ft.TextField(label="系统提示词", value=self.ai_config["prompt"], multiline=True, min_lines=4, max_lines=6)
+
+        def save(e):
+            self.ai_config["url"] = url_tf.value.strip()
+            self.ai_config["key"] = key_tf.value.strip()
+            self.ai_config["model"] = model_tf.value.strip()
+            self.ai_config["prompt"] = prompt_tf.value.strip()
+            self._save_config_to_appdata()
+            self._close_dialog()
+            self.show_snack_bar("✅ AI 配置已持久化保存")
+
+        self.global_dialog.title = ft.Text("⚙️ AI 接口配置")
+        self.global_dialog.content = ft.Column([url_tf, key_tf, model_tf, prompt_tf], tight=True)
+        self.global_dialog.actions = [
+            ft.Button(content=ft.Text("保存并关闭"), on_click=save),
+            ft.Button(content=ft.Text("取消"), on_click=lambda _: self._close_dialog())
+        ]
+        self._open_dialog()
+
+    def show_changelog_dialog(self, e):
+        log_text = """【v0.3.6】沉浸式阅读UI革新
+- 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
+- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
+
+【v0.3.5】阅读排版升级
+- 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
+
+【v0.3.4】移动端交互与综合管理适配
+- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
+- 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
+
+【v0.3.3】...
+"""
+        self.global_dialog.title = ft.Text("历史更新记录")
+        self.global_dialog.content = ft.Container(
+            content=ft.Column([ft.Text(log_text, selectable=True)], scroll=ft.ScrollMode.ALWAYS, tight=True), 
+            height=400, width=500
+        )
+        self.global_dialog.actions = [ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())]
+        self._open_dialog()
+
+    def show_ai_dialog(self, e):
+        if not self.engine.chapters_info: return
+        
+        ch_info = self.engine.chapters_info[self.current_chapter_idx]
+        
+        result_text = ft.Markdown("点击下方按钮，开始使用 AI 梳理本章节剧情...\n\n*(注意：请确保已在首页设置中配置了 API Key)*", selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
+        
+        btn_start = ft.Button(content=ft.Text("🚀 立即总结本章"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
+        btn_copy = ft.Button(content=ft.Text("📋 复制总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE))
+
+        def start_ai(e):
+            if not self.ai_config["key"]:
+                self.show_snack_bar("⚠️ 请先配置 API Key")
+                return
+            
+            btn_start.disabled = True
+            btn_start.content.value = "思考中..."
+            result_text.value = "✨ 大模型正在阅读本章并进行多维度梳理，请稍候...\n\n"
+            
+            btn_start.update()
+            result_text.update()
+
+            chapter_text = self.engine.get_chapter_text(self.current_chapter_idx)[:15000]
+
+            def fetch():
+                try:
+                    req_data = {
+                        "model": self.ai_config["model"],
+                        "messages": [
+                            {"role": "system", "content": self.ai_config["prompt"]},
+                            {"role": "user", "content": f"请总结以下内容：\n\n{chapter_text}"}
+                        ],
+                        "stream": True
+                    }
+                    req = urllib.request.Request(
+                        self.ai_config["url"], 
+                        data=json.dumps(req_data).encode("utf-8"), 
+                        headers={
+                            "Content-Type": "application/json", 
+                            "Authorization": f"Bearer {self.ai_config['key']}",
+                            "Accept": "text/event-stream" 
+                        }, 
+                        method="POST"
+                    )
+                    
+                    result_text.value = ""
+                    result_text.update()
+
+                    with urllib.request.urlopen(req, timeout=60) as response:
+                        while True:
+                            line = response.readline()
+                            if not line:
+                                break
+                            
+                            decoded_line = line.decode("utf-8").strip()
+                            if not decoded_line:
+                                continue
+                                
+                            if decoded_line.startswith("data: "):
+                                data_str = decoded_line[6:]
+                                if data_str == "[DONE]":
+                                    break
+                                try:
+                                    data_json = json.loads(data_str)
+                                    delta = data_json["choices"][0].get("delta", {})
+                                    if "content" in delta:
+                                        result_text.value += delta["content"]
+                                        result_text.update()
+                                except Exception:
+                                    pass
+                    
+                    btn_start.disabled = False
+                    btn_start.content.value = "重新总结"
+                    btn_start.update()
+                except Exception as ex:
+                    result_text.value += f"\n\n❌ **请求失败**: {str(ex)}\n\n请检查网络连通性或 API Key 是否正确。"
+                    btn_start.disabled = False
+                    btn_start.content.value = "重试"
+                    btn_start.update()
+                    result_text.update()
+
+            threading.Thread(target=fetch, daemon=True).start()
+
+        async def copy_result(e):
+            self._execute_copy(result_text.value)
+            self.show_snack_bar("✅ 总结已复制")
+
+            btn_copy.content.value = "✅ 复制成功"
+            btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+            btn_copy.update()
+            
+            await asyncio.sleep(2)
+            btn_copy.content.value = "📋 复制总结"
+            btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE)
+            try:
+                btn_copy.update()
+            except Exception:
+                pass
+
+        btn_start.on_click = start_ai
+        btn_copy.on_click = copy_result
+
+        self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
+        self.global_dialog.content = ft.Container(
+            content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
+            width=600, height=400, bgcolor="surface", padding=15, border_radius=10
+        )
+        self.global_dialog.actions = [
+            btn_start, 
+            btn_copy, 
+            ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())
+        ]
+        self._open_dialog()
+
+def main(page: ft.Page):
+    app = NovelReaderApp(page)
+
+# <--- 核心修正：弃用已被废弃的 ft.app()，全面拥抱 Flet 0.84 原生的 ft.run() --->
+if __name__ == "__main__":
+    ft.run(main)
