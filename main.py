@@ -65,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.6"  # 严格保持 0.3.6
+        self.version = "0.3.6"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -102,8 +102,7 @@ class NovelReaderApp:
         self.bookshelf = []
         
         # ==========================================
-        # 🌟 终极解决方案：DOM 实体化强制挂载
-        # 彻底废弃 page.overlay，用 0x0 容器硬编码进视图树！
+        # 核心修正 1：回归 Flet 标准，启动时直接挂载，简单且稳健
         # ==========================================
         self.file_picker = ft.FilePicker()
         self.file_picker.on_result = self.on_file_picked
@@ -111,11 +110,7 @@ class NovelReaderApp:
         self.export_picker = ft.FilePicker()
         self.export_picker.on_result = self.on_export_picked
         
-        # 将不可见的引擎组件封入透明胶囊
-        self.hidden_services = ft.Container(
-            content=ft.Row([self.file_picker, self.export_picker]),
-            width=0, height=0, opacity=0, padding=0, margin=0
-        )
+        self.page.overlay.extend([self.file_picker, self.export_picker])
         
         self.pending_export_path = None
 
@@ -123,9 +118,7 @@ class NovelReaderApp:
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
-        
-        # 在应用入口直接随着主结构一同添加，逼迫底层老老实实注册它
-        self.page.add(self.hidden_services, self.main_container)
+        self.page.add(self.main_container)
         
         self.page.run_task(self._update_clock_task)
 
@@ -445,11 +438,11 @@ class NovelReaderApp:
         self.start_parsing(path)
 
     # ==========================
-    # 文件选择与导出逻辑 (最终脱离 overlay 方案)
+    # 文件选择与导出逻辑 (终极核心修复区)
     # ==========================
     async def trigger_file_picker(self, e):
         try:
-            # 此时 FilePicker 已经是页面树实体的一部分，可以直接放心调唤
+            # 核心修正 2：必须强制加上 file_type=ft.FilePickerFileType.CUSTOM，彻底消除 Flutter 静默挂起导致 Android 报 Timeout
             await self.file_picker.pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["txt"]
@@ -494,6 +487,8 @@ class NovelReaderApp:
                 return
             
             self.pending_export_path = src_path
+            
+            # 同理，导出时也必须带上 CUSTOM 参数
             await self.export_picker.save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["txt"], 
@@ -1059,3 +1054,4 @@ def main(page: ft.Page):
 
 if __name__ == "__main__":
     ft.run(main)
+
