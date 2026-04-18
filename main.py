@@ -66,7 +66,6 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        # 【修改点】：升级到 0.3.10
         self.version = "0.3.10"  
         self.author = "手背儿"
         
@@ -77,9 +76,9 @@ class NovelReaderApp:
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
             font_family=target_font,
-            # 【核心修改点】：采用智能自适应的表面变体色，深浅模式下都能保持优雅的弱对比灰色
+            # 【核心修改点】：采用极致低对比度的轮廓变体色，让滚动条在深浅模式下都尽可能“隐形”不抢戏
             scrollbar_theme=ft.ScrollbarTheme(
-                thumb_color=ft.Colors.ON_SURFACE_VARIANT
+                thumb_color=ft.Colors.OUTLINE_VARIANT
             )
         ) 
         self.page.padding = 0
@@ -978,7 +977,6 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
-        # 【修改点】：追加 0.3.10 更新说明
         log_text = """【v0.3.10】UI细节与滚动体验优化
 - 滚动条适配：引入智能自适应灰色（ON_SURFACE_VARIANT）全局滚动条主题，完美契合深浅模式，既保证滑动可见又不抢夺视觉焦点。
 - 日志排版优化：更新日志弹窗改用高性能 ListView，解决滚动条遮挡文字问题，并统一下拉交互逻辑。
@@ -1004,7 +1002,6 @@ class NovelReaderApp:
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         
-        # 【核心修改点】：放弃带 ALWAYS 属性的 Column，改用 ListView 配合 12 像素右侧留白，彻底解决遮挡问题
         self.global_dialog.content = ft.Container(
             content=ft.ListView(
                 controls=[ft.Text(log_text, selectable=True)], 
