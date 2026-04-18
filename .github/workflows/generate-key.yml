@@ -1,0 +1,27 @@
+name: 1-Time Keystore Generator
+
+on: workflow_dispatch
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '21'
+        
+    - name: Generate Keystore (有效期100年)
+      run: |
+        # 生成安卓二进制签名文件 (密码统一设为 novel2026，别名 novelkey)
+        keytool -genkey -v -keystore release.keystore -alias novelkey -keyalg RSA -keysize 2048 -validity 36500 -storepass "novel2026" -keypass "novel2026" -dname "CN=NovelReader, OU=Dev, O=Dev, L=City, S=State, C=CN"
+        
+        # 将二进制文件转化为单行 Base64 纯文本，方便复制
+        base64 -w 0 release.keystore > keystore_base64.txt
+        
+    - name: Upload Base64 Keystore
+      uses: actions/upload-artifact@v4
+      with:
+        name: KEYSTORE_TEXT_FILE
+        path: keystore_base64.txt
