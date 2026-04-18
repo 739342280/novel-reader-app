@@ -65,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.6"  # 严格保持 0.3.6
+        self.version = "0.3.7"  # 升级至 0.3.7，引入原生路由栈
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -104,8 +104,8 @@ class NovelReaderApp:
         self._load_config_from_appdata()
         self._load_bookshelf()
 
-        self.main_container = ft.Container(expand=True)
-        self.page.add(self.main_container)
+        # 🌟 注册系统底层原生手势返回事件（取代全局键盘拦截器）
+        self.page.on_view_pop = self._on_view_pop
         
         self.page.run_task(self._update_clock_task)
 
@@ -200,7 +200,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
+    # 数据存取逻辑 (智能沙盒穿透机制)
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -211,20 +211,15 @@ class NovelReaderApp:
         else:
             home_dir = os.path.expanduser("~")
             
-            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
-            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
             if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
-                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
                 home_dir = os.path.abspath(os.path.dirname(__file__))
                 
             base_dir = os.path.join(home_dir, ".novelreaderapp")
             
-        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
             try: 
                 os.makedirs(base_dir, exist_ok=True)
             except Exception: 
-                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
                 import tempfile
                 base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
                 try: 
@@ -332,7 +327,12 @@ class NovelReaderApp:
         ], expand=True)
 
         self.refresh_bookshelf_ui()
-        self.main_container.content = self.home_view
+        
+        # 🌟 利用底层的 Views 进行路由控制（作为根视图推入）
+        home_page_view = ft.View("/", [self.home_view], padding=0)
+        self.page.views.clear()  
+        self.page.views.append(home_page_view)
+        
         self.page.update()
 
     def show_book_options_dialog(self, path, current_name):
@@ -462,7 +462,6 @@ class NovelReaderApp:
                 if picked_path.lower().endswith('.txt'):
                     books_dir = os.path.join(self._get_base_dir(), "books")
                     
-                    # 🌟强化修复：不仅要找对目录，更要确保有权限创建，否则明确报错而不是静默失败！
                     if not os.path.exists(books_dir):
                         try: 
                             os.makedirs(books_dir, exist_ok=True)
@@ -694,7 +693,13 @@ class NovelReaderApp:
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
         
-        self.main_container.content = self.reader_view
+        # 🌟 利用底层的 Views 进行路由控制（将阅读页堆叠入栈）
+        reader_page_view = ft.View("/reader", [self.reader_view], padding=0)
+        if len(self.page.views) == 1:
+            self.page.views.append(reader_page_view) 
+        else:
+            self.page.views[-1] = reader_page_view   
+            
         self.page.update()
 
     def _btn_prev(self):
@@ -710,8 +715,16 @@ class NovelReaderApp:
             self.toggle_immersive(None)
             
         self.refresh_bookshelf_ui()
-        self.main_container.content = self.home_view
+        
+        # 🌟 安全出栈，直到只剩根视图（书架）
+        while len(self.page.views) > 1:
+            self.page.views.pop()
+            
         self.page.update()
+
+    # 🌟 承接安卓原生系统手势返回的核心触发器
+    def _on_view_pop(self, e):
+        self.go_back_home(e)
 
     def filter_toc(self, e=None):
         if e is not None and getattr(e, "name", "") != "change":
@@ -913,7 +926,10 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.6】沉浸式阅读UI革新
+        log_text = """【v0.3.7】原生手势与路由架构升级
+- 交互优化：重构了底层的视图承载方式（引入原生 Flet Views 路由栈）。彻底修复了安卓端手势返回的逻辑：现在阅读正文时呼出排版或AI弹窗，手势返回仅会安全关闭弹窗，不再意外退回书架；阅读正文时手势返回可平滑退回书架，书架页手势返回则正常退出应用。
+
+【v0.3.6】沉浸式阅读UI革新
 - 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
 - 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
 
@@ -923,8 +939,6 @@ class NovelReaderApp:
 【v0.3.4】移动端交互与综合管理适配
 - 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
 - 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
-
-【v0.3.3】...
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
