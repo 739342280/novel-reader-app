@@ -3,18 +3,15 @@ name: Build Flet Android APK
 on:
   push:
     branches: [ master ]
-    # 【修复 1】：必须监听 paths，避免改动 readme 也触发长达十几分钟的编译
     paths:
       - 'main.py'             
       - 'requirements.txt'
-    # 【修复 1】：必须监听 tags，否则最后的 Release 步骤永远无法触发
     tags: 
       - 'v*'
   pull_request:
     branches: [ master ]
   workflow_dispatch:          
 
-# 【修复 2】：赋予 GITHUB_TOKEN 写入权限，确保 Release 能成功上传 APK
 permissions:
   contents: write
 
@@ -52,7 +49,6 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '21'
-        # (已确认移除 cache: gradle 避免 Flet 报错)
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -65,7 +61,7 @@ jobs:
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
-        flutter-version: '3.41.4'  # 放心地指定你测试通过的 3.41.4
+        flutter-version: '3.41.4'  
         channel: 'stable'
         cache: true 
     
@@ -73,13 +69,19 @@ jobs:
       run: |
         flutter --version
         flutter doctor -v
+        
+    # 【新增步骤】：从密码箱读取文本，还原成真正的二进制签名文件
+    - name: Decode Keystore
+      run: |
+        echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
     
     - name: Build Flet APK
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
+        # 【修改点】：追加了 4 个安卓签名参数，使用刚刚还原的 release.keystore 为 App 盖上你的专属公章
+        flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --template https://github.com/flet-dev/flet-build-template/archive/refs/tags/v0.84.0.zip --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026 --verbose
     
     - name: Rename APK
       run: |
@@ -94,7 +96,6 @@ jobs:
         if-no-files-found: warn
     
     - name: Release APK
-      # 仅当推送了以 v 开头的 tag (例如 v0.3.8) 时，才会自动发布到 GitHub Releases
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v1
       with:
