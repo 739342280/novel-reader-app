@@ -4,11 +4,11 @@ on:
   push:
     branches: [ master ]
     paths:
-      - 'main.py'             # 只有当 main.py 发生代码变动时，才自动触发打包
+      - 'main.py'             
       - 'requirements.txt'
   pull_request:
     branches: [ master ]
-  workflow_dispatch:          # 永远保留手动触发按钮
+  workflow_dispatch:          
 
 jobs:
   build-android:
@@ -21,20 +21,18 @@ jobs:
     - name: Extract Version from main.py
       id: extract_version
       run: |
-        # 使用正则从 main.py 中自动提取 self.version 的值 (例如 0.3.8)
         VERSION=$(grep -oP 'self\.version\s*=\s*"\K[^"]+' main.py | head -n 1)
         if [ -z "$VERSION" ]; then
           VERSION="Unknown"
         fi
         echo "Extracted version: $VERSION"
-        # 写入环境变量供后续步骤使用
         echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
     
     - name: Setup Python
       uses: actions/setup-python@v5
       with:
         python-version: '3.12'
-        cache: 'pip' # 开启 pip 缓存
+        cache: 'pip' 
     
     - name: Install dependencies
       run: |
@@ -46,7 +44,7 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '21'
-        cache: 'gradle' # 开启 Gradle 缓存，极大缩短安卓底层编译时间
+        # 【修正点】：移除了 cache: 'gradle'，因为 Flet 此时还未生成安卓原生配置文件
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -61,7 +59,7 @@ jobs:
       with:
         flutter-version: '3.41.4'
         channel: 'stable'
-        cache: true # 开启 Flutter SDK 缓存
+        cache: true # Flutter 的缓存正常保留
     
     - name: Verify Flutter
       run: |
@@ -73,22 +71,18 @@ jobs:
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        # 移除了以前多余的 cp 复制逻辑，直接使用根目录的 main.py
-        # 版本号动态引用 APP_VERSION，构建号动态使用 github 运行次数
         flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
     
     - name: Rename APK
       run: |
-        # Flet 编译出的包通常在 build/apk 目录下
-        # 找到它并重命名为带有版本号的格式
         mv build/apk/*.apk "小说智读_v${{ env.APP_VERSION }}.apk" 2>/dev/null || mv build/app/outputs/flutter-apk/app-release.apk "小说智读_v${{ env.APP_VERSION }}.apk" 2>/dev/null
         echo "APK renamed successfully!"
     
     - name: Upload APK
       uses: actions/upload-artifact@v4
       with:
-        name: 小说智读_v${{ env.APP_VERSION }} # 云端产物的显示名称也会带上版本号
-        path: 小说智读_v*.apk                 # 只上传重命名后的成品包
+        name: 小说智读_v${{ env.APP_VERSION }} 
+        path: 小说智读_v*.apk                 
         if-no-files-found: warn
     
     - name: Release APK
