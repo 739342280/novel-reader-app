@@ -7,6 +7,7 @@ import json
 import threading
 import asyncio
 import shutil
+import time  
 from datetime import datetime
 
 # ==========================================
@@ -65,7 +66,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.7"  # 保持 0.3.7
+        self.version = "0.3.8"  # 保持 0.3.8
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -97,7 +98,23 @@ class NovelReaderApp:
             "url": "https://api.deepseek.com/v1/chat/completions",
             "key": "",
             "model": "deepseek-chat",
-            "prompt": "# 指令\n请对以下小说章节内容进行深度总结。\n\n# 输出限制\n- 字数控制在300字以内。\n- 严禁评价剧情“好不好看”，只做客观梳理。"
+            "prompt": (
+                "请对以下小说章节内容进行深度总结。\n\n"
+                "# 角色设定\n"
+                "你是一个细心的“追文助手”，擅长捕捉作者的文字留白和情绪张力。\n\n"
+                "# 总结维度\n"
+                "1. **一句话概括**：用一句话说清这章讲了什么。\n"
+                "2. **情节脉络**：\n"
+                "   - 起因：\n"
+                "   - 经过（转折点）：\n"
+                "   - 结果：\n"
+                "3. **人物弧光**：主角在这一章的心态变化曲线（例如：从愤怒 -> 冷静 -> 下定决心）。\n"
+                "4. **文笔赏析**：指出本章最精彩的一句描写或对话。\n"
+                "5. **悬疑/钩子**：本章结尾留下的悬念是什么？\n\n"
+                "# 输出限制\n"
+                "- 字数控制在300字以内。\n"
+                "- 严禁评价剧情“好不好看”，只做客观梳理。"
+            )
         }
         self.bookshelf = []
 
@@ -387,7 +404,6 @@ class NovelReaderApp:
     def refresh_bookshelf_ui(self):
         self.bookshelf_grid.controls.clear()
 
-        # 【修复点 2】：升级废弃的 border 属性 API，避免后台报错
         plus_side = ft.BorderSide(2, ft.Colors.BLUE)
         plus_border = ft.Border(top=plus_side, bottom=plus_side, left=plus_side, right=plus_side)
         
@@ -408,7 +424,6 @@ class NovelReaderApp:
         self.bookshelf_grid.controls.append(plus_card)
 
         for book in self.bookshelf:
-            # 【修复点 3】：升级废弃的 border 属性 API
             card_side = ft.BorderSide(1, "outlineVariant")
             card_border = ft.Border(top=card_side, bottom=card_side, left=card_side, right=card_side)
 
@@ -636,12 +651,10 @@ class NovelReaderApp:
             top=0, left=0, right=0,
             content=ft.Row([
                 ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.go_back_home),
-                ft.IconButton(icon=ft.Icons.MENU_BOOK, tooltip="目录", on_click=self._open_toc_sheet),
                 ft.Column([
                     self.top_bar_book_name,
                     self.top_bar_chapter_name
                 ], expand=True, spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START, alignment=ft.MainAxisAlignment.CENTER),
-                ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding(top=40, left=10, right=10, bottom=10),
             bgcolor="surface",
@@ -681,21 +694,37 @@ class NovelReaderApp:
             padding=10, 
             bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
-            content=ft.Row([
-                # 【修复点 1】：改用 ft.Padding.symmetric() 避免弃用警告
-                ft.Button(
-                    content=ft.Text("AI总结"), 
-                    icon=ft.Icons.AUTO_AWESOME, 
-                    on_click=self.show_ai_dialog, 
-                    style=ft.ButtonStyle(
-                        color=ft.Colors.WHITE, 
-                        bgcolor=ft.Colors.DEEP_PURPLE_400,
-                        padding=ft.Padding.symmetric(horizontal=12) 
+            content=ft.Column([
+                ft.Row([
+                    self._btn_prev(),
+                    self._btn_next()
+                ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+                
+                ft.Row([
+                    ft.Button(
+                        content=ft.Text("目录"), 
+                        icon=ft.Icons.MENU_BOOK, 
+                        on_click=self._open_toc_sheet,
+                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
+                    ),
+                    ft.Button(
+                        content=ft.Text("AI总结"), 
+                        icon=ft.Icons.AUTO_AWESOME, 
+                        on_click=self.show_ai_dialog, 
+                        style=ft.ButtonStyle(
+                            color=ft.Colors.WHITE, 
+                            bgcolor=ft.Colors.DEEP_PURPLE_400,
+                            padding=ft.Padding.symmetric(horizontal=12) 
+                        )
+                    ),
+                    ft.Button(
+                        content=ft.Text("界面"), 
+                        icon=ft.Icons.FORMAT_SIZE, 
+                        on_click=self._open_settings_sheet,
+                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
                     )
-                ),
-                self._btn_prev(),
-                self._btn_next()
-            ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+                ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
+            ], tight=True, spacing=10),
             offset=ft.Offset(0, 0),
             animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
@@ -710,7 +739,6 @@ class NovelReaderApp:
         self.page.update()
 
     def _btn_prev(self):
-        # 【修复点 1】：改用 ft.Padding.symmetric()
         self.btn_prev = ft.Button(
             content=ft.Text("上一章"), 
             icon=ft.Icons.NAVIGATE_BEFORE, 
@@ -720,7 +748,6 @@ class NovelReaderApp:
         return self.btn_prev
 
     def _btn_next(self):
-        # 【修复点 1】：改用 ft.Padding.symmetric()
         self.btn_next = ft.Button(
             content=ft.Text("下一章"), 
             icon=ft.Icons.NAVIGATE_NEXT, 
@@ -938,18 +965,20 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.6】沉浸式阅读UI革新
-- 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
-- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
+        log_text = """【v0.3.8】细节体验与AI指令优化
+- 交互重构：全面优化底部菜单为双行布局，将高频操作（目录、界面、AI总结）下放，极大提升手机端单手握持体验。
+- 智能排版：重构 AI 总结弹窗的按钮自适应逻辑，完美适配各种窄屏手机，杜绝 UI 溢出和重叠。
+- AI 提示词升级：引入结构化的高级提示词，新增“情节脉络”、“人物弧光”、“文笔赏析”等专业追文解析维度。
+- 底层稳健：全面适配 Flet 0.84.0 原生大驼峰语法规范，消除了所有废弃 API 警告，安卓端运行更加稳健。
+
+【v0.3.7】修复离线渲染断层 Bug
+- 状态同步：修复了在阅读页点击返回主页时，由于 Flet 离线 DOM 更新延迟导致的“两本书”残影 Bug。
+
+【v0.3.6】沉浸式阅读UI革新
+- 界面重构：阅读界面摒弃了传统的线性排版，升级为悬浮式交互。点击正文唤出菜单，内容不再上下跳动。
 
 【v0.3.5】阅读排版升级
-- 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
-
-【v0.3.4】移动端交互与综合管理适配
-- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
-- 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
-
-【v0.3.3】...
+- 排版优化：新增自定义行距、段距调节功能，彻底释放阅读空间的自由度。
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
@@ -966,8 +995,8 @@ class NovelReaderApp:
         
         result_text = ft.Markdown("点击下方按钮，开始使用 AI 梳理本章节剧情...\n\n*(注意：请确保已在首页设置中配置了 API Key)*", selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
         
-        btn_start = ft.Button(content=ft.Text("🚀 立即总结本章"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
-        btn_copy = ft.Button(content=ft.Text("📋 复制总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE))
+        btn_start = ft.Button(content=ft.Text("🚀 总结本章"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
+        btn_copy = ft.Button(content=ft.Text("📋 复制"), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE))
 
         def start_ai(e):
             if not self.ai_config["key"]:
@@ -982,7 +1011,42 @@ class NovelReaderApp:
             result_text.update()
 
             chapter_text = self.engine.get_chapter_text(self.current_chapter_idx)[:15000]
+            
+            # 【核心修改点】：引入解耦的文本缓冲池机制
+            stream_buffer = [result_text.value] 
+            is_streaming = [True]
 
+            # 前台：异步高频渲染器 (匀速帧率：每 50ms 刷新一次)
+            async def ui_updater():
+                last_text = stream_buffer[0]
+                while is_streaming[0]:
+                    current_text = stream_buffer[0]
+                    if current_text != last_text:
+                        result_text.value = current_text
+                        try:
+                            result_text.update()
+                        except Exception:
+                            pass
+                        last_text = current_text
+                    await asyncio.sleep(0.05) 
+                
+                # 流结束后的最后一次强制刷新兜底
+                if stream_buffer[0] != last_text:
+                    result_text.value = stream_buffer[0]
+                    try:
+                        result_text.update()
+                    except Exception:
+                        pass
+                
+                # 恢复按钮状态
+                try:
+                    btn_start.disabled = False
+                    btn_start.content.value = "重新总结"
+                    btn_start.update()
+                except Exception:
+                    pass
+
+            # 后台：网络全速抓取线程
             def fetch():
                 try:
                     req_data = {
@@ -1004,8 +1068,8 @@ class NovelReaderApp:
                         method="POST"
                     )
                     
-                    result_text.value = ""
-                    result_text.update()
+                    # 准备接收真数据，清空等待提示符
+                    stream_buffer[0] = ""
 
                     with urllib.request.urlopen(req, timeout=60) as response:
                         while True:
@@ -1025,21 +1089,18 @@ class NovelReaderApp:
                                     data_json = json.loads(data_str)
                                     delta = data_json["choices"][0].get("delta", {})
                                     if "content" in delta:
-                                        result_text.value += delta["content"]
-                                        result_text.update()
+                                        # 全速塞入缓冲池，不再在这里阻塞和刷新 UI
+                                        stream_buffer[0] += delta["content"]
                                 except Exception:
                                     pass
-                    
-                    btn_start.disabled = False
-                    btn_start.content.value = "重新总结"
-                    btn_start.update()
                 except Exception as ex:
-                    result_text.value += f"\n\n❌ **请求失败**: {str(ex)}\n\n请检查网络连通性或 API Key 是否正确。"
-                    btn_start.disabled = False
-                    btn_start.content.value = "重试"
-                    btn_start.update()
-                    result_text.update()
+                    stream_buffer[0] += f"\n\n❌ **请求失败**: {str(ex)}\n\n请检查网络连通性或 API Key 是否正确。"
+                finally:
+                    # 无论成功失败，必须发送停止信号给前台 UI 渲染器
+                    is_streaming[0] = False
 
+            # 同时启动双轨引擎
+            self.page.run_task(ui_updater)
             threading.Thread(target=fetch, daemon=True).start()
 
         async def copy_result(e):
@@ -1051,7 +1112,7 @@ class NovelReaderApp:
             btn_copy.update()
             
             await asyncio.sleep(2)
-            btn_copy.content.value = "📋 复制总结"
+            btn_copy.content.value = "📋 复制"
             btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE)
             try:
                 btn_copy.update()
@@ -1066,11 +1127,18 @@ class NovelReaderApp:
             content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
             width=600, height=400, bgcolor="surface", padding=15, border_radius=10
         )
+        
         self.global_dialog.actions = [
-            btn_start, 
-            btn_copy, 
-            ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())
+            ft.Container(
+                content=ft.Row(
+                    controls=[btn_start, btn_copy, ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())],
+                    alignment=ft.MainAxisAlignment.SPACE_AROUND,
+                    wrap=True
+                ),
+                width=600
+            )
         ]
+        
         self._open_dialog()
 
 def main(page: ft.Page):
