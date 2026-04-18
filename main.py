@@ -573,7 +573,6 @@ class NovelReaderApp:
                 "last_chapter_title": "未读"
             })
             self._save_bookshelf()
-            self.refresh_bookshelf_ui()
 
         self.build_reader_view()
 
@@ -673,6 +672,7 @@ class NovelReaderApp:
             bgcolor=ft.Colors.TRANSPARENT
         )
 
+        # 【修改点 1】：将正文面板的右侧安全距离改回 8（由于 ListView 的内边距承担了 12 的距离，总视觉边距依然是 20）
         self.text_panel = ft.Container(
             padding=ft.Padding(left=20, right=8, top=5, bottom=20),
             on_click=self.toggle_immersive, 
@@ -851,12 +851,13 @@ class NovelReaderApp:
             for p in paragraphs
         ]
 
-        self.text_scroll_col = ft.Column(
-            self.reader_text_controls, 
-            scroll=ft.ScrollMode.ALWAYS, 
+        # 【修改点 2】：将 Column 升级为 ListView，自带原生滚动支持，并新增 right=12 的留白，防止滚动条遮挡文字
+        self.text_scroll_col = ft.ListView(
+            controls=self.reader_text_controls, 
             expand=True, 
             key="text_scroll_col",
-            spacing=self.paragraph_spacing 
+            spacing=self.paragraph_spacing,
+            padding=ft.Padding(left=0, top=0, right=12, bottom=0) 
         )
         
         self.text_panel.content = self.text_scroll_col
@@ -1012,11 +1013,9 @@ class NovelReaderApp:
 
             chapter_text = self.engine.get_chapter_text(self.current_chapter_idx)[:15000]
             
-            # 【核心修改点】：引入解耦的文本缓冲池机制
             stream_buffer = [result_text.value] 
             is_streaming = [True]
 
-            # 前台：异步高频渲染器 (匀速帧率：每 50ms 刷新一次)
             async def ui_updater():
                 last_text = stream_buffer[0]
                 while is_streaming[0]:
@@ -1030,7 +1029,6 @@ class NovelReaderApp:
                         last_text = current_text
                     await asyncio.sleep(0.05) 
                 
-                # 流结束后的最后一次强制刷新兜底
                 if stream_buffer[0] != last_text:
                     result_text.value = stream_buffer[0]
                     try:
@@ -1038,7 +1036,6 @@ class NovelReaderApp:
                     except Exception:
                         pass
                 
-                # 恢复按钮状态
                 try:
                     btn_start.disabled = False
                     btn_start.content.value = "重新总结"
@@ -1046,7 +1043,6 @@ class NovelReaderApp:
                 except Exception:
                     pass
 
-            # 后台：网络全速抓取线程
             def fetch():
                 try:
                     req_data = {
@@ -1068,7 +1064,6 @@ class NovelReaderApp:
                         method="POST"
                     )
                     
-                    # 准备接收真数据，清空等待提示符
                     stream_buffer[0] = ""
 
                     with urllib.request.urlopen(req, timeout=60) as response:
@@ -1089,17 +1084,14 @@ class NovelReaderApp:
                                     data_json = json.loads(data_str)
                                     delta = data_json["choices"][0].get("delta", {})
                                     if "content" in delta:
-                                        # 全速塞入缓冲池，不再在这里阻塞和刷新 UI
                                         stream_buffer[0] += delta["content"]
                                 except Exception:
                                     pass
                 except Exception as ex:
                     stream_buffer[0] += f"\n\n❌ **请求失败**: {str(ex)}\n\n请检查网络连通性或 API Key 是否正确。"
                 finally:
-                    # 无论成功失败，必须发送停止信号给前台 UI 渲染器
                     is_streaming[0] = False
 
-            # 同时启动双轨引擎
             self.page.run_task(ui_updater)
             threading.Thread(target=fetch, daemon=True).start()
 
