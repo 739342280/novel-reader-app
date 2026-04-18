@@ -7,6 +7,7 @@ import json
 import threading
 import asyncio
 import shutil
+from datetime import datetime
 
 # ==========================================
 # 核心引擎 (NovelEngine) - 100% 完美复用
@@ -64,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.7"
+        self.version = "0.3.7"  # 保持 0.3.7
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -106,7 +107,21 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
+        self.page.run_task(self._update_clock_task)
+
         self.build_home_view()
+
+    async def _update_clock_task(self):
+        while True:
+            if hasattr(self, "info_time") and getattr(self.info_time, "page", None):
+                now_str = datetime.now().strftime("%H:%M")
+                if self.info_time.value != now_str:
+                    self.info_time.value = now_str
+                    try:
+                        self.info_time.update()
+                    except Exception:
+                        pass
+            await asyncio.sleep(5)
             
     # ==========================
     # 终极弹窗与抽屉调度器
@@ -167,7 +182,6 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        # 仅在移动端调用全屏隐藏状态栏
         platform_str = str(self.page.platform).lower()
         if "android" in platform_str or "ios" in platform_str:
             try:
@@ -186,7 +200,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑
+    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -195,11 +209,28 @@ class NovelReaderApp:
                 appdata = os.path.expanduser("~")
             base_dir = os.path.join(appdata, "NovelReaderApp")
         else:
-            base_dir = os.path.join(os.path.expanduser("~"), ".novelreaderapp")
-        
+            home_dir = os.path.expanduser("~")
+            
+            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
+            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
+            if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
+                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
+                home_dir = os.path.abspath(os.path.dirname(__file__))
+                
+            base_dir = os.path.join(home_dir, ".novelreaderapp")
+            
+        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
-            try: os.makedirs(base_dir)
-            except Exception: pass
+            try: 
+                os.makedirs(base_dir, exist_ok=True)
+            except Exception: 
+                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
+                import tempfile
+                base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
+                try: 
+                    os.makedirs(base_dir, exist_ok=True)
+                except Exception: 
+                    pass
         return base_dir
 
     def _get_config_path(self):
@@ -356,15 +387,16 @@ class NovelReaderApp:
     def refresh_bookshelf_ui(self):
         self.bookshelf_grid.controls.clear()
 
-        plus_side = ft.border.BorderSide(2, ft.Colors.BLUE)
-        plus_border = ft.border.Border(top=plus_side, bottom=plus_side, left=plus_side, right=plus_side)
+        # 【修复点 2】：升级废弃的 border 属性 API，避免后台报错
+        plus_side = ft.BorderSide(2, ft.Colors.BLUE)
+        plus_border = ft.Border(top=plus_side, bottom=plus_side, left=plus_side, right=plus_side)
         
         plus_card = ft.Container(
             alignment=ft.Alignment(0, 0),
             content=ft.Container(
                 width=160, height=220, 
                 border=plus_border,
-                bgcolor="surface", 
+                bgcolor="surface",
                 ink=True,
                 on_click=self.trigger_file_picker, 
                 content=ft.Column([
@@ -376,8 +408,9 @@ class NovelReaderApp:
         self.bookshelf_grid.controls.append(plus_card)
 
         for book in self.bookshelf:
-            card_side = ft.border.BorderSide(1, "outlineVariant")
-            card_border = ft.border.Border(top=card_side, bottom=card_side, left=card_side, right=card_side)
+            # 【修复点 3】：升级废弃的 border 属性 API
+            card_side = ft.BorderSide(1, "outlineVariant")
+            card_border = ft.Border(top=card_side, bottom=card_side, left=card_side, right=card_side)
 
             card = ft.Container(
                 alignment=ft.Alignment(0, 0),
@@ -410,13 +443,43 @@ class NovelReaderApp:
             return
         self.start_parsing(path)
 
+    # ==========================
+    # 文件选择与导出逻辑 
+    # ==========================
     async def trigger_file_picker(self, e):
         try:
-            files = await ft.FilePicker().pick_files(allowed_extensions=["txt"])
+            files = await ft.FilePicker().pick_files(
+                file_type=ft.FilePickerFileType.CUSTOM, 
+                allowed_extensions=["txt"]
+            )
+            
             if files and len(files) > 0:
-                path = files[0].path
-                if path and path.lower().endswith('.txt'):
-                    self.start_parsing(path)
+                picked_path = files[0].path
+                original_name = files[0].name
+                
+                if not picked_path:
+                    self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
+                    return
+
+                if picked_path.lower().endswith('.txt'):
+                    books_dir = os.path.join(self._get_base_dir(), "books")
+                    
+                    if not os.path.exists(books_dir):
+                        try: 
+                            os.makedirs(books_dir, exist_ok=True)
+                        except Exception as create_ex:
+                            self.show_snack_bar(f"建立书籍存放目录失败，请检查应用存储权限: {str(create_ex)}")
+                            return
+
+                    persistent_path = os.path.join(books_dir, original_name)
+
+                    try:
+                        shutil.copy2(picked_path, persistent_path)
+                    except Exception as copy_ex:
+                        self.show_snack_bar(f"文件转存失败: {str(copy_ex)}")
+                        return
+
+                    self.start_parsing(persistent_path)
                 else:
                     self.show_snack_bar("仅支持 TXT 文本文件")
         except Exception as ex:
@@ -427,12 +490,21 @@ class NovelReaderApp:
             if not os.path.exists(src_path):
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
-            save_path = await ft.FilePicker().save_file(allowed_extensions=["txt"], file_name=f"{default_name}.txt")
-            if save_path:
-                shutil.copy2(src_path, save_path)
-                self.show_snack_bar("✅ 书籍导出成功")
+            
+            saved_path = await ft.FilePicker().save_file(
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["txt"], 
+                file_name=f"{default_name}.txt"
+            )
+            
+            if saved_path:
+                try:
+                    shutil.copy2(src_path, saved_path)
+                    self.show_snack_bar("✅ 书籍导出成功")
+                except Exception as ex:
+                    self.show_snack_bar(f"导出失败: {str(ex)}")
         except Exception as ex:
-            self.show_snack_bar(f"导出失败: {str(ex)}")
+            self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
 
     def _sync_progress(self, progress, msg):
         self.progress_bar.value = progress
@@ -486,7 +558,7 @@ class NovelReaderApp:
                 "last_chapter_title": "未读"
             })
             self._save_bookshelf()
-            self.refresh_bookshelf_ui()  # <--- 修复点补充：在进入阅读页前，先在首页状态下更新UI
+            self.refresh_bookshelf_ui()
 
         self.build_reader_view()
 
@@ -524,7 +596,7 @@ class NovelReaderApp:
         copy_btn = ft.Button(
             content=ft.Row([ft.Icon(ft.Icons.COPY), ft.Text("复制本章内容")], alignment=ft.MainAxisAlignment.CENTER),
             on_click=self.copy_current,
-            style=ft.ButtonStyle(bgcolor="surface") 
+            style=ft.ButtonStyle(bgcolor="surface")
         )
 
         self.settings_sheet = ft.BottomSheet(
@@ -557,35 +629,70 @@ class NovelReaderApp:
             )
         )
 
+        self.top_bar_book_name = ft.Text(self.current_book_name, size=13, color=ft.Colors.GREY_500, overflow=ft.TextOverflow.ELLIPSIS)
+        self.top_bar_chapter_name = ft.Text("", size=17, weight=ft.FontWeight.BOLD, overflow=ft.TextOverflow.ELLIPSIS)
+
         self.reader_top_bar = ft.Container(
             top=0, left=0, right=0,
             content=ft.Row([
                 ft.IconButton(icon=ft.Icons.ARROW_BACK, on_click=self.go_back_home),
                 ft.IconButton(icon=ft.Icons.MENU_BOOK, tooltip="目录", on_click=self._open_toc_sheet),
-                ft.Text(self.current_book_name, size=18, weight=ft.FontWeight.BOLD, expand=True, overflow=ft.TextOverflow.ELLIPSIS),
+                ft.Column([
+                    self.top_bar_book_name,
+                    self.top_bar_chapter_name
+                ], expand=True, spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START, alignment=ft.MainAxisAlignment.CENTER),
                 ft.IconButton(icon=ft.Icons.MORE_VERT, tooltip="排版设置", on_click=self._open_settings_sheet)
-            ]),
+            ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding(top=40, left=10, right=10, bottom=10),
-            bgcolor="surface", 
+            bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, 2)), 
             offset=ft.Offset(0, 0),
             animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
 
-        self.text_panel = ft.Container(
-            top=0, bottom=0, left=0, right=0,
-            padding=20,
-            on_click=self.toggle_immersive, 
+        self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, expand=True, overflow=ft.TextOverflow.ELLIPSIS)
+        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500)
+        
+        self.info_bar = ft.Container(
+            content=ft.Row([self.info_chapter_name, self.info_time], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            padding=ft.Padding(left=20, right=20, top=10, bottom=0),
+            on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
+        )
+
+        self.text_panel = ft.Container(
+            padding=ft.Padding(left=20, right=8, top=5, bottom=20),
+            on_click=self.toggle_immersive, 
+            bgcolor=ft.Colors.TRANSPARENT,
+            expand=True
+        )
+
+        self.reading_base_layer = ft.Container(
+            top=0, bottom=0, left=0, right=0,
+            bgcolor=ft.Colors.TRANSPARENT,
+            content=ft.Column([
+                self.info_bar,
+                self.text_panel
+            ], spacing=0)
         )
 
         self.reader_bottom_bar = ft.Container(
             bottom=0, left=0, right=0,
             padding=10, 
-            bgcolor="surface", 
+            bgcolor="surface",
             shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
             content=ft.Row([
-                ft.Button(content=ft.Text("✨ AI总结"), icon=ft.Icons.AUTO_AWESOME, on_click=self.show_ai_dialog, style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.DEEP_PURPLE_400)),
+                # 【修复点 1】：改用 ft.Padding.symmetric() 避免弃用警告
+                ft.Button(
+                    content=ft.Text("AI总结"), 
+                    icon=ft.Icons.AUTO_AWESOME, 
+                    on_click=self.show_ai_dialog, 
+                    style=ft.ButtonStyle(
+                        color=ft.Colors.WHITE, 
+                        bgcolor=ft.Colors.DEEP_PURPLE_400,
+                        padding=ft.Padding.symmetric(horizontal=12) 
+                    )
+                ),
                 self._btn_prev(),
                 self._btn_next()
             ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
@@ -594,7 +701,7 @@ class NovelReaderApp:
         )
 
         self.reader_view = ft.Stack([
-            self.text_panel,
+            self.reading_base_layer,  
             self.reader_top_bar,
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
@@ -603,22 +710,32 @@ class NovelReaderApp:
         self.page.update()
 
     def _btn_prev(self):
-        self.btn_prev = ft.Button(content=ft.Text("上一章"), icon=ft.Icons.NAVIGATE_BEFORE, on_click=self.load_prev)
+        # 【修复点 1】：改用 ft.Padding.symmetric()
+        self.btn_prev = ft.Button(
+            content=ft.Text("上一章"), 
+            icon=ft.Icons.NAVIGATE_BEFORE, 
+            on_click=self.load_prev,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
+        )
         return self.btn_prev
 
     def _btn_next(self):
-        self.btn_next = ft.Button(content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=self.load_next)
+        # 【修复点 1】：改用 ft.Padding.symmetric()
+        self.btn_next = ft.Button(
+            content=ft.Text("下一章"), 
+            icon=ft.Icons.NAVIGATE_NEXT, 
+            on_click=self.load_next,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
+        )
         return self.btn_next
 
     def go_back_home(self, e):
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
             
-        # 【主修复点】：先挂载回主容器并强制更新页面，避免控制节点在离线状态下刷新数据
         self.main_container.content = self.home_view
         self.page.update()
         
-        # DOM 树挂载完毕后，再重绘书架
         self.refresh_bookshelf_ui()
 
     def filter_toc(self, e=None):
@@ -692,7 +809,10 @@ class NovelReaderApp:
         title = ch_info['title']
         text = self.engine.get_chapter_text(idx)
 
-        self.reader_title = ft.Text(title, size=24, weight=ft.FontWeight.BOLD)
+        if hasattr(self, "top_bar_chapter_name"):
+            self.top_bar_chapter_name.value = title
+        if hasattr(self, "info_chapter_name"):
+            self.info_chapter_name.value = title
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
         self.reader_text_controls = [
@@ -705,7 +825,7 @@ class NovelReaderApp:
         ]
 
         self.text_scroll_col = ft.Column(
-            [self.reader_title] + self.reader_text_controls, 
+            self.reader_text_controls, 
             scroll=ft.ScrollMode.ALWAYS, 
             expand=True, 
             key="text_scroll_col",
@@ -944,7 +1064,7 @@ class NovelReaderApp:
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
             content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
-            width=600, height=400, bgcolor="surface", padding=15, border_radius=10 
+            width=600, height=400, bgcolor="surface", padding=15, border_radius=10
         )
         self.global_dialog.actions = [
             btn_start, 
