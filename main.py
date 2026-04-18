@@ -7,7 +7,6 @@ import json
 import threading
 import asyncio
 import shutil
-import time  
 from datetime import datetime
 
 # ==========================================
@@ -66,7 +65,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.11"  # 【版本升级】0.3.11，修复手势返回冲突
+        self.version = "0.3.12"  # 【版本号】0.3.12 极简路由修复版
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -101,15 +100,15 @@ class NovelReaderApp:
         }
         self.bookshelf = []
         
-        # 【核心拦截锁初始化】明确记录弹窗状态与关闭时间
-        self.active_dialog = False
-        self.last_dismiss_time = 0
-        self.global_dialog = ft.AlertDialog(title=ft.Text(""), on_dismiss=self._on_overlay_dismiss)
+        self.global_dialog = ft.AlertDialog(title=ft.Text(""))
 
         self._load_config_from_appdata()
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
+        
+        # 🌟 核心修复 1：严格同步路由标识，告诉引擎我们在主页
+        self.page.route = "/"
         
         if len(self.page.views) == 0:
             self.page.views.append(ft.View(route="/", controls=[self.main_container], padding=0))
@@ -124,26 +123,9 @@ class NovelReaderApp:
 
         self.build_home_view()
 
-    # 【同步状态】无论是物理返回还是点击外部，只要弹窗关闭，立刻解除状态锁并记录时间戳
-    def _on_overlay_dismiss(self, e):
-        self.active_dialog = False
-        self.last_dismiss_time = time.time()
-        try:
-            if e.control:
-                e.control.open = False
-        except Exception:
-            pass
-
-    # 【手势拦截逻辑】
+    # 🌟 核心修复 2：极简手势拦截。安卓原生会自行消化弹窗的返回事件，
+    # 只有当无弹窗且处于阅读器页面时，Flet 才会触发此函数退回书架。无需任何冗余判定！
     def view_pop_handler(self, e):
-        # 拦截网 1：如果检测到弹窗锁开启，说明手势是用来关弹窗的，吞掉侧滑事件
-        if getattr(self, "active_dialog", False):
-            return
-        # 拦截网 2：防止底层事件乱序。如果0.5秒内刚刚有弹窗被关闭过，也果断吞掉，防止误退！
-        if time.time() - getattr(self, "last_dismiss_time", 0) < 0.5:
-            return
-            
-        # 安全验证通过：确实处于纯净的阅读界面，安全退出到书架
         if len(self.page.views) > 1:
             self.go_back_home(None)
 
@@ -196,39 +178,32 @@ class NovelReaderApp:
         new_snack = ft.SnackBar(content=ft.Text(msg), key=f"snack_{self.snack_counter}")
         self._universal_open(new_snack)
 
-    # 【新增动作】在主动打开各类弹窗时，挂上拦截锁
     def _open_dialog(self):
-        self.active_dialog = True
         self._universal_open(self.global_dialog)
 
     def _close_dialog(self):
-        self.active_dialog = False
-        self.last_dismiss_time = time.time()
         self._universal_close(self.global_dialog)
 
     def _open_toc_sheet(self, e=None):
-        self.active_dialog = True
         self._universal_open(self.toc_sheet)
         self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
 
     def _close_toc_sheet(self, e=None):
-        self.active_dialog = False
-        self.last_dismiss_time = time.time()
         self._universal_close(self.toc_sheet)
 
     def _open_settings_sheet(self, e=None):
-        self.active_dialog = True
         self._universal_open(self.settings_sheet)
 
     def _close_settings_sheet(self, e=None):
-        self.active_dialog = False
-        self.last_dismiss_time = time.time()
         self._universal_close(self.settings_sheet)
 
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        self.page.window.full_screen = self.is_immersive
+        try:
+            self.page.window.full_screen = self.is_immersive
+        except Exception:
+            pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -609,7 +584,6 @@ class NovelReaderApp:
         self.toc_listview = ft.ListView(expand=True, spacing=2, key="toc_listview")
         
         self.toc_sheet = ft.BottomSheet(
-            on_dismiss=self._on_overlay_dismiss,
             content=ft.Container(
                 content=ft.Column([
                     ft.Text("📚 章节目录", size=20, weight=ft.FontWeight.BOLD),
@@ -632,7 +606,6 @@ class NovelReaderApp:
         )
 
         self.settings_sheet = ft.BottomSheet(
-            on_dismiss=self._on_overlay_dismiss,
             content=ft.Container(
                 padding=25,
                 content=ft.Column([
@@ -729,7 +702,10 @@ class NovelReaderApp:
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
         
+        # 🌟 核心修复 3：压入新路由前，同步更改当前 page.route，保证底层不出错
+        self.page.route = "/reader"
         reader_v = ft.View(route="/reader", controls=[self.reader_view], padding=0)
+        
         if len(self.page.views) > 1:
             self.page.views[-1] = reader_v
         else:
@@ -749,6 +725,9 @@ class NovelReaderApp:
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
             
+        # 🌟 核心修复 4：退出路由前，同步还原 page.route 状态
+        self.page.route = "/"
+        
         if len(self.page.views) > 1:
             self.page.views.pop()
         else:
@@ -957,8 +936,11 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.11】手势返回与弹窗底层解耦
-- 逻辑修复：引入了微秒级防抖机制与明确的 `active_dialog` 状态锁。现在在阅读界面中打开任何弹窗（如AI总结、排版设置、目录抽屉），侧滑返回都会被精准拦截，仅用于关闭该弹窗，彻底杜绝了因原生事件乱序导致直接被踢回书架的 Bug。
+        log_text = """【v0.3.12】路由重绘彻底解耦 (大道至简)
+- 架构重构：摒弃了所有复杂的弹窗锁和事件防抖机制，彻底修复了 Flet 底层 `page.route` 与 `page.views` 异步不同步导致的致命崩溃。现在你可以随意唤出弹窗、随意侧滑关闭，引擎再也不会错误地剥离阅读视图了！
+
+【v0.3.11】手势返回与弹窗底层解耦
+- 逻辑修复：尝试使用微秒级防抖，但未触及路由本质。
 
 【v0.3.10】安卓状态栏原生全屏适配
 - 交互升级：基于 Flet 0.84.0 最新特性，正式接入原生全屏接口。点击正文收起菜单时彻底隐藏安卓状态栏，实现 100% 纯净沉浸式阅读。
