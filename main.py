@@ -66,7 +66,8 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.9"  # <--- 修改：升级到 0.3.9
+        # 【修改点】：升级到 0.3.10
+        self.version = "0.3.10"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -75,7 +76,11 @@ class NovelReaderApp:
         target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
-            font_family=target_font
+            font_family=target_font,
+            # 【核心修改点】：采用智能自适应的表面变体色，深浅模式下都能保持优雅的弱对比灰色
+            scrollbar_theme=ft.ScrollbarTheme(
+                thumb_color=ft.Colors.ON_SURFACE_VARIANT
+            )
         ) 
         self.page.padding = 0
         
@@ -353,7 +358,6 @@ class NovelReaderApp:
         self.page.update()
 
     def show_book_options_dialog(self, path, current_name):
-        # 【修改点：重置非AI弹窗的留白属性】
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
         
@@ -945,7 +949,6 @@ class NovelReaderApp:
     # 弹窗逻辑
     # ==========================
     def show_settings_dialog(self, e):
-        # 【修改点：重置非AI弹窗的留白属性】
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
@@ -972,11 +975,15 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        # 【修改点：重置非AI弹窗的留白属性】
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
-        log_text = """【v0.3.9】沉浸式阅读与视觉调优
+        # 【修改点】：追加 0.3.10 更新说明
+        log_text = """【v0.3.10】UI细节与滚动体验优化
+- 滚动条适配：引入智能自适应灰色（ON_SURFACE_VARIANT）全局滚动条主题，完美契合深浅模式，既保证滑动可见又不抢夺视觉焦点。
+- 日志排版优化：更新日志弹窗改用高性能 ListView，解决滚动条遮挡文字问题，并统一下拉交互逻辑。
+
+【v0.3.9】沉浸式阅读与视觉调优
 - 视觉沉浸：优化了 AI 总结弹窗的配色方案，去除内部容器生硬的色块，使文本区域与对话框背景完全融合，实现沉浸式视觉效果。
 - 空间利用：大幅压缩了 AI 总结弹窗距离手机屏幕左右边缘的默认安全留白，显著加大了水平阅读宽度，提升长文本阅读体验。
 
@@ -996,8 +1003,13 @@ class NovelReaderApp:
 - 排版优化：新增自定义行距、段距调节功能，彻底释放阅读空间的自由度。
 """
         self.global_dialog.title = ft.Text("历史更新记录")
+        
+        # 【核心修改点】：放弃带 ALWAYS 属性的 Column，改用 ListView 配合 12 像素右侧留白，彻底解决遮挡问题
         self.global_dialog.content = ft.Container(
-            content=ft.Column([ft.Text(log_text, selectable=True)], scroll=ft.ScrollMode.ALWAYS, tight=True), 
+            content=ft.ListView(
+                controls=[ft.Text(log_text, selectable=True)], 
+                padding=ft.Padding(left=0, top=0, right=12, bottom=0)
+            ), 
             height=400, width=500
         )
         self.global_dialog.actions = [ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())]
@@ -1128,14 +1140,13 @@ class NovelReaderApp:
         btn_start.on_click = start_ai
         btn_copy.on_click = copy_result
 
-        # 【核心修改点：调整弹窗外部间距（更宽），内部留白（更充裕），以及背景透明融合】
         self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
         self.global_dialog.content_padding = ft.Padding(left=20, top=15, right=20, bottom=15)
         
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
             content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
-            width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  # <--- 去除 padding=15，去除 bgcolor="surface"
+            width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
         self.global_dialog.actions = [
