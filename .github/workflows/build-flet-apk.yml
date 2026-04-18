@@ -2,10 +2,8 @@ name: Build Flet Android APK
 
 on:
   push:
+    # 【核心修复】：彻底移除了互斥的 paths 规则。现在只要推送 master 或打 tag，必然 100% 触发！
     branches: [ master ]
-    paths:
-      - 'main.py'             
-      - 'requirements.txt'
     tags: 
       - 'v*'
   pull_request:
@@ -70,7 +68,7 @@ jobs:
         flutter --version
         flutter doctor -v
         
-    # 【新增步骤】：从密码箱读取文本，还原成真正的二进制签名文件
+    # 【选项 B 专属】：从 GitHub 密码箱读取纯文本，还原成真正的二进制密钥文件
     - name: Decode Keystore
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
@@ -80,7 +78,8 @@ jobs:
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         echo "SERIOUS_PYTHON_SITE_PACKAGES=$SERIOUS_PYTHON_SITE_PACKAGES"
         
-        # 【修改点】：追加了 4 个安卓签名参数，使用刚刚还原的 release.keystore 为 App 盖上你的专属公章
+        # 1. 锁死了 v0.84.0.zip 快照防 404
+        # 2. 加入了安卓签章参数，生成支持一键覆盖更新的原生正式版 APK
         flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --template https://github.com/flet-dev/flet-build-template/archive/refs/tags/v0.84.0.zip --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026 --verbose
     
     - name: Rename APK
