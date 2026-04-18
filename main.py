@@ -60,12 +60,12 @@ class NovelEngine:
 
 
 # ==========================================
-# 表现层 (Flet UI) - 适配原生规范
+# 表现层 (Flet UI) - 适配 0.84.0 原生规范
 # ==========================================
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.16"  # 【版本升级】彻底解决手势冲突，大道至简
+        self.version = "0.3.6"  # 严格保持 0.3.6
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -90,6 +90,7 @@ class NovelReaderApp:
         self.last_search_query = None  
         self.is_immersive = False  
 
+        self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
 
         self.ai_config = {
@@ -99,37 +100,16 @@ class NovelReaderApp:
             "prompt": "# 指令\n请对以下小说章节内容进行深度总结。\n\n# 输出限制\n- 字数控制在300字以内。\n- 严禁评价剧情“好不好看”，只做客观梳理。"
         }
         self.bookshelf = []
-        
-        self.global_dialog = ft.AlertDialog(title=ft.Text(""))
-
-        # 后台组件依然采用 overlay 隐式挂载
-        self.file_picker = ft.FilePicker()
-        self.file_picker.on_result = self.on_file_picked
-        self.export_picker = ft.FilePicker()
-        self.export_picker.on_result = self.on_export_picked
-        self.page.overlay.extend([self.file_picker, self.export_picker])
 
         self._load_config_from_appdata()
         self._load_bookshelf()
 
         self.main_container = ft.Container(expand=True)
+        self.page.add(self.main_container)
         
-        self.page.route = "/"
-        if len(self.page.views) == 0:
-            self.page.views.append(ft.View(route="/", controls=[self.main_container], padding=0))
-        else:
-            self.page.views[0].padding = 0
-            self.page.views[0].controls.clear()
-            self.page.views[0].controls.append(self.main_container)
-            
-        self.page.on_view_pop = self.view_pop_handler
         self.page.run_task(self._update_clock_task)
-        self.build_home_view()
 
-    # 🌟 核心极简拦截：因为底层已全面接管弹窗的手势，所以能触发此函数的，绝对是真正要退出的操作！
-    def view_pop_handler(self, e):
-        if len(self.page.views) > 1:
-            self.go_back_home(None)
+        self.build_home_view()
 
     async def _update_clock_task(self):
         while True:
@@ -144,27 +124,41 @@ class NovelReaderApp:
             await asyncio.sleep(5)
             
     # ==========================
-    # 🌟 终极弹窗调度器 (抛弃错误用法，接入安卓原生 Modal 通道)
+    # 终极弹窗与抽屉调度器
     # ==========================
     def _universal_open(self, control):
-        if isinstance(control, ft.AlertDialog):
-            self.page.dialog = control
-        elif isinstance(control, ft.BottomSheet):
-            self.page.bottom_sheet = control
-        
-        control.open = True
+        if hasattr(self.page, "overlay") and control not in self.page.overlay:
+            self.page.overlay.append(control)
+
+        try: control.open = True
+        except Exception: pass
+
+        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
+            try: self.page.open(control)
+            except Exception: pass
+
+        try:
+            if control.page: control.update()
+        except Exception: pass
         self.page.update()
 
     def _universal_close(self, control):
-        control.open = False
+        try: control.open = False
+        except Exception: pass
+
+        if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
+            try: self.page.close(control)
+            except Exception: pass
+
+        try:
+            if control.page: control.update()
+        except Exception: pass
         self.page.update()
 
     def show_snack_bar(self, msg):
         self.snack_counter += 1
         new_snack = ft.SnackBar(content=ft.Text(msg), key=f"snack_{self.snack_counter}")
-        self.page.snack_bar = new_snack
-        new_snack.open = True
-        self.page.update()
+        self._universal_open(new_snack)
 
     def _open_dialog(self):
         self._universal_open(self.global_dialog)
@@ -188,10 +182,12 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        try:
-            self.page.window.full_screen = self.is_immersive
-        except Exception:
-            pass
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -204,7 +200,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑 
+    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -214,14 +210,21 @@ class NovelReaderApp:
             base_dir = os.path.join(appdata, "NovelReaderApp")
         else:
             home_dir = os.path.expanduser("~")
+            
+            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
+            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
             if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
+                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
                 home_dir = os.path.abspath(os.path.dirname(__file__))
+                
             base_dir = os.path.join(home_dir, ".novelreaderapp")
             
+        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
             try: 
                 os.makedirs(base_dir, exist_ok=True)
             except Exception: 
+                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
                 import tempfile
                 base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
                 try: 
@@ -443,18 +446,14 @@ class NovelReaderApp:
     # ==========================
     async def trigger_file_picker(self, e):
         try:
-            await self.file_picker.pick_files(
+            files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["txt"]
             )
-        except Exception as ex:
-            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
-
-    def on_file_picked(self, e):
-        try:
-            if e.files and len(e.files) > 0:
-                picked_path = e.files[0].path
-                original_name = e.files[0].name
+            
+            if files and len(files) > 0:
+                picked_path = files[0].path
+                original_name = files[0].name
                 
                 if not picked_path:
                     self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
@@ -463,6 +462,7 @@ class NovelReaderApp:
                 if picked_path.lower().endswith('.txt'):
                     books_dir = os.path.join(self._get_base_dir(), "books")
                     
+                    # 🌟强化修复：不仅要找对目录，更要确保有权限创建，否则明确报错而不是静默失败！
                     if not os.path.exists(books_dir):
                         try: 
                             os.makedirs(books_dir, exist_ok=True)
@@ -490,23 +490,20 @@ class NovelReaderApp:
                 self.show_snack_bar("⚠️ 源文件已丢失，无法导出")
                 return
             
-            self.pending_export_path = src_path
-            await self.export_picker.save_file(
+            saved_path = await ft.FilePicker().save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["txt"], 
                 file_name=f"{default_name}.txt"
             )
+            
+            if saved_path:
+                try:
+                    shutil.copy2(src_path, saved_path)
+                    self.show_snack_bar("✅ 书籍导出成功")
+                except Exception as ex:
+                    self.show_snack_bar(f"导出失败: {str(ex)}")
         except Exception as ex:
             self.show_snack_bar(f"唤起导出面板失败: {str(ex)}")
-
-    def on_export_picked(self, e):
-        if e.path and getattr(self, "pending_export_path", None):
-            try:
-                shutil.copy2(self.pending_export_path, e.path)
-                self.show_snack_bar("✅ 书籍导出成功")
-            except Exception as ex:
-                self.show_snack_bar(f"导出失败: {str(ex)}")
-            self.pending_export_path = None
 
     def _sync_progress(self, progress, msg):
         self.progress_bar.value = progress
@@ -697,14 +694,7 @@ class NovelReaderApp:
             self.reader_bottom_bar
         ], expand=True, key="reader_view_main_stack")
         
-        self.page.route = "/reader"
-        reader_v = ft.View(route="/reader", controls=[self.reader_view], padding=0)
-        
-        if len(self.page.views) > 1:
-            self.page.views[-1] = reader_v
-        else:
-            self.page.views.append(reader_v)
-            
+        self.main_container.content = self.reader_view
         self.page.update()
 
     def _btn_prev(self):
@@ -715,23 +705,12 @@ class NovelReaderApp:
         self.btn_next = ft.Button(content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=self.load_next)
         return self.btn_next
 
-    # 🌟 安全退出路由：顺手清除可能残留的原生通道状态
     def go_back_home(self, e):
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
             
-        if getattr(self.page, "dialog", None) and self.page.dialog.open:
-            self.page.dialog.open = False
-        if getattr(self.page, "bottom_sheet", None) and self.page.bottom_sheet.open:
-            self.page.bottom_sheet.open = False
-            
-        self.page.route = "/"
-        if len(self.page.views) > 1:
-            self.page.views.pop()
-        else:
-            self.main_container.content = self.home_view
-            
         self.refresh_bookshelf_ui()
+        self.main_container.content = self.home_view
         self.page.update()
 
     def filter_toc(self, e=None):
@@ -934,11 +913,18 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
-        log_text = """【v0.3.16】大道至简：路由防错退终极解法
-- 架构修复：摒弃了之前版本中所有违背原生逻辑的 `overlay` 黑客用法，完全回归 Flet 最原生的 `page.dialog` 和 `page.bottom_sheet` 挂载通道。由于打通了原生安卓底层，现在所有的弹窗都可以被系统侧滑手势自动识别、自动拦截并自动关闭，彻底终结了“关弹窗误退书架且死锁卡死”的恶性连环 Bug。
+        log_text = """【v0.3.6】沉浸式阅读UI革新
+- 界面重构：阅读界面摒弃了传统的线性（Column）排版，升级为分层堆叠（Stack）的悬浮式 UI。
+- 动画交互：点击正文切换菜单时，正文将保持全屏锁定不动，顶部和底部菜单会以平滑的动画从屏幕边缘“滑出/滑入”。彻底解决了原先菜单显隐导致文字上下跳动的问题，视觉体验更加优雅美观。
 
-【v0.3.10】安卓状态栏原生全屏适配
-- 交互升级：基于 Flet 0.84.0 最新特性，正式接入原生全屏接口。
+【v0.3.5】阅读排版升级
+- 排版优化：将传统的单块文本渲染重构为段落流式渲染，新增自定义行距、段距调节功能，彻底释放阅读空间的自由度，缓解长篇阅读的视觉疲劳。
+
+【v0.3.4】移动端交互与综合管理适配
+- 交互革新：废除了不支持触屏的“悬浮显示”按钮，新增“长按书籍卡片”呼出综合管理面板的功能。
+- 空间释放：废除了侧边栏布局。在顶部导航栏左侧新增“📖 目录”按钮，以 BottomSheet 形式展示，使得正文阅读面积达到了 100%。
+
+【v0.3.3】...
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         self.global_dialog.content = ft.Container(
