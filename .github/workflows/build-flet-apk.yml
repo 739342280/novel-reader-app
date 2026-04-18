@@ -89,10 +89,25 @@ jobs:
         done
         echo "APKs renamed successfully!"
     
-    - name: Upload APK
+    # 【修改点】：将原本笼统的 1 个上传步骤，精准拆分为 3 个单文件上传，满足 v7 不压缩要求
+    - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
-        path: 小说智读_v*.apk                 
+        path: 小说智读_v*arm64-v8a.apk                 
+        archive: false    
+        if-no-files-found: warn
+
+    - name: Upload armeabi-v7a APK
+      uses: actions/upload-artifact@v7
+      with:
+        path: 小说智读_v*armeabi-v7a.apk                 
+        archive: false    
+        if-no-files-found: warn
+
+    - name: Upload x86_64 APK
+      uses: actions/upload-artifact@v7
+      with:
+        path: 小说智读_v*x86_64.apk                 
         archive: false    
         if-no-files-found: warn
     
