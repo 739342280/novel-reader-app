@@ -68,7 +68,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.12"  
+        self.version = "0.3.13"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -240,7 +240,7 @@ class NovelReaderApp:
         self.page.update()
 
     # ==========================
-    # 数据存取逻辑 (🌟核心修复：智能沙盒穿透机制)
+    # 数据存取逻辑
     # ==========================
     def _get_base_dir(self):
         if sys.platform.startswith("win"):
@@ -1040,7 +1040,10 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.12】核心存储机制与滚动体验终极优化
+        log_text = """【v0.3.13】AI交互体验进阶
+- AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。无论在 Windows 还是安卓端，新生成的总结文字都能被平滑、实时地追踪呈现。
+
+【v0.3.12】核心存储机制与滚动体验终极优化
 - API 请求极度鲁棒化：深度重构了 AI 请求的底层异常捕获机制。现在能够精准剥离并解析大模型返回的深层 JSON 报错（如余额不足、Token失效等），拒绝“哑巴报错”。同时新增了“空数据假死拦截”机制，在极端网络抽风导致 API 返回空流时，能立即终止等待并提示用户，彻底告别无限 Loading 假死现象。
 - AI总结持久化存储：引入独立文件存储架构（按书目独立分配 JSON）。实现了 AI 总结内容的永久保存，关闭弹窗或重启应用不再丢失。并通过底层路径 MD5 哈希算法，彻底杜绝了同名书籍导入导致的数据覆盖 Bug。
 - 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
@@ -1107,6 +1110,18 @@ class NovelReaderApp:
         
         result_text = ft.Markdown(init_text, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
         
+        ai_scroll_col = ft.Column(
+            controls=[
+                ft.Container(
+                    content=result_text,
+                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
+                )
+            ], 
+            scroll=ft.ScrollMode.AUTO, 
+            auto_scroll=False,
+            tight=True
+        )
+        
         btn_start = ft.Button(content=ft.Text(btn_text), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
         btn_copy = ft.Button(content=ft.Text("📋 复制"), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE))
 
@@ -1119,7 +1134,6 @@ class NovelReaderApp:
             btn_start.content.value = "思考中..."
             result_text.value = "✨ 大模型正在阅读本章并进行多维度梳理，请稍候...\n\n"
             
-            # 【核心修改点 1】：强力防弹衣。包上 try...except，彻底杜绝控件意外脱离导致的 App 崩溃
             try:
                 btn_start.update()
                 result_text.update()
@@ -1131,32 +1145,44 @@ class NovelReaderApp:
             stream_buffer = [""] 
             is_streaming = [True]
 
-            async def ui_updater():
-                last_text = stream_buffer[0]
+            # 【核心修改点 1】：独立的、不阻塞主线程的异步滚动追踪器
+            async def safe_scroll_task():
+                # 这个小任务专门负责追踪滚动，独立于 UI 更新主循环
                 while is_streaming[0]:
-                    current_text = stream_buffer[0]
-                    if current_text != last_text:
-                        result_text.value = current_text
+                    if ai_scroll_col.page:
                         try:
-                            result_text.update()
-                        except Exception:
-                            pass
-                        last_text = current_text
-                    await asyncio.sleep(0.05) 
+                            # 强制跳转末尾指令
+                            await ai_scroll_col.scroll_to(offset=-1, duration=0)
+                        except: pass
+                    await asyncio.sleep(0.1)
+
+            async def ui_updater():
+                # 开启独立的滚动追踪任务（Fire-and-forget 模式，不在此等待它）
+                self.page.run_task(safe_scroll_task)
                 
-                if stream_buffer[0] != last_text:
-                    result_text.value = stream_buffer[0]
-                    try:
-                        result_text.update()
-                    except Exception:
-                        pass
-                
+                last_text = stream_buffer[0]
                 try:
-                    btn_start.disabled = False
-                    btn_start.content.value = "🔄 重新总结"
-                    btn_start.update()
-                except Exception:
-                    pass
+                    while is_streaming[0]:
+                        current_text = stream_buffer[0]
+                        if current_text != last_text:
+                            result_text.value = current_text
+                            try:
+                                result_text.update()
+                            except: pass
+                            last_text = current_text
+                        await asyncio.sleep(0.05) 
+                finally:
+                    # 【核心修改点 2】：确保状态彻底复位，杜绝点击无反应 Bug
+                    if stream_buffer[0] != last_text:
+                        result_text.value = stream_buffer[0]
+                        try: result_text.update()
+                        except: pass
+                    
+                    try:
+                        btn_start.disabled = False
+                        btn_start.content.value = "🔄 重新总结"
+                        btn_start.update()
+                    except: pass
 
             def fetch():
                 is_success = True
@@ -1203,7 +1229,6 @@ class NovelReaderApp:
                                     data_json = json.loads(data_str)
                                     delta = data_json["choices"][0].get("delta", {})
                                     if "content" in delta:
-                                        # 【核心修改点 2】：优化清空时序。大模型吐出第一个字时才清空提示语，终结 Markdown 闪烁崩溃
                                         if not has_real_data:
                                             stream_buffer[0] = ""
                                             has_real_data = True
@@ -1212,8 +1237,7 @@ class NovelReaderApp:
                                     pass
                 except urllib.error.HTTPError as ex:
                     is_success = False
-                    if not has_real_data:
-                        stream_buffer[0] = ""
+                    if not has_real_data: stream_buffer[0] = ""
                     error_msg = str(ex)
                     try:
                         error_body = ex.read().decode('utf-8')
@@ -1222,15 +1246,11 @@ class NovelReaderApp:
                             error_msg += f"\n详细原因: {error_json['error']['message']}"
                         elif "message" in error_json:
                             error_msg += f"\n详细原因: {error_json['message']}"
-                        else:
-                            error_msg += f"\n详细数据: {error_body}"
-                    except:
-                        pass
+                    except: pass
                     stream_buffer[0] += f"\n\n❌ **接口请求失败**: {error_msg}\n\n请检查 API Key 是否填写正确、余额是否充足，或模型名称是否有误。"
                 except Exception as ex:
                     is_success = False
-                    if not has_real_data:
-                        stream_buffer[0] = ""
+                    if not has_real_data: stream_buffer[0] = ""
                     stream_buffer[0] += f"\n\n❌ **网络异常**: {str(ex)}\n\n请检查网络连通性。"
                 finally:
                     is_streaming[0] = False
@@ -1251,18 +1271,14 @@ class NovelReaderApp:
 
             btn_copy.content.value = "✅ 复制成功"
             btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
-            try:
-                btn_copy.update()
-            except Exception:
-                pass
+            try: btn_copy.update()
+            except: pass
             
             await asyncio.sleep(2)
             btn_copy.content.value = "📋 复制"
             btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE)
-            try:
-                btn_copy.update()
-            except Exception:
-                pass
+            try: btn_copy.update()
+            except: pass
 
         btn_start.on_click = start_ai
         btn_copy.on_click = copy_result
@@ -1272,16 +1288,7 @@ class NovelReaderApp:
         
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
-            content=ft.Column(
-                controls=[
-                    ft.Container(
-                        content=result_text,
-                        padding=ft.Padding(left=0, top=0, right=16, bottom=0)
-                    )
-                ], 
-                scroll=ft.ScrollMode.AUTO, 
-                tight=True
-            ),
+            content=ai_scroll_col,
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
