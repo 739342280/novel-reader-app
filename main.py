@@ -78,6 +78,8 @@ class NovelReaderApp:
             font_family=target_font,
             scrollbar_theme=ft.ScrollbarTheme(
                 thumb_visibility=False,         
+                # 【修改点：方案 A】恢复全局固定粗细，强行约束双端表现，拯救安卓 ListView 隐形 Bug
+                thickness=4,
                 thumb_color=ft.Colors.OUTLINE_VARIANT
             )
         ) 
@@ -250,9 +252,6 @@ class NovelReaderApp:
             current_dir = os.path.abspath(os.path.dirname(__file__))
             current_dir_normalized = current_dir.replace("\\", "/")
             
-            # 【核心修改点：致命数据丢失 Bug 修复】
-            # 跳出 flet 引擎沙盒的死亡圈。引擎在每次更新 APK 时会暴力抹除 flet/app 目录。
-            # 我们通过截断路径，强行退回到上一级的安全持久化区（files 根目录）。
             if "flet/app" in current_dir_normalized:
                 home_dir = current_dir_normalized.split("flet/app")[0]
             elif home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
