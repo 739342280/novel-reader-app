@@ -272,7 +272,6 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        # 【核心回退点】：重新加回平台锁定，防止在 Win11 上强制全屏导致崩溃或异常体验
         platform_str = str(self.page.platform).lower()
         if "android" in platform_str or "ios" in platform_str:
             try:
@@ -952,18 +951,22 @@ class NovelReaderApp:
             animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
         )
 
-        self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, expand=True, overflow=ft.TextOverflow.ELLIPSIS)
-        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500)
+        self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER, overflow=ft.TextOverflow.ELLIPSIS)
+        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
+        self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
-        # 【修改点 2：将信息栏挪到底部，并调整 Padding 防溢出】
+        # 【核心修复点：将引发崩溃的旧版常量替换为稳健的底层的坐标系对齐法】
         self.info_bar = ft.Container(
-            content=ft.Row([self.info_chapter_name, self.info_time], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            content=ft.Row([
+                ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
+                ft.Container(content=self.info_chapter_name, expand=2, alignment=ft.Alignment(0, 0)),
+                ft.Container(content=self.info_time, expand=1, alignment=ft.Alignment(1, 0))
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             padding=ft.Padding(left=20, right=20, top=0, bottom=15),
             on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
         )
 
-        # 【同步修改点：补偿正文的顶部安全距离（30px），防止被刘海遮挡】
         self.text_panel = ft.Container(
             padding=ft.Padding(left=20, right=4, top=30, bottom=0),
             on_click=self.toggle_immersive, 
@@ -971,7 +974,6 @@ class NovelReaderApp:
             expand=True
         )
 
-        # 【同步修改点：交换 Column 内的正文与信息栏的垂直顺序】
         self.reading_base_layer = ft.Container(
             top=0, bottom=0, left=0, right=0,
             bgcolor=self.bg_color, 
@@ -1164,6 +1166,11 @@ class NovelReaderApp:
             self.top_bar_chapter_name.value = title
         if hasattr(self, "info_chapter_name"):
             self.info_chapter_name.value = title
+            
+        if hasattr(self, "info_progress"):
+            total_chaps = len(self.engine.chapters_info)
+            pct = ((idx + 1) / total_chaps) * 100 if total_chaps > 0 else 0.0
+            self.info_progress.value = f"{pct:.1f}%"
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
         self.reader_text_controls = [
