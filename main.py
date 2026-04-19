@@ -272,11 +272,13 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        # 【核心尝试】：去除平台检测，全局强行请求沉浸式/全屏模式
-        try:
-            self.page.window.full_screen = self.is_immersive
-        except Exception:
-            pass
+        # 【核心回退点】：重新加回平台锁定，防止在 Win11 上强制全屏导致崩溃或异常体验
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -832,8 +834,8 @@ class NovelReaderApp:
 
         font_options = ft.Row([
             ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("黑体", font_family="思源黑体", size=15), on_click=lambda _: set_font_preset("思源黑体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("宋体", font_family="思源宋体", size=15), on_click=lambda _: set_font_preset("思源宋体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("旗黑", font_family="汉仪旗黑", size=15), on_click=lambda _: set_font_preset("汉仪旗黑"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("中宋", font_family="汉仪中宋", size=15), on_click=lambda _: set_font_preset("汉仪中宋"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
             ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
         ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
@@ -953,20 +955,23 @@ class NovelReaderApp:
         self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, expand=True, overflow=ft.TextOverflow.ELLIPSIS)
         self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500)
         
+        # 【修改点 2：将信息栏挪到底部，并调整 Padding 防溢出】
         self.info_bar = ft.Container(
             content=ft.Row([self.info_chapter_name, self.info_time], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.Padding(left=20, right=20, top=10, bottom=0),
+            padding=ft.Padding(left=20, right=20, top=0, bottom=15),
             on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
         )
 
+        # 【同步修改点：补偿正文的顶部安全距离（30px），防止被刘海遮挡】
         self.text_panel = ft.Container(
-            padding=ft.Padding(left=20, right=4, top=5, bottom=20),
+            padding=ft.Padding(left=20, right=4, top=30, bottom=0),
             on_click=self.toggle_immersive, 
             bgcolor=ft.Colors.TRANSPARENT,
             expand=True
         )
 
+        # 【同步修改点：交换 Column 内的正文与信息栏的垂直顺序】
         self.reading_base_layer = ft.Container(
             top=0, bottom=0, left=0, right=0,
             bgcolor=self.bg_color, 
@@ -975,8 +980,8 @@ class NovelReaderApp:
                 repeat="repeat"
             ) if self.bg_image else None,
             content=ft.Column([
-                self.info_bar,
-                self.text_panel
+                self.text_panel,
+                self.info_bar
             ], spacing=0)
         )
 
