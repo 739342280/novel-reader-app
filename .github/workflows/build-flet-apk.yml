@@ -40,12 +40,23 @@ jobs:
       run: |
         pip install flet==0.84.0
         pip install -r requirements.txt || echo "No requirements.txt"
+
+    # 【新增点 1：缓存 Flet 核心构建模板】
+    - name: Cache Flet templates
+      uses: actions/cache@v4
+      with:
+        path: ~/.flet
+        key: ${{ runner.os }}-flet-0.84.0
     
     - name: Setup Java
       uses: actions/setup-java@v4
       with:
         distribution: 'temurin'
         java-version: '21'
+        
+    # 【新增点 2：引入 Gradle 官方全局缓存】
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -89,7 +100,6 @@ jobs:
         done
         echo "APKs renamed successfully!"
     
-    # 【修改点】：将原本笼统的 1 个上传步骤，精准拆分为 3 个单文件上传，满足 v7 不压缩要求
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
