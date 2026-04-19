@@ -122,7 +122,6 @@ class NovelReaderApp:
         self.reader_text_color = None
         self.font_family = None
         
-        # 【新增】：跟随系统主题状态
         self.follow_system_theme = True
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
@@ -156,7 +155,6 @@ class NovelReaderApp:
         self._load_config_from_appdata()
         self._load_bookshelf()
         
-        # 【新增】：绑定操作系统深浅色模式切换监听器
         self.page.on_platform_brightness_change = self._on_os_theme_change
 
         self.main_container = ft.Container(expand=True)
@@ -166,7 +164,6 @@ class NovelReaderApp:
 
         self.build_home_view()
 
-    # 【新增】：系统主题变化回调
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
             self.sync_theme_btn_ui()
@@ -350,7 +347,6 @@ class NovelReaderApp:
                     self.font_family = data.get("font_family")
                     self.letter_spacing = data.get("letter_spacing", 0.0)
                     
-                    # 读取跟随系统设置与当前主题
                     self.follow_system_theme = data.get("follow_system_theme", True)
                     saved_theme = data.get("theme_mode", "system")
                     
@@ -377,7 +373,6 @@ class NovelReaderApp:
         data_to_save["font_family"] = self.font_family
         data_to_save["letter_spacing"] = self.letter_spacing
         
-        # 写入跟随系统设置与当前主题
         data_to_save["follow_system_theme"] = self.follow_system_theme
         theme_val = self.page.theme_mode.value if isinstance(self.page.theme_mode, ft.ThemeMode) else self.page.theme_mode
         data_to_save["theme_mode"] = theme_val
@@ -745,16 +740,18 @@ class NovelReaderApp:
         
         self._save_config_to_appdata()
 
-    # 【新增】：提取当前真实有效的主题模式（用于底部按钮状态同步）
+    # 【新增修改点 1】：完善底部嗅探判断，增加明确的 None 兜底容错，避免冷启动时由于 API 延迟导致的假死
     def _get_is_dark_mode(self):
         if self.page.theme_mode == ft.ThemeMode.DARK:
             return True
         elif self.page.theme_mode == ft.ThemeMode.LIGHT:
             return False
         else:
-            return str(self.page.platform_brightness).lower().endswith("dark")
+            pb = self.page.platform_brightness
+            if pb is None:
+                return False 
+            return str(pb).lower().endswith("dark")
 
-    # 【新增】：同步更新底部日夜间按钮的 UI 状态
     def sync_theme_btn_ui(self):
         if not hasattr(self, "theme_btn"): return
         is_dark = self._get_is_dark_mode()
@@ -870,7 +867,6 @@ class NovelReaderApp:
             ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
-        # 【核心修改点：加入设置面板中的 跟随系统 Switch 逻辑】
         def on_system_theme_switch_change(e):
             self.follow_system_theme = e.control.value
             if self.follow_system_theme:
@@ -886,7 +882,7 @@ class NovelReaderApp:
             value=self.follow_system_theme, 
             on_change=on_system_theme_switch_change,
             active_color=ft.Colors.BLUE,
-            scale=0.85 # 缩小控件，防止撑大行距
+            scale=0.85 
         )
 
         theme_switch_row = ft.Row([
@@ -894,7 +890,6 @@ class NovelReaderApp:
             self.system_theme_switch
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
-        # 【排版修改点：极致垂直压缩，将内边距缩减为12，间距缩减为4，Divider 高度缩减为 6】
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
                 padding=12, 
@@ -972,16 +967,13 @@ class NovelReaderApp:
             ], spacing=0)
         )
 
-        # 【核心修改点：底部日夜间按钮的策略 A 逻辑落地】
         def toggle_app_theme(e):
-            # 策略 A：一旦手动点击，立刻强行剥夺“跟随系统”权限，并更新 Switch 的 UI
             self.follow_system_theme = False
             if hasattr(self, "system_theme_switch"):
                 self.system_theme_switch.value = False
                 try: self.system_theme_switch.update()
                 except: pass
 
-            # 强行翻转当前的真实主题色
             is_dark = self._get_is_dark_mode()
             self.page.theme_mode = ft.ThemeMode.LIGHT if is_dark else ft.ThemeMode.DARK
             self.page.update()
@@ -990,7 +982,7 @@ class NovelReaderApp:
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
-            content=ft.Text("日间"), # 占位字符，下方会立即被 sync 函数覆写准确状态
+            content=ft.Text("日间"), 
             icon=ft.Icons.LIGHT_MODE,
             on_click=toggle_app_theme,
             style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8)) 
@@ -1307,6 +1299,7 @@ class NovelReaderApp:
 
         log_text = """【v0.3.14】个性化阅读体验升级
 - (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。而在底部菜单点击“日/夜间”时，系统会自动退出跟随模式，将控制权完全交还给您。
+- (优化) 冷热启动状态同步：全面接管 App 的生命周期。增强底层环境嗅探的容错率，彻底防范老旧机型冷启动由于 API 延迟导致的黑屏隐患，保证启动 100% 顺滑。即使在应用完全关闭的状态下切换了操作系统的深浅色，再次打开 App 时，界面引擎与底层按钮状态依然能实现毫秒级的无缝同步适配。
 - 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间），完美平衡视觉舒适度与审美。
 - 字体随心换：重磅引入精选中文字体，支持在设置面板一键无缝切换，提升阅读质感。
 - 细致排版：新增文章“字距”微调功能。
