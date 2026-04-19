@@ -78,7 +78,6 @@ class NovelReaderApp:
             font_family=target_font,
             scrollbar_theme=ft.ScrollbarTheme(
                 thumb_visibility=False,         
-                thickness=4,
                 thumb_color=ft.Colors.OUTLINE_VARIANT
             )
         ) 
@@ -696,8 +695,7 @@ class NovelReaderApp:
         )
 
         self.text_panel = ft.Container(
-            # 【修改点 1】：正文区域左右对齐 AI 总结的 20 像素，上下边距保持 5 和 20 绝对不动
-            padding=ft.Padding(left=20, right=20, top=5, bottom=20),
+            padding=ft.Padding(left=20, right=4, top=5, bottom=20),
             on_click=self.toggle_immersive, 
             bgcolor=ft.Colors.TRANSPARENT,
             expand=True
@@ -874,12 +872,21 @@ class NovelReaderApp:
             for p in paragraphs
         ]
 
-        self.text_scroll_col = ft.Column(
+        self.inner_text_col = ft.Column(
             controls=self.reader_text_controls, 
+            spacing=self.paragraph_spacing
+        )
+
+        self.text_scroll_col = ft.Column(
+            controls=[
+                ft.Container(
+                    content=self.inner_text_col,
+                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
+                )
+            ],
             expand=True, 
             scroll=ft.ScrollMode.AUTO,
-            key="text_scroll_col",
-            spacing=self.paragraph_spacing
+            key="text_scroll_col"
         )
         
         self.text_panel.content = self.text_scroll_col
@@ -943,9 +950,9 @@ class NovelReaderApp:
         new_spacing = int(self.paragraph_spacing + delta)
         if 0 <= new_spacing <= 50:
             self.paragraph_spacing = new_spacing
-            if hasattr(self, "text_scroll_col"):
-                self.text_scroll_col.spacing = self.paragraph_spacing
-                self.text_scroll_col.update()
+            if hasattr(self, "inner_text_col"):
+                self.inner_text_col.spacing = self.paragraph_spacing
+                self.inner_text_col.update()
             if hasattr(self, "para_spacing_text"):
                 self.para_spacing_text.value = str(self.paragraph_spacing)
                 self.para_spacing_text.update()
@@ -992,11 +999,12 @@ class NovelReaderApp:
 
     def show_changelog_dialog(self, e):
         self.global_dialog.inset_padding = None
-        # 【修改点 2】：显式接管外层边距，左右边距对齐 AI 弹窗的 20 像素，上下维持系统原本默认的 24 像素绝对不动
-        self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=20, bottom=24)
+        self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.12】核心存储机制修复
+        # 【追加日志】：正式记录“轨道分离”这一里程碑式的视觉重构
+        log_text = """【v0.3.12】核心存储机制与滚动体验终极优化
 - 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
+- 滚动排版架构重构：全面引入“轨道分离（Track Separation）”技术。通过精密的内外双层边距（Padding）配合，将滚动条与文字在物理图层上彻底隔离。既保持了完美的左右视觉对称，又彻底根除安卓端滚动条遮挡文字的痛点，实现100%无遮挡的沉浸式阅读体验。
 
 【v0.3.11】UI细节与提示框优化
 - 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式，彻底解决安卓端全面屏手势条导致的异常高度问题。
@@ -1030,10 +1038,14 @@ class NovelReaderApp:
         
         self.global_dialog.content = ft.Container(
             content=ft.Column(
-                controls=[ft.Text(log_text, selectable=True)], 
+                controls=[
+                    ft.Container(
+                        content=ft.Text(log_text, selectable=True),
+                        padding=ft.Padding(left=0, top=0, right=16, bottom=0)
+                    )
+                ], 
                 scroll=ft.ScrollMode.AUTO
             ), 
-            # 【配合修改点 2】：彻底清空内部 padding，消除内部挤压，让滚动条完美向外贴靠到 20 像素的位置
             padding=0,
             height=400, width=500
         )
@@ -1166,11 +1178,20 @@ class NovelReaderApp:
         btn_copy.on_click = copy_result
 
         self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
-        self.global_dialog.content_padding = ft.Padding(left=20, top=15, right=20, bottom=15)
+        self.global_dialog.content_padding = ft.Padding(left=20, top=15, right=4, bottom=15)
         
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
-            content=ft.Column([result_text], scroll=ft.ScrollMode.AUTO, tight=True),
+            content=ft.Column(
+                controls=[
+                    ft.Container(
+                        content=result_text,
+                        padding=ft.Padding(left=0, top=0, right=16, bottom=0)
+                    )
+                ], 
+                scroll=ft.ScrollMode.AUTO, 
+                tight=True
+            ),
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
