@@ -3,11 +3,13 @@ import re
 import os
 import sys
 import urllib.request
+import urllib.error
 import json
 import threading
 import asyncio
 import shutil
 import time  
+import hashlib
 from datetime import datetime
 
 # ==========================================
@@ -121,6 +123,7 @@ class NovelReaderApp:
             )
         }
         self.bookshelf = []
+        self.current_book_summaries = {}
 
         self._load_config_from_appdata()
         self._load_bookshelf()
@@ -275,6 +278,19 @@ class NovelReaderApp:
     def _get_bookshelf_path(self):
         return os.path.join(self._get_base_dir(), "bookshelf.json")
 
+    def _get_summaries_dir(self):
+        path = os.path.join(self._get_base_dir(), "ai_summaries")
+        if not os.path.exists(path):
+            try: os.makedirs(path, exist_ok=True)
+            except Exception: pass
+        return path
+
+    def _get_current_book_summary_path(self):
+        if not self.current_book_path:
+            return ""
+        path_hash = hashlib.md5(self.current_book_path.encode('utf-8')).hexdigest()
+        return os.path.join(self._get_summaries_dir(), f"{path_hash}.json")
+
     def _load_config_from_appdata(self):
         path = self._get_config_path()
         if os.path.exists(path):
@@ -307,6 +323,24 @@ class NovelReaderApp:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(self.bookshelf, f, ensure_ascii=False, indent=4)
         except Exception as e: print(f"保存书架失败: {e}")
+
+    def _load_book_summaries(self):
+        self.current_book_summaries = {}
+        path = self._get_current_book_summary_path()
+        if path and os.path.exists(path):
+            try:
+                with open(path, 'r', encoding='utf-8') as f:
+                    self.current_book_summaries = json.load(f)
+            except Exception: pass
+
+    def _save_book_summaries(self):
+        path = self._get_current_book_summary_path()
+        if path:
+            try:
+                with open(path, 'w', encoding='utf-8') as f:
+                    json.dump(self.current_book_summaries, f, ensure_ascii=False, indent=4)
+            except Exception as e: 
+                pass
 
     def _execute_copy(self, text):
         try:
@@ -372,6 +406,7 @@ class NovelReaderApp:
         self.page.update()
 
     def show_book_options_dialog(self, path, current_name):
+        self.global_dialog.modal = False
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
         
@@ -595,6 +630,8 @@ class NovelReaderApp:
                 "last_chapter_title": "未读"
             })
             self._save_bookshelf()
+            
+        self._load_book_summaries()
 
         self.build_reader_view()
 
@@ -972,6 +1009,7 @@ class NovelReaderApp:
     # 弹窗逻辑
     # ==========================
     def show_settings_dialog(self, e):
+        self.global_dialog.modal = False
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
@@ -998,11 +1036,13 @@ class NovelReaderApp:
         self._open_dialog()
 
     def show_changelog_dialog(self, e):
+        self.global_dialog.modal = False
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        # 【追加日志】：正式记录“轨道分离”这一里程碑式的视觉重构
         log_text = """【v0.3.12】核心存储机制与滚动体验终极优化
+- API 请求极度鲁棒化：深度重构了 AI 请求的底层异常捕获机制。现在能够精准剥离并解析大模型返回的深层 JSON 报错（如余额不足、Token失效等），拒绝“哑巴报错”。同时新增了“空数据假死拦截”机制，在极端网络抽风导致 API 返回空流时，能立即终止等待并提示用户，彻底告别无限 Loading 假死现象。
+- AI总结持久化存储：引入独立文件存储架构（按书目独立分配 JSON）。实现了 AI 总结内容的永久保存，关闭弹窗或重启应用不再丢失。并通过底层路径 MD5 哈希算法，彻底杜绝了同名书籍导入导致的数据覆盖 Bug。
 - 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
 - 滚动排版架构重构：全面引入“轨道分离（Track Separation）”技术。通过精密的内外双层边距（Padding）配合，将滚动条与文字在物理图层上彻底隔离。既保持了完美的左右视觉对称，又彻底根除安卓端滚动条遮挡文字的痛点，实现100%无遮挡的沉浸式阅读体验。
 
@@ -1055,11 +1095,19 @@ class NovelReaderApp:
     def show_ai_dialog(self, e):
         if not self.engine.chapters_info: return
         
-        ch_info = self.engine.chapters_info[self.current_chapter_idx]
+        self.global_dialog.modal = True
         
-        result_text = ft.Markdown("点击下方按钮，开始使用 AI 梳理本章节剧情...\n\n*(注意：请确保已在首页设置中配置了 API Key)*", selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
+        target_idx = self.current_chapter_idx
+        ch_info = self.engine.chapters_info[target_idx]
         
-        btn_start = ft.Button(content=ft.Text("🚀 总结本章"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
+        existing_summary = self.current_book_summaries.get(str(target_idx), "")
+        
+        init_text = existing_summary if existing_summary else "点击下方按钮，开始使用 AI 梳理本章节剧情...\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
+        btn_text = "🔄 重新总结" if existing_summary else "🚀 总结本章"
+        
+        result_text = ft.Markdown(init_text, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
+        
+        btn_start = ft.Button(content=ft.Text(btn_text), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
         btn_copy = ft.Button(content=ft.Text("📋 复制"), style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE))
 
         def start_ai(e):
@@ -1071,12 +1119,16 @@ class NovelReaderApp:
             btn_start.content.value = "思考中..."
             result_text.value = "✨ 大模型正在阅读本章并进行多维度梳理，请稍候...\n\n"
             
-            btn_start.update()
-            result_text.update()
+            # 【核心修改点 1】：强力防弹衣。包上 try...except，彻底杜绝控件意外脱离导致的 App 崩溃
+            try:
+                btn_start.update()
+                result_text.update()
+            except Exception:
+                pass
 
-            chapter_text = self.engine.get_chapter_text(self.current_chapter_idx)[:15000]
+            chapter_text = self.engine.get_chapter_text(target_idx)[:15000]
             
-            stream_buffer = [result_text.value] 
+            stream_buffer = [""] 
             is_streaming = [True]
 
             async def ui_updater():
@@ -1101,12 +1153,14 @@ class NovelReaderApp:
                 
                 try:
                     btn_start.disabled = False
-                    btn_start.content.value = "重新总结"
+                    btn_start.content.value = "🔄 重新总结"
                     btn_start.update()
                 except Exception:
                     pass
 
             def fetch():
+                is_success = True
+                has_real_data = False
                 try:
                     req_data = {
                         "model": self.ai_config["model"],
@@ -1127,10 +1181,12 @@ class NovelReaderApp:
                         method="POST"
                     )
                     
-                    stream_buffer[0] = ""
-
                     with urllib.request.urlopen(req, timeout=60) as response:
                         while True:
+                            if not getattr(self.global_dialog, "open", False):
+                                is_success = False
+                                break
+
                             line = response.readline()
                             if not line:
                                 break
@@ -1147,13 +1203,44 @@ class NovelReaderApp:
                                     data_json = json.loads(data_str)
                                     delta = data_json["choices"][0].get("delta", {})
                                     if "content" in delta:
+                                        # 【核心修改点 2】：优化清空时序。大模型吐出第一个字时才清空提示语，终结 Markdown 闪烁崩溃
+                                        if not has_real_data:
+                                            stream_buffer[0] = ""
+                                            has_real_data = True
                                         stream_buffer[0] += delta["content"]
                                 except Exception:
                                     pass
+                except urllib.error.HTTPError as ex:
+                    is_success = False
+                    if not has_real_data:
+                        stream_buffer[0] = ""
+                    error_msg = str(ex)
+                    try:
+                        error_body = ex.read().decode('utf-8')
+                        error_json = json.loads(error_body)
+                        if "error" in error_json and "message" in error_json["error"]:
+                            error_msg += f"\n详细原因: {error_json['error']['message']}"
+                        elif "message" in error_json:
+                            error_msg += f"\n详细原因: {error_json['message']}"
+                        else:
+                            error_msg += f"\n详细数据: {error_body}"
+                    except:
+                        pass
+                    stream_buffer[0] += f"\n\n❌ **接口请求失败**: {error_msg}\n\n请检查 API Key 是否填写正确、余额是否充足，或模型名称是否有误。"
                 except Exception as ex:
-                    stream_buffer[0] += f"\n\n❌ **请求失败**: {str(ex)}\n\n请检查网络连通性或 API Key 是否正确。"
+                    is_success = False
+                    if not has_real_data:
+                        stream_buffer[0] = ""
+                    stream_buffer[0] += f"\n\n❌ **网络异常**: {str(ex)}\n\n请检查网络连通性。"
                 finally:
                     is_streaming[0] = False
+                    if is_success and not has_real_data:
+                        is_success = False
+                        stream_buffer[0] = "⚠️ 大模型未返回任何有效内容，请稍后重试或检查接口状态。"
+
+                    if is_success and stream_buffer[0]:
+                        self.current_book_summaries[str(target_idx)] = stream_buffer[0]
+                        self._save_book_summaries()
 
             self.page.run_task(ui_updater)
             threading.Thread(target=fetch, daemon=True).start()
@@ -1164,7 +1251,10 @@ class NovelReaderApp:
 
             btn_copy.content.value = "✅ 复制成功"
             btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
-            btn_copy.update()
+            try:
+                btn_copy.update()
+            except Exception:
+                pass
             
             await asyncio.sleep(2)
             btn_copy.content.value = "📋 复制"
