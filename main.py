@@ -78,7 +78,6 @@ class NovelReaderApp:
             font_family=target_font,
             scrollbar_theme=ft.ScrollbarTheme(
                 thumb_visibility=False,         
-                # 【修改点：方案 A】恢复全局固定粗细，强行约束双端表现，拯救安卓 ListView 隐形 Bug
                 thickness=4,
                 thumb_color=ft.Colors.OUTLINE_VARIANT
             )
@@ -697,7 +696,8 @@ class NovelReaderApp:
         )
 
         self.text_panel = ft.Container(
-            padding=ft.Padding(left=20, right=8, top=5, bottom=20),
+            # 【修改点 1】：正文区域左右对齐 AI 总结的 20 像素，上下边距保持 5 和 20 绝对不动
+            padding=ft.Padding(left=20, right=20, top=5, bottom=20),
             on_click=self.toggle_immersive, 
             bgcolor=ft.Colors.TRANSPARENT,
             expand=True
@@ -874,12 +874,12 @@ class NovelReaderApp:
             for p in paragraphs
         ]
 
-        self.text_scroll_col = ft.ListView(
+        self.text_scroll_col = ft.Column(
             controls=self.reader_text_controls, 
             expand=True, 
+            scroll=ft.ScrollMode.AUTO,
             key="text_scroll_col",
-            spacing=self.paragraph_spacing,
-            padding=ft.Padding(left=0, top=0, right=12, bottom=0) 
+            spacing=self.paragraph_spacing
         )
         
         self.text_panel.content = self.text_scroll_col
@@ -992,7 +992,8 @@ class NovelReaderApp:
 
     def show_changelog_dialog(self, e):
         self.global_dialog.inset_padding = None
-        self.global_dialog.content_padding = None
+        # 【修改点 2】：显式接管外层边距，左右边距对齐 AI 弹窗的 20 像素，上下维持系统原本默认的 24 像素绝对不动
+        self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=20, bottom=24)
 
         log_text = """【v0.3.12】核心存储机制修复
 - 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
@@ -1028,10 +1029,12 @@ class NovelReaderApp:
         self.global_dialog.title = ft.Text("历史更新记录")
         
         self.global_dialog.content = ft.Container(
-            content=ft.ListView(
+            content=ft.Column(
                 controls=[ft.Text(log_text, selectable=True)], 
-                padding=ft.Padding(left=0, top=0, right=12, bottom=0)
+                scroll=ft.ScrollMode.AUTO
             ), 
+            # 【配合修改点 2】：彻底清空内部 padding，消除内部挤压，让滚动条完美向外贴靠到 20 像素的位置
+            padding=0,
             height=400, width=500
         )
         self.global_dialog.actions = [ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())]
