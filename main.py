@@ -66,7 +66,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.11"  
+        self.version = "0.3.12"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -76,9 +76,8 @@ class NovelReaderApp:
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
             font_family=target_font,
-            # 【核心修改点】：移除 thickness，彻底交由系统底层智能降级分配最完美的粗细
             scrollbar_theme=ft.ScrollbarTheme(
-                thumb_visibility=False,         # 滑动时显示，停止后自动淡出
+                thumb_visibility=False,         
                 thumb_color=ft.Colors.OUTLINE_VARIANT
             )
         ) 
@@ -248,9 +247,16 @@ class NovelReaderApp:
             base_dir = os.path.join(appdata, "NovelReaderApp")
         else:
             home_dir = os.path.expanduser("~")
+            current_dir = os.path.abspath(os.path.dirname(__file__))
+            current_dir_normalized = current_dir.replace("\\", "/")
             
-            if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
-                home_dir = os.path.abspath(os.path.dirname(__file__))
+            # 【核心修改点：致命数据丢失 Bug 修复】
+            # 跳出 flet 引擎沙盒的死亡圈。引擎在每次更新 APK 时会暴力抹除 flet/app 目录。
+            # 我们通过截断路径，强行退回到上一级的安全持久化区（files 根目录）。
+            if "flet/app" in current_dir_normalized:
+                home_dir = current_dir_normalized.split("flet/app")[0]
+            elif home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
+                home_dir = current_dir
                 
             base_dir = os.path.join(home_dir, ".novelreaderapp")
             
@@ -989,8 +995,10 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
-        # 【追加日志】：记录本次滚动条双端智能适配
-        log_text = """【v0.3.11】UI细节与提示框优化
+        log_text = """【v0.3.12】核心存储机制修复
+- 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
+
+【v0.3.11】UI细节与提示框优化
 - 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式，彻底解决安卓端全面屏手势条导致的异常高度问题。
 - 轻提示 (Toast) 视觉升级：采用“透明包裹层+内部独立容器”的设计模式，打破底层框架强制居中的限制，实现了完全靠左对齐且宽度完美自适应文字长度的精致 Toast 轻提示效果。
 - 滚动条双端智能适配：移除全局强制粗细限制，PC 端还原宽体以方便鼠标精准拖拽，安卓端恢复原生极细线条以保障沉浸式阅读。
