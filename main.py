@@ -86,15 +86,11 @@ class NovelReaderApp:
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
-        self.page.theme_mode = ft.ThemeMode.SYSTEM
         
-        # 【修改点 1】：更新字体库，删除旧字体，增加新字体
         self.page.fonts = {
-            "油茶馓子体": "fonts/油茶馓子体.ttf",
             "思源黑体": "fonts/思源黑体.ttf",
             "思源宋体": "fonts/思源宋体.ttf",
             "汉仪正圆": "fonts/汉仪正圆.ttf",
-            "寒蝉仿宋": "fonts/寒蝉仿宋.ttf",
         }
 
         target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
@@ -116,6 +112,7 @@ class NovelReaderApp:
         self.font_size = 18
         self.line_height = 1.5           
         self.paragraph_spacing = 10      
+        self.letter_spacing = 0.0  
         self.filtered_toc_mapping = []
         self.last_search_query = None  
         self.is_immersive = False  
@@ -124,6 +121,9 @@ class NovelReaderApp:
         self.bg_image = None  
         self.reader_text_color = None
         self.font_family = None
+        
+        # 【新增】：跟随系统主题状态
+        self.follow_system_theme = True
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -155,6 +155,9 @@ class NovelReaderApp:
 
         self._load_config_from_appdata()
         self._load_bookshelf()
+        
+        # 【新增】：绑定操作系统深浅色模式切换监听器
+        self.page.on_platform_brightness_change = self._on_os_theme_change
 
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
@@ -162,6 +165,11 @@ class NovelReaderApp:
         self.page.run_task(self._update_clock_task)
 
         self.build_home_view()
+
+    # 【新增】：系统主题变化回调
+    def _on_os_theme_change(self, e):
+        if getattr(self, "follow_system_theme", True):
+            self.sync_theme_btn_ui()
 
     async def _update_clock_task(self):
         while True:
@@ -340,7 +348,25 @@ class NovelReaderApp:
                     self.bg_image = data.get("bg_image")  
                     self.reader_text_color = data.get("reader_text_color")
                     self.font_family = data.get("font_family")
-            except Exception: pass
+                    self.letter_spacing = data.get("letter_spacing", 0.0)
+                    
+                    # 读取跟随系统设置与当前主题
+                    self.follow_system_theme = data.get("follow_system_theme", True)
+                    saved_theme = data.get("theme_mode", "system")
+                    
+                    if self.follow_system_theme:
+                        self.page.theme_mode = ft.ThemeMode.SYSTEM
+                    else:
+                        if saved_theme == "dark":
+                            self.page.theme_mode = ft.ThemeMode.DARK
+                        elif saved_theme == "light":
+                            self.page.theme_mode = ft.ThemeMode.LIGHT
+                        else:
+                            self.page.theme_mode = ft.ThemeMode.SYSTEM
+            except Exception: 
+                self.page.theme_mode = ft.ThemeMode.SYSTEM
+        else:
+            self.page.theme_mode = ft.ThemeMode.SYSTEM
 
     def _save_config_to_appdata(self):
         path = self._get_config_path()
@@ -349,6 +375,13 @@ class NovelReaderApp:
         data_to_save["bg_image"] = self.bg_image  
         data_to_save["reader_text_color"] = self.reader_text_color
         data_to_save["font_family"] = self.font_family
+        data_to_save["letter_spacing"] = self.letter_spacing
+        
+        # 写入跟随系统设置与当前主题
+        data_to_save["follow_system_theme"] = self.follow_system_theme
+        theme_val = self.page.theme_mode.value if isinstance(self.page.theme_mode, ft.ThemeMode) else self.page.theme_mode
+        data_to_save["theme_mode"] = theme_val
+        
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data_to_save, f, ensure_ascii=False, indent=4)
@@ -706,11 +739,35 @@ class NovelReaderApp:
             self.reading_base_layer.bgcolor = self.bg_color
             self.reading_base_layer.image = ft.DecorationImage(
                 src=self.bg_image,
-                repeat=ft.ImageRepeat.REPEAT
+                repeat="repeat"
             ) if self.bg_image else None
             self.reading_base_layer.update()
         
         self._save_config_to_appdata()
+
+    # 【新增】：提取当前真实有效的主题模式（用于底部按钮状态同步）
+    def _get_is_dark_mode(self):
+        if self.page.theme_mode == ft.ThemeMode.DARK:
+            return True
+        elif self.page.theme_mode == ft.ThemeMode.LIGHT:
+            return False
+        else:
+            return str(self.page.platform_brightness).lower().endswith("dark")
+
+    # 【新增】：同步更新底部日夜间按钮的 UI 状态
+    def sync_theme_btn_ui(self):
+        if not hasattr(self, "theme_btn"): return
+        is_dark = self._get_is_dark_mode()
+        
+        if is_dark:
+            self.theme_btn.content.value = "日间"
+            self.theme_btn.icon = ft.Icons.LIGHT_MODE
+        else:
+            self.theme_btn.content.value = "夜间"
+            self.theme_btn.icon = ft.Icons.DARK_MODE
+            
+        try: self.theme_btn.update()
+        except: pass
 
     # ==========================================
     # 视图：阅读沉浸页面
@@ -736,6 +793,7 @@ class NovelReaderApp:
         self.font_size_text = ft.Text(str(self.font_size), weight=ft.FontWeight.BOLD)
         self.line_height_text = ft.Text(f"{self.line_height:.1f}", weight=ft.FontWeight.BOLD)
         self.para_spacing_text = ft.Text(str(self.paragraph_spacing), weight=ft.FontWeight.BOLD)
+        self.letter_spacing_text = ft.Text(f"{self.letter_spacing:.1f}", weight=ft.FontWeight.BOLD)
 
         def set_bg_preset(bg, text, bg_image=None):
             self.update_reader_appearance(bg=bg, text=text, bg_image=bg_image)
@@ -743,68 +801,125 @@ class NovelReaderApp:
         def set_font_preset(font_name):
             self.update_reader_appearance(font=font_name)
 
-        # 【修改点 2】：增加新材質背景适配（深牛皮纸、浅牛皮纸）
         bg_options = ft.Row([
             ft.IconButton(icon=ft.Icons.BRIGHTNESS_AUTO, tooltip="默认", on_click=lambda _: set_bg_preset(None, None, None)),
             ft.Container(width=30, height=30, bgcolor="#FFFFFF", border_radius=15, tooltip="纯白", on_click=lambda _: set_bg_preset("#FFFFFF", "#212121"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            ft.Container(width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸", on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            ft.Container(width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸(深)", on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            ft.Container(width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸(浅)", on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            
+            ft.Container(
+                width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸一", 
+                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb.jpg", fit="cover"),
+                on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            
+            ft.Container(
+                width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸二", 
+                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb2.jpg", fit="cover"),
+                on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            
+            ft.Container(
+                width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸三", 
+                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb3.jpg", fit="cover"),
+                on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            
             ft.Container(width=30, height=30, bgcolor="#F5F5DC", border_radius=15, tooltip="米黄", on_click=lambda _: set_bg_preset("#F5F5DC", "#3E2723"), border=ft.Border.all(1, ft.Colors.GREY_400)),
             ft.Container(width=30, height=30, bgcolor="#CCE8CF", border_radius=15, tooltip="护眼", on_click=lambda _: set_bg_preset("#CCE8CF", "#1B5E20"), border=ft.Border.all(1, ft.Colors.GREY_400)),
             ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24)),
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
 
-        # 【修改点 1 续】：更新设置面板中的字体选项按钮
         font_options = ft.Row([
-            ft.TextButton("默认", on_click=lambda _: set_font_preset(None)),
-            ft.TextButton("油茶", on_click=lambda _: set_font_preset("油茶馓子体")),
-            ft.TextButton("黑体", on_click=lambda _: set_font_preset("思源黑体")),
-            ft.TextButton("宋体", on_click=lambda _: set_font_preset("思源宋体")),
-            ft.TextButton("正圆", on_click=lambda _: set_font_preset("汉仪正圆")),
-            ft.TextButton("仿宋", on_click=lambda _: set_font_preset("寒蝉仿宋")),
+            ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("黑体", font_family="思源黑体", size=15), on_click=lambda _: set_font_preset("思源黑体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("宋体", font_family="思源宋体", size=15), on_click=lambda _: set_font_preset("思源宋体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
         ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
-        # 【修改点 3】：紧凑化弹窗排版
+        typography_row = ft.Row([
+            ft.Column([
+                ft.Row([
+                    ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_font(-1), icon_size=20),
+                    self.font_size_text,
+                    ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_font(1), icon_size=20),
+                ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Text("字号", size=12, color=ft.Colors.GREY_500)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+
+            ft.Column([
+                ft.Row([
+                    ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: self.change_letter_spacing(-0.5), icon_size=20, tooltip="字距-"),
+                    self.letter_spacing_text,
+                    ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: self.change_letter_spacing(0.5), icon_size=20, tooltip="字距+"),
+                ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Text("字距", size=12, color=ft.Colors.GREY_500)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+            
+            ft.Column([
+                ft.Row([
+                    ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(-0.1), icon_size=20, tooltip="行距-"),
+                    self.line_height_text,
+                    ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(0.1), icon_size=20, tooltip="行距+"),
+                ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Text("行距", size=12, color=ft.Colors.GREY_500)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+
+            ft.Column([
+                ft.Row([
+                    ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(-5), icon_size=20, tooltip="段距-"),
+                    self.para_spacing_text,
+                    ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(5), icon_size=20, tooltip="段距+"),
+                ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
+                ft.Text("段距", size=12, color=ft.Colors.GREY_500)
+            ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+        # 【核心修改点：加入设置面板中的 跟随系统 Switch 逻辑】
+        def on_system_theme_switch_change(e):
+            self.follow_system_theme = e.control.value
+            if self.follow_system_theme:
+                self.page.theme_mode = ft.ThemeMode.SYSTEM
+            else:
+                is_dark = str(self.page.platform_brightness).lower().endswith("dark")
+                self.page.theme_mode = ft.ThemeMode.DARK if is_dark else ft.ThemeMode.LIGHT
+            self.page.update()
+            self.sync_theme_btn_ui()
+            self._save_config_to_appdata()
+
+        self.system_theme_switch = ft.Switch(
+            value=self.follow_system_theme, 
+            on_change=on_system_theme_switch_change,
+            active_color=ft.Colors.BLUE,
+            scale=0.85 # 缩小控件，防止撑大行距
+        )
+
+        theme_switch_row = ft.Row([
+            ft.Text("跟随系统主题", size=14, weight=ft.FontWeight.BOLD),
+            self.system_theme_switch
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
+        # 【排版修改点：极致垂直压缩，将内边距缩减为12，间距缩减为4，Divider 高度缩减为 6】
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
-                padding=15, # 减少内边距
+                padding=12, 
                 content=ft.Column([
-                    ft.Text("排版调整", size=14, weight=ft.FontWeight.BOLD), # 减小标题字号
-                    ft.Row([
-                        ft.Row([
-                            ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_font(-1), icon_size=20),
-                            self.font_size_text,
-                            ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_font(1), icon_size=20),
-                        ]),
-                        ft.Row([
-                            ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(-0.1), icon_size=20, tooltip="行距-"),
-                            self.line_height_text,
-                            ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(0.1), icon_size=20, tooltip="行距+"),
-                        ]),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Row([
-                         ft.Text("段距:", size=13),
-                         ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(-5), icon_size=20),
-                         self.para_spacing_text,
-                         ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(5), icon_size=20),
-                    ], alignment=ft.MainAxisAlignment.START),
+                    ft.Text("排版调整", size=14, weight=ft.FontWeight.BOLD), 
+                    typography_row,
                     
-                    ft.Divider(height=10), # 缩小分隔线空间
+                    ft.Divider(height=6, thickness=0.5), 
+                    theme_switch_row,
+                    
+                    ft.Divider(height=6, thickness=0.5), 
                     ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
                     bg_options,
                     
-                    ft.Divider(height=10),
+                    ft.Divider(height=6, thickness=0.5),
                     ft.Text("字体选择", size=14, weight=ft.FontWeight.BOLD),
                     font_options,
 
-                    ft.Divider(height=10),
+                    ft.Divider(height=6, thickness=0.5),
                     ft.Button(
                         content=ft.Row([ft.Icon(ft.Icons.COPY, size=18), ft.Text("复制本章", size=13)], alignment=ft.MainAxisAlignment.CENTER),
                         on_click=self.copy_current,
-                        style=ft.ButtonStyle(bgcolor="surface", padding=10)
+                        style=ft.ButtonStyle(bgcolor="surface", color=ft.Colors.ON_SURFACE, padding=10)
                     )
-                ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=5) # 减小组件间距
+                ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=4) 
             )
         )
 
@@ -849,13 +964,38 @@ class NovelReaderApp:
             bgcolor=self.bg_color, 
             image=ft.DecorationImage(
                 src=self.bg_image,
-                repeat=ft.ImageRepeat.REPEAT
+                repeat="repeat"
             ) if self.bg_image else None,
             content=ft.Column([
                 self.info_bar,
                 self.text_panel
             ], spacing=0)
         )
+
+        # 【核心修改点：底部日夜间按钮的策略 A 逻辑落地】
+        def toggle_app_theme(e):
+            # 策略 A：一旦手动点击，立刻强行剥夺“跟随系统”权限，并更新 Switch 的 UI
+            self.follow_system_theme = False
+            if hasattr(self, "system_theme_switch"):
+                self.system_theme_switch.value = False
+                try: self.system_theme_switch.update()
+                except: pass
+
+            # 强行翻转当前的真实主题色
+            is_dark = self._get_is_dark_mode()
+            self.page.theme_mode = ft.ThemeMode.LIGHT if is_dark else ft.ThemeMode.DARK
+            self.page.update()
+            
+            self.sync_theme_btn_ui()
+            self._save_config_to_appdata()
+
+        self.theme_btn = ft.Button(
+            content=ft.Text("日间"), # 占位字符，下方会立即被 sync 函数覆写准确状态
+            icon=ft.Icons.LIGHT_MODE,
+            on_click=toggle_app_theme,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8)) 
+        )
+        self.sync_theme_btn_ui()
 
         self.reader_bottom_bar = ft.Container(
             bottom=0, left=0, right=0,
@@ -873,8 +1013,9 @@ class NovelReaderApp:
                         content=ft.Text("目录"), 
                         icon=ft.Icons.MENU_BOOK, 
                         on_click=self._open_toc_sheet,
-                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
+                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
                     ),
+                    self.theme_btn,
                     ft.Button(
                         content=ft.Text("AI总结"), 
                         icon=ft.Icons.AUTO_AWESOME, 
@@ -882,14 +1023,14 @@ class NovelReaderApp:
                         style=ft.ButtonStyle(
                             color=ft.Colors.WHITE, 
                             bgcolor=ft.Colors.DEEP_PURPLE_400,
-                            padding=ft.Padding.symmetric(horizontal=12) 
+                            padding=ft.Padding.symmetric(horizontal=8) 
                         )
                     ),
                     ft.Button(
                         content=ft.Text("界面"), 
                         icon=ft.Icons.FORMAT_SIZE, 
                         on_click=self._open_settings_sheet,
-                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
+                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
                     )
                 ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
             ], tight=True, spacing=10),
@@ -1014,7 +1155,7 @@ class NovelReaderApp:
             ft.Text(
                 p, 
                 size=self.font_size, 
-                style=ft.TextStyle(height=self.line_height),
+                style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
                 font_family=self.font_family, 
                 color=self.reader_text_color   
             ) 
@@ -1089,7 +1230,7 @@ class NovelReaderApp:
             self.line_height = new_height
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
-                    ctrl.style = ft.TextStyle(height=self.line_height)
+                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
                     ctrl.update()
             if hasattr(self, "line_height_text"):
                 self.line_height_text.value = f"{self.line_height:.1f}"
@@ -1105,6 +1246,18 @@ class NovelReaderApp:
             if hasattr(self, "para_spacing_text"):
                 self.para_spacing_text.value = str(self.paragraph_spacing)
                 self.para_spacing_text.update()
+
+    def change_letter_spacing(self, delta):
+        new_spacing = round(self.letter_spacing + delta, 1)
+        if 0.0 <= new_spacing <= 10.0:
+            self.letter_spacing = new_spacing
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    ctrl.update()
+            if hasattr(self, "letter_spacing_text"):
+                self.letter_spacing_text.value = f"{self.letter_spacing:.1f}"
+                self.letter_spacing_text.update()
 
     async def copy_current(self, e):
         if not self.engine.chapters_info: return
@@ -1153,9 +1306,11 @@ class NovelReaderApp:
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
         log_text = """【v0.3.14】个性化阅读体验升级
+- (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。而在底部菜单点击“日/夜间”时，系统会自动退出跟随模式，将控制权完全交还给您。
 - 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间），完美平衡视觉舒适度与审美。
-- 字体随心换：重磅引入三款精选中文字体（油茶馓子体、钉钉进步体、卓特清雅体），支持在设置面板一键无缝切换，提升阅读质感。
-- 配置全记忆：背景颜色与字体选择现已支持本地持久化存储，应用重启后依然保留您的专属偏好。
+- 字体随心换：重磅引入精选中文字体，支持在设置面板一键无缝切换，提升阅读质感。
+- 细致排版：新增文章“字距”微调功能。
+- 配置全记忆：背景颜色、字体与主题联动状态现已支持本地持久化存储，应用重启后依然保留您的专属偏好。
 
 【v0.3.13】AI交互体验进阶
 - AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。
