@@ -76,7 +76,9 @@ class NovelReaderApp:
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
             font_family=target_font,
+            # 【核心修改点】：移除 thickness，彻底交由系统底层智能降级分配最完美的粗细
             scrollbar_theme=ft.ScrollbarTheme(
+                thumb_visibility=False,         # 滑动时显示，停止后自动淡出
                 thumb_color=ft.Colors.OUTLINE_VARIANT
             )
         ) 
@@ -178,8 +180,6 @@ class NovelReaderApp:
     def show_snack_bar(self, msg):
         self.snack_counter += 1
         
-        # 【核心修改点：方案 1 偷天换日法，构建靠左对齐的自适应轻提示 (Toast)】
-        # 1. 手工搓一个实体的、样式优美的文字容器
         toast_ui = ft.Container(
             content=ft.Text(msg, color=ft.Colors.ON_INVERSE_SURFACE),
             bgcolor=ft.Colors.INVERSE_SURFACE,
@@ -187,14 +187,12 @@ class NovelReaderApp:
             border_radius=8,
         )
         
-        # 2. 将官方 SnackBar 设置为全透明无阴影，并在内部使用 Row 将实体容器强制靠左拉扯
         new_snack = ft.SnackBar(
             content=ft.Row([toast_ui], alignment=ft.MainAxisAlignment.START), 
             behavior=ft.SnackBarBehavior.FLOATING,
-            bgcolor=ft.Colors.TRANSPARENT,  # 外部包裹层完全透明
-            elevation=0,                    # 去掉外部自带阴影
-            padding=0,                      # 去除外部多余内边距，完全由内部容器接管尺寸
-            # 【修复点：方案 B】追加闪电消失属性，让隐形玻璃罩仅存在 1.2 秒以释放底层点击
+            bgcolor=ft.Colors.TRANSPARENT,  
+            elevation=0,                    
+            padding=0,                      
             duration=1200,                  
             key=f"snack_{self.snack_counter}"
         )
@@ -251,20 +249,15 @@ class NovelReaderApp:
         else:
             home_dir = os.path.expanduser("~")
             
-            # 【安卓护城河突破】：如果系统强制将 ~ 解析为无权限的 /data 或 /，
-            # 或者是即使解析了也没有写入权限，我们立刻将目录重定向到 Flet App 自身的内部沙盒！
             if home_dir == "/data" or home_dir == "/" or not os.access(home_dir, os.W_OK):
-                # os.path.dirname(__file__) 是应用安装后的专属独立沙盒目录，绝对拥有最高读写权限
                 home_dir = os.path.abspath(os.path.dirname(__file__))
                 
             base_dir = os.path.join(home_dir, ".novelreaderapp")
             
-        # 安全创建核心目录，不再“静默吃掉报错”
         if not os.path.exists(base_dir):
             try: 
                 os.makedirs(base_dir, exist_ok=True)
             except Exception: 
-                # 【终极兜底】：如果各种权限都被锁死，使用操作系统的临时缓存目录
                 import tempfile
                 base_dir = os.path.join(tempfile.gettempdir(), "NovelReaderApp")
                 try: 
@@ -996,9 +989,11 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = None
 
+        # 【追加日志】：记录本次滚动条双端智能适配
         log_text = """【v0.3.11】UI细节与提示框优化
 - 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式，彻底解决安卓端全面屏手势条导致的异常高度问题。
 - 轻提示 (Toast) 视觉升级：采用“透明包裹层+内部独立容器”的设计模式，打破底层框架强制居中的限制，实现了完全靠左对齐且宽度完美自适应文字长度的精致 Toast 轻提示效果。
+- 滚动条双端智能适配：移除全局强制粗细限制，PC 端还原宽体以方便鼠标精准拖拽，安卓端恢复原生极细线条以保障沉浸式阅读。
 
 【v0.3.10】UI细节与滚动体验优化
 - 滚动条适配：引入智能自适应灰色（ON_SURFACE_VARIANT/OUTLINE_VARIANT）全局滚动条主题，完美契合深浅模式，既保证滑动可见又不抢夺视觉焦点。
@@ -1165,7 +1160,7 @@ class NovelReaderApp:
         
         self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
         self.global_dialog.content = ft.Container(
-            content=ft.Column([result_text], scroll=ft.ScrollMode.ALWAYS, tight=True),
+            content=ft.Column([result_text], scroll=ft.ScrollMode.AUTO, tight=True),
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
