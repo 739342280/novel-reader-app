@@ -87,9 +87,10 @@ class NovelReaderApp:
         
         self.page.title = f"小说智读 - v{self.version}"
         
+        # 【修改点】：更新字体库，加入汉仪旗黑与汉仪中宋
         self.page.fonts = {
-            "思源黑体": "fonts/思源黑体.ttf",
-            "思源宋体": "fonts/思源宋体.ttf",
+            "汉仪旗黑": "fonts/汉仪旗黑.ttf",
+            "汉仪中宋": "fonts/汉仪中宋.ttf",
             "汉仪正圆": "fonts/汉仪正圆.ttf",
         }
 
@@ -123,6 +124,7 @@ class NovelReaderApp:
         self.font_family = None
         
         self.follow_system_theme = True
+        self.manual_theme_mode = "light" 
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -166,7 +168,14 @@ class NovelReaderApp:
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
+            self.page.theme_mode = ft.ThemeMode.SYSTEM
             self.sync_theme_btn_ui()
+        else:
+            if "dark" in getattr(self, "manual_theme_mode", "light"):
+                self.page.theme_mode = ft.ThemeMode.DARK
+            else:
+                self.page.theme_mode = ft.ThemeMode.LIGHT
+        self.page.update()
 
     async def _update_clock_task(self):
         while True:
@@ -348,17 +357,15 @@ class NovelReaderApp:
                     self.letter_spacing = data.get("letter_spacing", 0.0)
                     
                     self.follow_system_theme = data.get("follow_system_theme", True)
-                    saved_theme = data.get("theme_mode", "system")
+                    self.manual_theme_mode = str(data.get("theme_mode", "light")).lower()
                     
                     if self.follow_system_theme:
                         self.page.theme_mode = ft.ThemeMode.SYSTEM
                     else:
-                        if saved_theme == "dark":
+                        if "dark" in self.manual_theme_mode:
                             self.page.theme_mode = ft.ThemeMode.DARK
-                        elif saved_theme == "light":
-                            self.page.theme_mode = ft.ThemeMode.LIGHT
                         else:
-                            self.page.theme_mode = ft.ThemeMode.SYSTEM
+                            self.page.theme_mode = ft.ThemeMode.LIGHT
             except Exception: 
                 self.page.theme_mode = ft.ThemeMode.SYSTEM
         else:
@@ -374,8 +381,7 @@ class NovelReaderApp:
         data_to_save["letter_spacing"] = self.letter_spacing
         
         data_to_save["follow_system_theme"] = self.follow_system_theme
-        theme_val = self.page.theme_mode.value if isinstance(self.page.theme_mode, ft.ThemeMode) else self.page.theme_mode
-        data_to_save["theme_mode"] = theme_val
+        data_to_save["theme_mode"] = self.manual_theme_mode 
         
         try:
             with open(path, 'w', encoding='utf-8') as f:
@@ -740,17 +746,14 @@ class NovelReaderApp:
         
         self._save_config_to_appdata()
 
-    # 【新增修改点 1】：完善底部嗅探判断，增加明确的 None 兜底容错，避免冷启动时由于 API 延迟导致的假死
     def _get_is_dark_mode(self):
-        if self.page.theme_mode == ft.ThemeMode.DARK:
-            return True
-        elif self.page.theme_mode == ft.ThemeMode.LIGHT:
-            return False
-        else:
-            pb = self.page.platform_brightness
-            if pb is None:
-                return False 
-            return str(pb).lower().endswith("dark")
+        if not getattr(self, "follow_system_theme", True):
+            return "dark" in getattr(self, "manual_theme_mode", "light")
+            
+        pb = self.page.platform_brightness
+        if pb is None:
+            return False 
+        return str(pb).lower().endswith("dark")
 
     def sync_theme_btn_ui(self):
         if not hasattr(self, "theme_btn"): return
@@ -822,10 +825,11 @@ class NovelReaderApp:
             ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24)),
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
 
+        # 【修改点】：替换为汉仪旗黑与汉仪中宋，按钮文字分别显示为“旗黑”与“中宋”
         font_options = ft.Row([
             ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("黑体", font_family="思源黑体", size=15), on_click=lambda _: set_font_preset("思源黑体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("宋体", font_family="思源宋体", size=15), on_click=lambda _: set_font_preset("思源宋体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("旗黑", font_family="汉仪旗黑", size=15), on_click=lambda _: set_font_preset("汉仪旗黑"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("中宋", font_family="汉仪中宋", size=15), on_click=lambda _: set_font_preset("汉仪中宋"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
             ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
         ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
@@ -873,7 +877,12 @@ class NovelReaderApp:
                 self.page.theme_mode = ft.ThemeMode.SYSTEM
             else:
                 is_dark = str(self.page.platform_brightness).lower().endswith("dark")
-                self.page.theme_mode = ft.ThemeMode.DARK if is_dark else ft.ThemeMode.LIGHT
+                if is_dark:
+                    self.page.theme_mode = ft.ThemeMode.DARK
+                    self.manual_theme_mode = "dark"
+                else:
+                    self.page.theme_mode = ft.ThemeMode.LIGHT
+                    self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
             self._save_config_to_appdata()
@@ -975,7 +984,12 @@ class NovelReaderApp:
                 except: pass
 
             is_dark = self._get_is_dark_mode()
-            self.page.theme_mode = ft.ThemeMode.LIGHT if is_dark else ft.ThemeMode.DARK
+            if is_dark:
+                self.page.theme_mode = ft.ThemeMode.LIGHT
+                self.manual_theme_mode = "light"
+            else:
+                self.page.theme_mode = ft.ThemeMode.DARK
+                self.manual_theme_mode = "dark"
             self.page.update()
             
             self.sync_theme_btn_ui()
@@ -1298,12 +1312,12 @@ class NovelReaderApp:
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
         log_text = """【v0.3.14】个性化阅读体验升级
-- (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。而在底部菜单点击“日/夜间”时，系统会自动退出跟随模式，将控制权完全交还给您。
-- (优化) 冷热启动状态同步：全面接管 App 的生命周期。增强底层环境嗅探的容错率，彻底防范老旧机型冷启动由于 API 延迟导致的黑屏隐患，保证启动 100% 顺滑。即使在应用完全关闭的状态下切换了操作系统的深浅色，再次打开 App 时，界面引擎与底层按钮状态依然能实现毫秒级的无缝同步适配。
+- (修复) 核心逻辑：重构了底层的系统主题状态管理架构。彻底解决了在“跟随系统”关闭状态下，因冷启动时底层 Flet 客户端强制同步导致的“深浅色手动配置被系统强行覆盖”的隐蔽 Bug。目前无论冷/热启动，用户的手动偏好都将如盘石般稳固。
+- (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。
+- (优化) 冷热启动状态同步：全面接管 App 的生命周期。增强底层环境嗅探的容错率，彻底防范老旧机型冷启动由于 API 延迟导致的黑屏隐患，保证启动 100% 顺滑。
 - 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间），完美平衡视觉舒适度与审美。
 - 字体随心换：重磅引入精选中文字体，支持在设置面板一键无缝切换，提升阅读质感。
 - 细致排版：新增文章“字距”微调功能。
-- 配置全记忆：背景颜色、字体与主题联动状态现已支持本地持久化存储，应用重启后依然保留您的专属偏好。
 
 【v0.3.13】AI交互体验进阶
 - AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。
