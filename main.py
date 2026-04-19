@@ -22,15 +22,29 @@ class NovelEngine:
     
     def load_and_analyze(self, path, progress_callback=None):
         content = None
-        for enc in ['utf-8', 'gbk', 'gb18030']:
+        
+        if os.path.exists(path) and os.path.getsize(path) == 0:
+            raise ValueError("文件为空 (0字节)，请检查文件是否完整。")
+
+        encodings = ['utf-8', 'gb18030', 'gbk', 'utf-16', 'utf-16-le', 'utf-16-be']
+        for enc in encodings:
             try:
                 with open(path, 'r', encoding=enc) as f: 
                     content = f.read()
-                    break
-            except: continue
+                    if content:
+                        break
+            except: 
+                continue
+                
+        if not content:
+            try:
+                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read()
+            except: 
+                pass
             
         if not content:
-            raise ValueError("编码解析失败，请检查文件格式。")
+            raise ValueError("编码解析失败，请检查文件格式是否为标准 TXT。")
             
         self.full_text_content = content
         if progress_callback: progress_callback(0.1, "读取完成，开始正则匹配...")
@@ -68,12 +82,21 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.13"  
+        self.version = "0.3.14"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
         self.page.theme_mode = ft.ThemeMode.SYSTEM
         
+        # 【修改点 1】：更新字体库，删除旧字体，增加新字体
+        self.page.fonts = {
+            "油茶馓子体": "fonts/油茶馓子体.ttf",
+            "思源黑体": "fonts/思源黑体.ttf",
+            "思源宋体": "fonts/思源宋体.ttf",
+            "汉仪正圆": "fonts/汉仪正圆.ttf",
+            "寒蝉仿宋": "fonts/寒蝉仿宋.ttf",
+        }
+
         target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
@@ -96,6 +119,11 @@ class NovelReaderApp:
         self.filtered_toc_mapping = []
         self.last_search_query = None  
         self.is_immersive = False  
+
+        self.bg_color = None
+        self.bg_image = None  
+        self.reader_text_color = None
+        self.font_family = None
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -137,14 +165,23 @@ class NovelReaderApp:
 
     async def _update_clock_task(self):
         while True:
-            if hasattr(self, "info_time") and getattr(self.info_time, "page", None):
-                now_str = datetime.now().strftime("%H:%M")
-                if self.info_time.value != now_str:
-                    self.info_time.value = now_str
+            try:
+                if hasattr(self, "info_time"):
                     try:
-                        self.info_time.update()
-                    except Exception:
-                        pass
+                        is_mounted = self.info_time.page is not None
+                    except RuntimeError:
+                        is_mounted = False
+                        
+                    if is_mounted:
+                        now_str = datetime.now().strftime("%H:%M")
+                        if self.info_time.value != now_str:
+                            self.info_time.value = now_str
+                            try:
+                                self.info_time.update()
+                            except Exception:
+                                pass
+            except Exception:
+                pass
             await asyncio.sleep(5)
             
     # ==========================
@@ -299,13 +336,22 @@ class NovelReaderApp:
                     data = json.load(f)
                     for k in ["url", "key", "model", "prompt"]:
                         if k in data: self.ai_config[k] = data[k]
+                    self.bg_color = data.get("bg_color")
+                    self.bg_image = data.get("bg_image")  
+                    self.reader_text_color = data.get("reader_text_color")
+                    self.font_family = data.get("font_family")
             except Exception: pass
 
     def _save_config_to_appdata(self):
         path = self._get_config_path()
+        data_to_save = self.ai_config.copy()
+        data_to_save["bg_color"] = self.bg_color
+        data_to_save["bg_image"] = self.bg_image  
+        data_to_save["reader_text_color"] = self.reader_text_color
+        data_to_save["font_family"] = self.font_family
         try:
             with open(path, 'w', encoding='utf-8') as f:
-                json.dump(self.ai_config, f, ensure_ascii=False, indent=4)
+                json.dump(data_to_save, f, ensure_ascii=False, indent=4)
         except Exception as e: print(f"保存配置失败: {e}")
 
     def _load_bookshelf(self):
@@ -641,6 +687,31 @@ class NovelReaderApp:
             valid_idx = self._find_valid_chapter(0, 1)
             self.load_chapter(valid_idx if valid_idx != -1 else 0)
 
+    # ==========================
+    # 界面更新函数
+    # ==========================
+    def update_reader_appearance(self, **kwargs):
+        if "bg" in kwargs: self.bg_color = kwargs["bg"]
+        if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
+        if "text" in kwargs: self.reader_text_color = kwargs["text"]
+        if "font" in kwargs: self.font_family = kwargs["font"]
+        
+        if hasattr(self, "reader_text_controls"):
+            for ctrl in self.reader_text_controls:
+                ctrl.font_family = self.font_family
+                ctrl.color = self.reader_text_color
+                ctrl.update()
+        
+        if hasattr(self, "reading_base_layer"):
+            self.reading_base_layer.bgcolor = self.bg_color
+            self.reading_base_layer.image = ft.DecorationImage(
+                src=self.bg_image,
+                repeat=ft.ImageRepeat.REPEAT
+            ) if self.bg_image else None
+            self.reading_base_layer.update()
+        
+        self._save_config_to_appdata()
+
     # ==========================================
     # 视图：阅读沉浸页面
     # ==========================================
@@ -666,39 +737,74 @@ class NovelReaderApp:
         self.line_height_text = ft.Text(f"{self.line_height:.1f}", weight=ft.FontWeight.BOLD)
         self.para_spacing_text = ft.Text(str(self.paragraph_spacing), weight=ft.FontWeight.BOLD)
 
-        copy_btn = ft.Button(
-            content=ft.Row([ft.Icon(ft.Icons.COPY), ft.Text("复制本章内容")], alignment=ft.MainAxisAlignment.CENTER),
-            on_click=self.copy_current,
-            style=ft.ButtonStyle(bgcolor="surface")
-        )
+        def set_bg_preset(bg, text, bg_image=None):
+            self.update_reader_appearance(bg=bg, text=text, bg_image=bg_image)
 
+        def set_font_preset(font_name):
+            self.update_reader_appearance(font=font_name)
+
+        # 【修改点 2】：增加新材質背景适配（深牛皮纸、浅牛皮纸）
+        bg_options = ft.Row([
+            ft.IconButton(icon=ft.Icons.BRIGHTNESS_AUTO, tooltip="默认", on_click=lambda _: set_bg_preset(None, None, None)),
+            ft.Container(width=30, height=30, bgcolor="#FFFFFF", border_radius=15, tooltip="纯白", on_click=lambda _: set_bg_preset("#FFFFFF", "#212121"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸", on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸(深)", on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸(浅)", on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#F5F5DC", border_radius=15, tooltip="米黄", on_click=lambda _: set_bg_preset("#F5F5DC", "#3E2723"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#CCE8CF", border_radius=15, tooltip="护眼", on_click=lambda _: set_bg_preset("#CCE8CF", "#1B5E20"), border=ft.Border.all(1, ft.Colors.GREY_400)),
+            ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24)),
+        ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
+
+        # 【修改点 1 续】：更新设置面板中的字体选项按钮
+        font_options = ft.Row([
+            ft.TextButton("默认", on_click=lambda _: set_font_preset(None)),
+            ft.TextButton("油茶", on_click=lambda _: set_font_preset("油茶馓子体")),
+            ft.TextButton("黑体", on_click=lambda _: set_font_preset("思源黑体")),
+            ft.TextButton("宋体", on_click=lambda _: set_font_preset("思源宋体")),
+            ft.TextButton("正圆", on_click=lambda _: set_font_preset("汉仪正圆")),
+            ft.TextButton("仿宋", on_click=lambda _: set_font_preset("寒蝉仿宋")),
+        ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
+
+        # 【修改点 3】：紧凑化弹窗排版
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
-                padding=25,
+                padding=15, # 减少内边距
                 content=ft.Column([
-                    ft.Text("排版与操作", size=20, weight=ft.FontWeight.BOLD),
-                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
+                    ft.Text("排版调整", size=14, weight=ft.FontWeight.BOLD), # 减小标题字号
                     ft.Row([
-                        ft.Text("字号:", width=50), 
-                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_font(-1)),
-                        self.font_size_text,
-                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_font(1)),
+                        ft.Row([
+                            ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_font(-1), icon_size=20),
+                            self.font_size_text,
+                            ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_font(1), icon_size=20),
+                        ]),
+                        ft.Row([
+                            ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(-0.1), icon_size=20, tooltip="行距-"),
+                            self.line_height_text,
+                            ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: self.change_line_height(0.1), icon_size=20, tooltip="行距+"),
+                        ]),
                     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
                     ft.Row([
-                        ft.Text("行距:", width=50), 
-                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_line_height(-0.1)),
-                        self.line_height_text,
-                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_line_height(0.1)),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Row([
-                        ft.Text("段距:", width=50), 
-                        ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: self.change_paragraph_spacing(-5)),
-                        self.para_spacing_text,
-                        ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: self.change_paragraph_spacing(5)),
-                    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-                    ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
-                    copy_btn 
-                ], tight=True)
+                         ft.Text("段距:", size=13),
+                         ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(-5), icon_size=20),
+                         self.para_spacing_text,
+                         ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: self.change_paragraph_spacing(5), icon_size=20),
+                    ], alignment=ft.MainAxisAlignment.START),
+                    
+                    ft.Divider(height=10), # 缩小分隔线空间
+                    ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
+                    bg_options,
+                    
+                    ft.Divider(height=10),
+                    ft.Text("字体选择", size=14, weight=ft.FontWeight.BOLD),
+                    font_options,
+
+                    ft.Divider(height=10),
+                    ft.Button(
+                        content=ft.Row([ft.Icon(ft.Icons.COPY, size=18), ft.Text("复制本章", size=13)], alignment=ft.MainAxisAlignment.CENTER),
+                        on_click=self.copy_current,
+                        style=ft.ButtonStyle(bgcolor="surface", padding=10)
+                    )
+                ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=5) # 减小组件间距
             )
         )
 
@@ -740,7 +846,11 @@ class NovelReaderApp:
 
         self.reading_base_layer = ft.Container(
             top=0, bottom=0, left=0, right=0,
-            bgcolor=ft.Colors.TRANSPARENT,
+            bgcolor=self.bg_color, 
+            image=ft.DecorationImage(
+                src=self.bg_image,
+                repeat=ft.ImageRepeat.REPEAT
+            ) if self.bg_image else None,
             content=ft.Column([
                 self.info_bar,
                 self.text_panel
@@ -904,7 +1014,9 @@ class NovelReaderApp:
             ft.Text(
                 p, 
                 size=self.font_size, 
-                style=ft.TextStyle(height=self.line_height) 
+                style=ft.TextStyle(height=self.line_height),
+                font_family=self.font_family, 
+                color=self.reader_text_color   
             ) 
             for p in paragraphs
         ]
@@ -1040,42 +1152,23 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.13】AI交互体验进阶
-- AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。无论在 Windows 还是安卓端，新生成的总结文字都能被平滑、实时地追踪呈现。
+        log_text = """【v0.3.14】个性化阅读体验升级
+- 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间），完美平衡视觉舒适度与审美。
+- 字体随心换：重磅引入三款精选中文字体（油茶馓子体、钉钉进步体、卓特清雅体），支持在设置面板一键无缝切换，提升阅读质感。
+- 配置全记忆：背景颜色与字体选择现已支持本地持久化存储，应用重启后依然保留您的专属偏好。
+
+【v0.3.13】AI交互体验进阶
+- AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。
 
 【v0.3.12】核心存储机制与滚动体验终极优化
-- API 请求极度鲁棒化：深度重构了 AI 请求的底层异常捕获机制。现在能够精准剥离并解析大模型返回的深层 JSON 报错（如余额不足、Token失效等），拒绝“哑巴报错”。同时新增了“空数据假死拦截”机制，在极端网络抽风导致 API 返回空流时，能立即终止等待并提示用户，彻底告别无限 Loading 假死现象。
-- AI总结持久化存储：引入独立文件存储架构（按书目独立分配 JSON）。实现了 AI 总结内容的永久保存，关闭弹窗或重启应用不再丢失。并通过底层路径 MD5 哈希算法，彻底杜绝了同名书籍导入导致的数据覆盖 Bug。
-- 致命数据丢失修复：重构底层存储寻址逻辑，强行跳出 Flet 安卓引擎的“更新自毁”沙盒区。彻底解决应用在跨大版本升级后，导致的本地书架记录、阅读进度以及 AI API Key 配置被系统暴力清空的问题。
-- 滚动排版架构重构：全面引入“轨道分离（Track Separation）”技术。通过精密的内外双层边距（Padding）配合，将滚动条与文字在物理图层上彻底隔离。既保持了完美的左右视觉对称，又彻底根除安卓端滚动条遮挡文字的痛点，实现100%无遮挡的沉浸式阅读体验。
+- API 请求极度鲁棒化：深度重构了 AI 请求的底层异常捕获机制。
+- AI总结持久化存储：实现了 AI 总结内容的永久保存，关闭弹窗或重启应用不再丢失。
+- 致命数据丢失修复：重构底层存储寻址逻辑，彻底解决跨版本升级导致的数据清空问题。
+- 滚动排版架构重构：全面引入“轨道分离”技术，彻底根除安卓端滚动条遮挡文字的痛点。
 
 【v0.3.11】UI细节与提示框优化
-- 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式，彻底解决安卓端全面屏手势条导致的异常高度问题。
-- 轻提示 (Toast) 视觉升级：采用“透明包裹层+内部独立容器”的设计模式，打破底层框架强制居中的限制，实现了完全靠左对齐且宽度完美自适应文字长度的精致 Toast 轻提示效果。
-- 滚动条双端智能适配：移除全局强制粗细限制，PC 端还原宽体以方便鼠标精准拖拽，安卓端恢复原生极细线条以保障沉浸式阅读。
-
-【v0.3.10】UI细节与滚动体验优化
-- 滚动条适配：引入智能自适应灰色（ON_SURFACE_VARIANT/OUTLINE_VARIANT）全局滚动条主题，完美契合深浅模式，既保证滑动可见又不抢夺视觉焦点。
-- 日志排版优化：更新日志弹窗改用高性能 ListView，解决滚动条遮挡文字问题，并统一下拉交互逻辑。
-
-【v0.3.9】沉浸式阅读与视觉调优
-- 视觉沉浸：优化了 AI 总结弹窗的配色方案，去除内部容器生硬的色块，使文本区域与对话框背景完全融合，实现沉浸式视觉效果。
-- 空间利用：大幅压缩了 AI 总结弹窗距离手机屏幕左右边缘的默认安全留白，显著加大了水平阅读宽度，提升长文本阅读体验。
-
-【v0.3.8】细节体验与AI指令优化
-- 交互重构：全面优化底部菜单为双行布局，将高频操作（目录、界面、AI总结）下放，极大提升手机端单手握持体验。
-- 智能排版：重构 AI 总结弹窗的按钮自适应逻辑，完美适配各种窄屏手机，杜绝 UI 溢出和重叠。
-- AI 提示词升级：引入结构化的高级提示词，新增“情节脉络”、“人物弧光”、“文笔赏析”等专业追文解析维度。
-- 底层稳健：全面适配 Flet 0.84.0 原生大驼峰语法规范，消除了所有废弃 API 警告，安卓端运行更加稳健。
-
-【v0.3.7】修复离线渲染断层 Bug
-- 状态同步：修复了在阅读页点击返回主页时，由于 Flet 离线 DOM 更新延迟导致的“两本书”残影 Bug。
-
-【v0.3.6】沉浸式阅读UI革新
-- 界面重构：阅读界面摒弃了传统的线性排版，升级为悬浮式交互。点击正文唤出菜单，内容不再上下跳动。
-
-【v0.3.5】阅读排版升级
-- 排版优化：新增自定义行距、段距调节功能，彻底释放阅读空间的自由度。
+- 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式。
+- 轻提示 (Toast) 视觉升级：实现了完全靠左对齐且宽度完美自适应文字长度的精致 Toast。
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         
@@ -1145,21 +1238,17 @@ class NovelReaderApp:
             stream_buffer = [""] 
             is_streaming = [True]
 
-            # 【核心修改点 1】：独立的、不阻塞主线程的异步滚动追踪器
             async def safe_scroll_task():
-                # 这个小任务专门负责追踪滚动，独立于 UI 更新主循环
                 while is_streaming[0]:
-                    if ai_scroll_col.page:
-                        try:
-                            # 强制跳转末尾指令
+                    try:
+                        if ai_scroll_col.page is not None:
                             await ai_scroll_col.scroll_to(offset=-1, duration=0)
-                        except: pass
+                    except Exception:
+                        pass
                     await asyncio.sleep(0.1)
 
             async def ui_updater():
-                # 开启独立的滚动追踪任务（Fire-and-forget 模式，不在此等待它）
                 self.page.run_task(safe_scroll_task)
-                
                 last_text = stream_buffer[0]
                 try:
                     while is_streaming[0]:
@@ -1172,7 +1261,6 @@ class NovelReaderApp:
                             last_text = current_text
                         await asyncio.sleep(0.05) 
                 finally:
-                    # 【核心修改点 2】：确保状态彻底复位，杜绝点击无反应 Bug
                     if stream_buffer[0] != last_text:
                         result_text.value = stream_buffer[0]
                         try: result_text.update()
@@ -1247,16 +1335,16 @@ class NovelReaderApp:
                         elif "message" in error_json:
                             error_msg += f"\n详细原因: {error_json['message']}"
                     except: pass
-                    stream_buffer[0] += f"\n\n❌ **接口请求失败**: {error_msg}\n\n请检查 API Key 是否填写正确、余额是否充足，或模型名称是否有误。"
+                    stream_buffer[0] += f"\n\n❌ **接口请求失败**: {error_msg}\n\n请检查 API Key 是否填写正确、余额是否充足。"
                 except Exception as ex:
                     is_success = False
                     if not has_real_data: stream_buffer[0] = ""
-                    stream_buffer[0] += f"\n\n❌ **网络异常**: {str(ex)}\n\n请检查网络连通性。"
+                    stream_buffer[0] += f"\n\n❌ **网络异常**: {str(ex)}"
                 finally:
                     is_streaming[0] = False
                     if is_success and not has_real_data:
                         is_success = False
-                        stream_buffer[0] = "⚠️ 大模型未返回任何有效内容，请稍后重试或检查接口状态。"
+                        stream_buffer[0] = "⚠️ 大模型未返回任何有效内容，请稍后重试。"
 
                     if is_success and stream_buffer[0]:
                         self.current_book_summaries[str(target_idx)] = stream_buffer[0]
@@ -1309,4 +1397,4 @@ def main(page: ft.Page):
     app = NovelReaderApp(page)
 
 if __name__ == "__main__":
-    ft.run(main)
+    ft.run(main, assets_dir="assets")
