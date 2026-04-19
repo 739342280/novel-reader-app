@@ -82,7 +82,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.14"  
+        self.version = "0.3.15"  # 【修改点 1】：版本号升级
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -955,14 +955,14 @@ class NovelReaderApp:
         self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
-        # 【核心修复点：将引发崩溃的旧版常量替换为稳健的底层的坐标系对齐法】
+        # 【修改点 2】：微调垂直重心，调整 top 与 bottom 参数
         self.info_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
                 ft.Container(content=self.info_chapter_name, expand=2, alignment=ft.Alignment(0, 0)),
                 ft.Container(content=self.info_time, expand=1, alignment=ft.Alignment(1, 0))
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            padding=ft.Padding(left=20, right=20, top=0, bottom=15),
+            padding=ft.Padding(left=20, right=20, top=2, bottom=12),
             on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
         )
@@ -1327,7 +1327,10 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.14】个性化阅读体验升级
+        log_text = """【v0.3.15】细节与排版打磨
+- (优化) 底部信息栏排版：微调了阅读页底部（进度、章节名、时间）的垂直边距，优化视觉重心的同时兼顾安卓端防遮挡安全区。
+
+【v0.3.14】个性化阅读体验升级
 - (修复) 核心逻辑：重构了底层的系统主题状态管理架构。彻底解决了在“跟随系统”关闭状态下，因冷启动时底层 Flet 客户端强制同步导致的“深浅色手动配置被系统强行覆盖”的隐蔽 Bug。目前无论冷/热启动，用户的手动偏好都将如盘石般稳固。
 - (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。
 - (优化) 冷热启动状态同步：全面接管 App 的生命周期。增强底层环境嗅探的容错率，彻底防范老旧机型冷启动由于 API 延迟导致的黑屏隐患，保证启动 100% 顺滑。
