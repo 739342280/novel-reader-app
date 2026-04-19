@@ -87,10 +87,9 @@ class NovelReaderApp:
         
         self.page.title = f"小说智读 - v{self.version}"
         
-        # 【修改点】：更新字体库，加入汉仪旗黑与汉仪中宋
         self.page.fonts = {
-            "汉仪旗黑": "fonts/汉仪旗黑.ttf",
-            "汉仪中宋": "fonts/汉仪中宋.ttf",
+            "思源黑体": "fonts/思源黑体.ttf",
+            "思源宋体": "fonts/思源宋体.ttf",
             "汉仪正圆": "fonts/汉仪正圆.ttf",
         }
 
@@ -273,12 +272,11 @@ class NovelReaderApp:
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
         
-        platform_str = str(self.page.platform).lower()
-        if "android" in platform_str or "ios" in platform_str:
-            try:
-                self.page.window.full_screen = self.is_immersive
-            except Exception:
-                pass
+        # 【核心尝试】：去除平台检测，全局强行请求沉浸式/全屏模式
+        try:
+            self.page.window.full_screen = self.is_immersive
+        except Exception:
+            pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -381,7 +379,14 @@ class NovelReaderApp:
         data_to_save["letter_spacing"] = self.letter_spacing
         
         data_to_save["follow_system_theme"] = self.follow_system_theme
-        data_to_save["theme_mode"] = self.manual_theme_mode 
+        
+        theme_str = str(self.page.theme_mode).lower()
+        if "dark" in theme_str:
+            data_to_save["theme_mode"] = "dark"
+        elif "light" in theme_str:
+            data_to_save["theme_mode"] = "light"
+        else:
+            data_to_save["theme_mode"] = "system"
         
         try:
             with open(path, 'w', encoding='utf-8') as f:
@@ -825,11 +830,10 @@ class NovelReaderApp:
             ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24)),
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
 
-        # 【修改点】：替换为汉仪旗黑与汉仪中宋，按钮文字分别显示为“旗黑”与“中宋”
         font_options = ft.Row([
             ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("旗黑", font_family="汉仪旗黑", size=15), on_click=lambda _: set_font_preset("汉仪旗黑"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("中宋", font_family="汉仪中宋", size=15), on_click=lambda _: set_font_preset("汉仪中宋"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("黑体", font_family="思源黑体", size=15), on_click=lambda _: set_font_preset("思源黑体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            ft.TextButton(content=ft.Text("宋体", font_family="思源宋体", size=15), on_click=lambda _: set_font_preset("思源宋体"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
             ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
         ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
