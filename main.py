@@ -82,7 +82,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.15"  # 【修改点 1】：版本号升级
+        self.version = "0.3.15"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -955,7 +955,6 @@ class NovelReaderApp:
         self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
-        # 【修改点 2】：微调垂直重心，调整 top 与 bottom 参数
         self.info_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
@@ -967,8 +966,9 @@ class NovelReaderApp:
             bgcolor=ft.Colors.TRANSPARENT
         )
 
+        # 【核心修改点：调整正文上部的留白为 35 像素】
         self.text_panel = ft.Container(
-            padding=ft.Padding(left=20, right=4, top=30, bottom=0),
+            padding=ft.Padding(left=20, right=4, top=35, bottom=0),
             on_click=self.toggle_immersive, 
             bgcolor=ft.Colors.TRANSPARENT,
             expand=True
