@@ -82,7 +82,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.15"  
+        self.version = "0.3.16"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -161,9 +161,13 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
-        self.page.run_task(self._update_clock_task)
+        # 【核心修复点】：移除导致红底白字崩溃的 ft.Battery()
+        
+        # 启动纯 Python 系统的底层电量轮询任务
+        self.page.run_task(self._update_battery_task)
 
         self.build_home_view()
+        self.refresh_system_overlay()
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -174,28 +178,69 @@ class NovelReaderApp:
                 self.page.theme_mode = ft.ThemeMode.DARK
             else:
                 self.page.theme_mode = ft.ThemeMode.LIGHT
+        self.refresh_system_overlay()
         self.page.update()
 
-    async def _update_clock_task(self):
+    # 【新增辅助函数】：稳健的跨端底层系统电量嗅探器
+    def _get_system_battery(self):
+        # 针对安卓系统：读取内核级电源供应状态文件
+        android_path = "/sys/class/power_supply/battery/capacity"
+        if os.path.exists(android_path):
+            try:
+                with open(android_path, "r") as f:
+                    return int(f.read().strip())
+            except Exception:
+                pass
+                
+        # 针对 Win11 测试环境：调用系统 kernel32 动态链接库索要电量
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                class SYSTEM_POWER_STATUS(ctypes.Structure):
+                    _fields_ = [
+                        ('ACLineStatus', ctypes.c_byte),
+                        ('BatteryFlag', ctypes.c_byte),
+                        ('BatteryLifePercent', ctypes.c_byte),
+                        ('Reserved1', ctypes.c_byte),
+                        ('BatteryLifeTime', ctypes.c_ulong),
+                        ('BatteryFullLifeTime', ctypes.c_ulong),
+                    ]
+                sps = SYSTEM_POWER_STATUS()
+                if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
+                    percent = sps.BatteryLifePercent
+                    if percent != 255:  # 255 代表未知/没有电池
+                        return percent
+            except Exception:
+                pass
+                
+        return None
+
+    # 【核心修复点】：安全重构后台电量刷新任务
+    async def _update_battery_task(self):
         while True:
             try:
-                if hasattr(self, "info_time"):
+                if hasattr(self, "info_battery"):
                     try:
-                        is_mounted = self.info_time.page is not None
+                        is_mounted = self.info_battery.page is not None
                     except RuntimeError:
                         is_mounted = False
                         
                     if is_mounted:
-                        now_str = datetime.now().strftime("%H:%M")
-                        if self.info_time.value != now_str:
-                            self.info_time.value = now_str
+                        # 绕过 Flet 框架，直接调用系统底层查询
+                        level = self._get_system_battery()
+                        # 如果没有电池（如台式机）则优雅降级为 --%
+                        batt_str = f"{level}%" if level is not None else "--%"
+                        
+                        if self.info_battery.value != batt_str:
+                            self.info_battery.value = batt_str
                             try:
-                                self.info_time.update()
+                                self.info_battery.update()
                             except Exception:
                                 pass
             except Exception:
                 pass
-            await asyncio.sleep(5)
+            # 电量变化缓慢，10秒轮询一次足以兼顾实时性与省电
+            await asyncio.sleep(10)
             
     # ==========================
     # 终极弹窗与抽屉调度器
@@ -271,13 +316,6 @@ class NovelReaderApp:
 
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
-        
-        platform_str = str(self.page.platform).lower()
-        if "android" in platform_str or "ios" in platform_str:
-            try:
-                self.page.window.full_screen = self.is_immersive
-            except Exception:
-                pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -730,6 +768,42 @@ class NovelReaderApp:
     # ==========================
     # 界面更新函数
     # ==========================
+    
+    def refresh_system_overlay(self):
+        is_dark = self._get_is_dark_mode()
+        icon_brightness = ft.Brightness.LIGHT if is_dark else ft.Brightness.DARK
+        
+        in_reader = getattr(self, "main_container", None) and getattr(self, "reader_view", None) and self.main_container.content == self.reader_view
+        
+        if in_reader and self.bg_color:
+            if self.bg_color == "#1A1A1B":
+                icon_brightness = ft.Brightness.LIGHT
+            else:
+                icon_brightness = ft.Brightness.DARK
+
+        target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
+        
+        self.page.theme = ft.Theme(
+            color_scheme_seed=ft.Colors.BLUE,
+            font_family=target_font,
+            scrollbar_theme=ft.ScrollbarTheme(
+                thumb_visibility=False,         
+                thumb_color=ft.Colors.OUTLINE_VARIANT
+            ),
+            system_overlay_style=ft.SystemOverlayStyle(
+                status_bar_color=ft.Colors.TRANSPARENT,
+                system_navigation_bar_color=ft.Colors.TRANSPARENT,
+                enforce_system_navigation_bar_contrast=False,
+                enforce_system_status_bar_contrast=False,
+                status_bar_icon_brightness=icon_brightness,
+                system_navigation_bar_icon_brightness=icon_brightness,
+            )
+        )
+        try:
+            self.page.update()
+        except Exception:
+            pass
+
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
         if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
@@ -750,6 +824,7 @@ class NovelReaderApp:
             ) if self.bg_image else None
             self.reading_base_layer.update()
         
+        self.refresh_system_overlay()
         self._save_config_to_appdata()
 
     def _get_is_dark_mode(self):
@@ -890,6 +965,7 @@ class NovelReaderApp:
                     self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
+            self.refresh_system_overlay()
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -952,21 +1028,21 @@ class NovelReaderApp:
         )
 
         self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER, overflow=ft.TextOverflow.ELLIPSIS)
-        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
+        
+        self.info_battery = ft.Text("--%", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
         self.info_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
                 ft.Container(content=self.info_chapter_name, expand=2, alignment=ft.Alignment(0, 0)),
-                ft.Container(content=self.info_time, expand=1, alignment=ft.Alignment(1, 0))
+                ft.Container(content=self.info_battery, expand=1, alignment=ft.Alignment(1, 0))
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             padding=ft.Padding(left=20, right=20, top=2, bottom=12),
             on_click=self.toggle_immersive,
             bgcolor=ft.Colors.TRANSPARENT
         )
 
-        # 【核心修改点：调整正文上部的留白为 35 像素】
         self.text_panel = ft.Container(
             padding=ft.Padding(left=20, right=4, top=35, bottom=0),
             on_click=self.toggle_immersive, 
@@ -1004,6 +1080,7 @@ class NovelReaderApp:
             self.page.update()
             
             self.sync_theme_btn_ui()
+            self.refresh_system_overlay()
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
@@ -1062,6 +1139,7 @@ class NovelReaderApp:
         ], expand=True, key="reader_view_main_stack")
         
         self.main_container.content = self.reader_view
+        self.refresh_system_overlay()
         self.page.update()
 
     def _btn_prev(self):
@@ -1087,6 +1165,7 @@ class NovelReaderApp:
             self.toggle_immersive(None)
             
         self.main_container.content = self.home_view
+        self.refresh_system_overlay()
         self.page.update()
         
         self.refresh_bookshelf_ui()
