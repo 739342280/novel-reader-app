@@ -82,7 +82,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.16"  
+        self.version = "0.3.17"  # 【修改点 1】：升级版本号
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -109,6 +109,8 @@ class NovelReaderApp:
         self.current_book_path = ""
         self.current_book_name = ""
         self.current_chapter_idx = 0
+        self.current_scroll_offset = 0.0  
+        
         self.font_size = 18
         self.line_height = 1.5           
         self.paragraph_spacing = 10      
@@ -124,7 +126,6 @@ class NovelReaderApp:
         
         self.follow_system_theme = True
         self.manual_theme_mode = "light" 
-        self.bottom_right_mode = "time"
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -158,20 +159,14 @@ class NovelReaderApp:
         self._load_bookshelf()
         
         self.page.on_platform_brightness_change = self._on_os_theme_change
+        self.page.on_app_lifecycle_state_change = self._on_app_lifecycle
 
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
-
-        # 【核心修改点】：平台隔离注入，保护 Win11 电脑绝不崩溃
-        self.battery = None
-        if sys.platform != "win32":
-            self.battery = ft.Battery()
-            self.page.overlay.append(self.battery)
         
-        self.page.run_task(self._update_bottom_right_task)
+        self.page.run_task(self._update_clock_task)
 
         self.build_home_view()
-        self.refresh_system_overlay()
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -182,81 +177,53 @@ class NovelReaderApp:
                 self.page.theme_mode = ft.ThemeMode.DARK
             else:
                 self.page.theme_mode = ft.ThemeMode.LIGHT
-        self.refresh_system_overlay()
-        self.sync_bottom_right_btns()
         self.page.update()
+        
+    def _on_app_lifecycle(self, e):
+        if "RESUME" not in str(e.state).upper():
+            self.save_current_progress()
 
-    # 【核心修改点】：将底层探针改为 async 函数，完美融合 ctypes 与 ft.Battery
-    async def _get_system_battery(self):
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                class SYSTEM_POWER_STATUS(ctypes.Structure):
-                    _fields_ = [
-                        ('ACLineStatus', ctypes.c_ubyte),
-                        ('BatteryFlag', ctypes.c_ubyte),
-                        ('BatteryLifePercent', ctypes.c_ubyte),
-                        ('Reserved1', ctypes.c_ubyte),
-                        ('BatteryLifeTime', ctypes.c_ulong),
-                        ('BatteryFullLifeTime', ctypes.c_ulong),
-                    ]
-                sps = SYSTEM_POWER_STATUS()
-                if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
-                    return sps.BatteryLifePercent
-            except Exception:
-                pass
-        else:
-            # 针对安卓等系统，安全调用官方原生接口
-            if self.battery is not None:
-                try:
-                    level = await self.battery.get_battery_level()
-                    if level is not None:
-                        return int(level)
-                except Exception:
-                    pass
-        return None
+    def _on_text_scroll(self, e: ft.OnScrollEvent):
+        self.current_scroll_offset = e.pixels
 
-    # 【核心修改点】：跟随系统探针升级为 async 刷新引擎
-    async def _refresh_bottom_right_ui(self):
-        if not hasattr(self, "info_bottom_right_text") or not hasattr(self, "info_bottom_right_icon"):
+    def save_current_progress(self):
+        if getattr(self, "current_book_path", "") == "":
+            return
+        if not hasattr(self, "engine") or not self.engine.chapters_info:
             return
             
-        if self.bottom_right_mode == "battery":
-            level = await self._get_system_battery()
+        current_idx = getattr(self, "current_chapter_idx", 0)
+        if current_idx < 0 or current_idx >= len(self.engine.chapters_info):
+            return
             
-            if level == 255:
-                self.info_bottom_right_text.visible = False
-                self.info_bottom_right_icon.visible = True
-            elif level is not None:
-                self.info_bottom_right_icon.visible = False
-                self.info_bottom_right_text.visible = True
-                self.info_bottom_right_text.value = f"{level}%"
-            else:
-                self.info_bottom_right_icon.visible = False
-                self.info_bottom_right_text.visible = True
-                self.info_bottom_right_text.value = "--%"
-        else:
-            self.info_bottom_right_icon.visible = False
-            self.info_bottom_right_text.visible = True
-            self.info_bottom_right_text.value = datetime.now().strftime("%H:%M")
-            
-        try:
-            self.info_bottom_right_text.update()
-            self.info_bottom_right_icon.update()
-        except Exception:
-            pass
+        title = self.engine.chapters_info[current_idx]['title']
+        offset = getattr(self, "current_scroll_offset", 0.0)
+        
+        for book in self.bookshelf:
+            if book['path'] == self.current_book_path:
+                book['last_chapter_idx'] = current_idx
+                book['last_chapter_title'] = title
+                book['last_scroll_offset'] = offset  
+                self._save_bookshelf()
+                break
 
-    async def _update_bottom_right_task(self):
+    async def _update_clock_task(self):
         while True:
             try:
-                if hasattr(self, "info_bottom_right_text"):
+                if hasattr(self, "info_time"):
                     try:
-                        is_mounted = self.info_bottom_right_text.page is not None
+                        is_mounted = self.info_time.page is not None
                     except RuntimeError:
                         is_mounted = False
                         
                     if is_mounted:
-                        await self._refresh_bottom_right_ui()
+                        now_str = datetime.now().strftime("%H:%M")
+                        if self.info_time.value != now_str:
+                            self.info_time.value = now_str
+                            try:
+                                self.info_time.update()
+                            except Exception:
+                                pass
             except Exception:
                 pass
             await asyncio.sleep(5)
@@ -335,6 +302,13 @@ class NovelReaderApp:
 
     def toggle_immersive(self, e=None):
         self.is_immersive = not getattr(self, "is_immersive", False)
+        
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
@@ -415,8 +389,6 @@ class NovelReaderApp:
                     self.follow_system_theme = data.get("follow_system_theme", True)
                     self.manual_theme_mode = str(data.get("theme_mode", "light")).lower()
                     
-                    self.bottom_right_mode = data.get("bottom_right_mode", "time")
-                    
                     if self.follow_system_theme:
                         self.page.theme_mode = ft.ThemeMode.SYSTEM
                     else:
@@ -439,7 +411,6 @@ class NovelReaderApp:
         data_to_save["letter_spacing"] = self.letter_spacing
         
         data_to_save["follow_system_theme"] = self.follow_system_theme
-        data_to_save["bottom_right_mode"] = self.bottom_right_mode
         
         theme_str = str(self.page.theme_mode).lower()
         if "dark" in theme_str:
@@ -761,11 +732,13 @@ class NovelReaderApp:
         self.progress_bar.visible = False
         
         target_idx = -1
+        target_offset = 0.0
         book_exists = False
         for book in self.bookshelf:
             if book['path'] == self.current_book_path:
                 book_exists = True
                 target_idx = book.get('last_chapter_idx', -1)
+                target_offset = book.get('last_scroll_offset', 0.0)
                 break
 
         if not book_exists:
@@ -773,7 +746,8 @@ class NovelReaderApp:
                 "name": self.current_book_name,
                 "path": self.current_book_path,
                 "last_chapter_idx": 0,
-                "last_chapter_title": "未读"
+                "last_chapter_title": "未读",
+                "last_scroll_offset": 0.0
             })
             self._save_bookshelf()
             
@@ -782,76 +756,14 @@ class NovelReaderApp:
         self.build_reader_view()
 
         if target_idx != -1 and target_idx < len(self.engine.chapters_info):
-            self.load_chapter(target_idx)
+            self.load_chapter(target_idx, target_offset=target_offset)
         else:
             valid_idx = self._find_valid_chapter(0, 1)
-            self.load_chapter(valid_idx if valid_idx != -1 else 0)
+            self.load_chapter(valid_idx if valid_idx != -1 else 0, target_offset=0.0)
 
     # ==========================
     # 界面更新函数
     # ==========================
-    
-    def sync_bottom_right_btns(self):
-        if not hasattr(self, "btn_time") or not hasattr(self, "btn_battery"):
-            return
-            
-        active_bg = "#1AFFFFFF" if self._get_is_dark_mode() else "#1A000000"
-        inactive_bg = ft.Colors.TRANSPARENT
-        
-        self.btn_time.style = ft.ButtonStyle(
-            bgcolor=active_bg if self.bottom_right_mode == "time" else inactive_bg,
-            color=ft.Colors.ON_SURFACE,
-            shape=ft.RoundedRectangleBorder(radius=8),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8)
-        )
-        self.btn_battery.style = ft.ButtonStyle(
-            bgcolor=active_bg if self.bottom_right_mode == "battery" else inactive_bg,
-            color=ft.Colors.ON_SURFACE,
-            shape=ft.RoundedRectangleBorder(radius=8),
-            padding=ft.Padding.symmetric(horizontal=12, vertical=8)
-        )
-        
-        try:
-            self.btn_time.update()
-            self.btn_battery.update()
-        except Exception:
-            pass
-
-    def refresh_system_overlay(self):
-        is_dark = self._get_is_dark_mode()
-        icon_brightness = ft.Brightness.LIGHT if is_dark else ft.Brightness.DARK
-        
-        in_reader = getattr(self, "main_container", None) and getattr(self, "reader_view", None) and self.main_container.content == self.reader_view
-        
-        if in_reader and self.bg_color:
-            if self.bg_color == "#1A1A1B":
-                icon_brightness = ft.Brightness.LIGHT
-            else:
-                icon_brightness = ft.Brightness.DARK
-
-        target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
-        
-        self.page.theme = ft.Theme(
-            color_scheme_seed=ft.Colors.BLUE,
-            font_family=target_font,
-            scrollbar_theme=ft.ScrollbarTheme(
-                thumb_visibility=False,         
-                thumb_color=ft.Colors.OUTLINE_VARIANT
-            ),
-            system_overlay_style=ft.SystemOverlayStyle(
-                status_bar_color=ft.Colors.TRANSPARENT,
-                system_navigation_bar_color=ft.Colors.TRANSPARENT,
-                enforce_system_navigation_bar_contrast=False,
-                enforce_system_status_bar_contrast=False,
-                status_bar_icon_brightness=icon_brightness,
-                system_navigation_bar_icon_brightness=icon_brightness,
-            )
-        )
-        try:
-            self.page.update()
-        except Exception:
-            pass
-
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
         if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
@@ -872,7 +784,6 @@ class NovelReaderApp:
             ) if self.bg_image else None
             self.reading_base_layer.update()
         
-        self.refresh_system_overlay()
         self._save_config_to_appdata()
 
     def _get_is_dark_mode(self):
@@ -1013,8 +924,6 @@ class NovelReaderApp:
                     self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
-            self.refresh_system_overlay()
-            self.sync_bottom_right_btns()  
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -1029,48 +938,6 @@ class NovelReaderApp:
             self.system_theme_switch
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
-        # 【核心修改点】：重构了事件绑定，彻底解决 Flet 0.84.0 语法规范下的挂载时机问题
-        async def click_time(e):
-            self.bottom_right_mode = "time"
-            self.sync_bottom_right_btns()
-            await self._refresh_bottom_right_ui()
-            self._save_config_to_appdata()
-
-        async def click_battery(e):
-            self.bottom_right_mode = "battery"
-            self.sync_bottom_right_btns()
-            await self._refresh_bottom_right_ui()
-            self._save_config_to_appdata()
-
-        self.btn_time = ft.TextButton(
-            content=ft.Text("时间"),
-            icon=ft.Icons.ACCESS_TIME,
-            on_click=click_time,
-            style=ft.ButtonStyle(
-                color=ft.Colors.ON_SURFACE,
-                shape=ft.RoundedRectangleBorder(radius=8),
-                padding=ft.Padding.symmetric(horizontal=12, vertical=8)
-            )
-        )
-        
-        self.btn_battery = ft.TextButton(
-            content=ft.Text("电量"),
-            icon=ft.Icons.BATTERY_FULL,
-            on_click=click_battery,
-            style=ft.ButtonStyle(
-                color=ft.Colors.ON_SURFACE,
-                shape=ft.RoundedRectangleBorder(radius=8),
-                padding=ft.Padding.symmetric(horizontal=12, vertical=8)
-            )
-        )
-        
-        self.sync_bottom_right_btns()
-
-        bottom_right_row = ft.Row([
-            ft.Text("右下角信息栏", size=14, weight=ft.FontWeight.BOLD),
-            ft.Row([self.btn_time, self.btn_battery], spacing=4)
-        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
-
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
                 padding=12, 
@@ -1080,9 +947,6 @@ class NovelReaderApp:
                     
                     ft.Divider(height=6, thickness=0.5), 
                     theme_switch_row,
-                    
-                    ft.Divider(height=6, thickness=0.5), 
-                    bottom_right_row,
                     
                     ft.Divider(height=6, thickness=0.5), 
                     ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
@@ -1122,28 +986,14 @@ class NovelReaderApp:
         )
 
         self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER, overflow=ft.TextOverflow.ELLIPSIS)
-        
-        # 初始先用 --% 占位，防止未挂载完成前调用 API 报错
-        if self.bottom_right_mode == "battery":
-            init_bottom_right_str = "--%"
-        else:
-            init_bottom_right_str = datetime.now().strftime("%H:%M")
-            
-        self.info_bottom_right_text = ft.Text(init_bottom_right_str, size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
-        self.info_bottom_right_icon = ft.Icon(ft.Icons.POWER, size=14, color=ft.Colors.GREY_500, visible=False)
-        self.info_bottom_right = ft.Row(
-            controls=[self.info_bottom_right_icon, self.info_bottom_right_text],
-            alignment=ft.MainAxisAlignment.END,
-            spacing=2
-        )
-        
+        self.info_time = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
         self.info_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
                 ft.Container(content=self.info_chapter_name, expand=2, alignment=ft.Alignment(0, 0)),
-                ft.Container(content=self.info_bottom_right, expand=1, alignment=ft.Alignment(1, 0))
+                ft.Container(content=self.info_time, expand=1, alignment=ft.Alignment(1, 0))
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             padding=ft.Padding(left=20, right=20, top=2, bottom=12),
             on_click=self.toggle_immersive,
@@ -1187,8 +1037,6 @@ class NovelReaderApp:
             self.page.update()
             
             self.sync_theme_btn_ui()
-            self.refresh_system_overlay()
-            self.sync_bottom_right_btns()  
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
@@ -1247,11 +1095,7 @@ class NovelReaderApp:
         ], expand=True, key="reader_view_main_stack")
         
         self.main_container.content = self.reader_view
-        self.refresh_system_overlay()
         self.page.update()
-        
-        # 页面挂载完毕后，触发首次安全的后台渲染，替换掉 "--%" 占位符
-        self.page.run_task(self._refresh_bottom_right_ui)
 
     def _btn_prev(self):
         self.btn_prev = ft.Button(
@@ -1272,11 +1116,11 @@ class NovelReaderApp:
         return self.btn_next
 
     def go_back_home(self, e):
+        self.save_current_progress() 
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
             
         self.main_container.content = self.home_view
-        self.refresh_system_overlay()
         self.page.update()
         
         self.refresh_bookshelf_ui()
@@ -1344,13 +1188,29 @@ class NovelReaderApp:
             except Exception:
                 pass
 
-    def load_chapter(self, idx):
+    # 【修改点 3】：重构底层加载任务引擎，接管淡入动画
+    async def _finalize_chapter_load(self, col, offset):
+        await asyncio.sleep(0.1) 
+        try:
+            if col.page is not None:
+                if offset > 0:
+                    await col.scroll_to(offset=offset, duration=0)
+                    await asyncio.sleep(0.05) 
+                
+                col.opacity = 1
+                col.update()
+        except Exception:
+            pass
+
+    def load_chapter(self, idx, target_offset=0.0):
         if not self.engine.chapters_info: return
         self.current_chapter_idx = idx
         
         ch_info = self.engine.chapters_info[idx]
         title = ch_info['title']
         text = self.engine.get_chapter_text(idx)
+
+        self.current_scroll_offset = target_offset
 
         if hasattr(self, "top_bar_chapter_name"):
             self.top_bar_chapter_name.value = title
@@ -1388,7 +1248,10 @@ class NovelReaderApp:
             ],
             expand=True, 
             scroll=ft.ScrollMode.AUTO,
-            key="text_scroll_col"
+            on_scroll=self._on_text_scroll, 
+            key="text_scroll_col",
+            opacity=0,                                                            # 【修改点 2】：初始透明度设为 0
+            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      # 【修改点 2】：配置 300 毫秒平滑淡入
         )
         
         self.text_panel.content = self.text_scroll_col
@@ -1398,12 +1261,7 @@ class NovelReaderApp:
         self.btn_prev.disabled = prev_valid == -1
         self.btn_next.disabled = next_valid == -1
 
-        for book in self.bookshelf:
-            if book['path'] == self.current_book_path:
-                book['last_chapter_idx'] = idx
-                book['last_chapter_title'] = title
-                self._save_bookshelf()
-                break
+        self.save_current_progress() 
 
         if not self.toc_listview.controls:
             self.filter_toc(None) 
@@ -1413,16 +1271,19 @@ class NovelReaderApp:
         self.page.update()
         
         self.page.run_task(self._delayed_scroll_to_chapter, idx)
+        
+        # 【修改点 4】：统一触发重构后的淡入转场引擎
+        self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
 
     def load_prev(self, e):
         if self.current_chapter_idx > 0:
             valid_idx = self._find_valid_chapter(self.current_chapter_idx - 1, -1)
-            if valid_idx != -1: self.load_chapter(valid_idx)
+            if valid_idx != -1: self.load_chapter(valid_idx) 
 
     def load_next(self, e):
         if self.current_chapter_idx < len(self.engine.chapters_info) - 1:
             valid_idx = self._find_valid_chapter(self.current_chapter_idx + 1, 1)
-            if valid_idx != -1: self.load_chapter(valid_idx)
+            if valid_idx != -1: self.load_chapter(valid_idx) 
 
     def change_font(self, delta):
         new_size = self.font_size + delta
@@ -1517,7 +1378,11 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.15】细节与排版打磨
+        log_text = """【v0.3.17】极致阅读沉浸感升级
+- (新增) 像素级进度记忆：重构了底层的进度追踪与持久化引擎。现在软件不仅能记录你读到了哪一章，还能精确到毫秒级记录你在这章滑动到了哪个像素位置。结合生命周期防杀后台机制，随时退出，随时无缝续读。
+- (优化) 优雅的淡入转场：为了掩盖底层渲染跳转时的画面抖动，全新引入了丝滑的 300 毫秒文本淡入动画（Fade-in Animation）。无论是切换章节还是恢复进度，文字都会如水般自然浮现。
+
+【v0.3.15】细节与排版打磨
 - (优化) 底部信息栏排版：微调了阅读页底部（进度、章节名、时间）的垂直边距，优化视觉重心的同时兼顾安卓端防遮挡安全区。
 
 【v0.3.14】个性化阅读体验升级
