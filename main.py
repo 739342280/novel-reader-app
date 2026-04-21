@@ -161,9 +161,6 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
-        # 【核心修复点】：移除导致红底白字崩溃的 ft.Battery()
-        
-        # 启动纯 Python 系统的底层电量轮询任务
         self.page.run_task(self._update_battery_task)
 
         self.build_home_view()
@@ -181,16 +178,25 @@ class NovelReaderApp:
         self.refresh_system_overlay()
         self.page.update()
 
-    # 【新增辅助函数】：稳健的跨端底层系统电量嗅探器
+    # 【核心修复点】：增强安卓底层电量文件的多路径嗅探能力，对抗碎片化
     def _get_system_battery(self):
-        # 针对安卓系统：读取内核级电源供应状态文件
-        android_path = "/sys/class/power_supply/battery/capacity"
-        if os.path.exists(android_path):
-            try:
-                with open(android_path, "r") as f:
-                    return int(f.read().strip())
-            except Exception:
-                pass
+        # 国产手机底层的电池节点命名碎片化严重，采用多路径暴力遍历
+        android_paths = [
+            "/sys/class/power_supply/battery/capacity",     # 原生安卓 / 三星 / 部分OV
+            "/sys/class/power_supply/bms/capacity",         # 高通芯片 / 小米常用
+            "/sys/class/power_supply/main/capacity",        # 部分定制 ROM
+            "/sys/class/power_supply/mtk-battery/capacity"  # 联发科芯片专用
+        ]
+        
+        for path in android_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        val = f.read().strip()
+                        if val and val.isdigit():
+                            return int(val)
+                except Exception:
+                    continue
                 
         # 针对 Win11 测试环境：调用系统 kernel32 动态链接库索要电量
         if sys.platform == "win32":
@@ -208,14 +214,13 @@ class NovelReaderApp:
                 sps = SYSTEM_POWER_STATUS()
                 if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
                     percent = sps.BatteryLifePercent
-                    if percent != 255:  # 255 代表未知/没有电池
+                    if percent != 255:  
                         return percent
             except Exception:
                 pass
                 
         return None
 
-    # 【核心修复点】：安全重构后台电量刷新任务
     async def _update_battery_task(self):
         while True:
             try:
@@ -226,9 +231,7 @@ class NovelReaderApp:
                         is_mounted = False
                         
                     if is_mounted:
-                        # 绕过 Flet 框架，直接调用系统底层查询
                         level = self._get_system_battery()
-                        # 如果没有电池（如台式机）则优雅降级为 --%
                         batt_str = f"{level}%" if level is not None else "--%"
                         
                         if self.info_battery.value != batt_str:
@@ -239,7 +242,6 @@ class NovelReaderApp:
                                 pass
             except Exception:
                 pass
-            # 电量变化缓慢，10秒轮询一次足以兼顾实时性与省电
             await asyncio.sleep(10)
             
     # ==========================
@@ -965,7 +967,6 @@ class NovelReaderApp:
                     self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
-            self.refresh_system_overlay()
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -1080,7 +1081,6 @@ class NovelReaderApp:
             self.page.update()
             
             self.sync_theme_btn_ui()
-            self.refresh_system_overlay()
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
