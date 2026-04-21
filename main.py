@@ -161,6 +161,7 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
+        # 挂载带有双保险机制的电量探测任务
         self.page.run_task(self._update_battery_task)
 
         self.build_home_view()
@@ -178,49 +179,7 @@ class NovelReaderApp:
         self.refresh_system_overlay()
         self.page.update()
 
-    # 【核心修复点】：增强安卓底层电量文件的多路径嗅探能力，对抗碎片化
-    def _get_system_battery(self):
-        # 国产手机底层的电池节点命名碎片化严重，采用多路径暴力遍历
-        android_paths = [
-            "/sys/class/power_supply/battery/capacity",     # 原生安卓 / 三星 / 部分OV
-            "/sys/class/power_supply/bms/capacity",         # 高通芯片 / 小米常用
-            "/sys/class/power_supply/main/capacity",        # 部分定制 ROM
-            "/sys/class/power_supply/mtk-battery/capacity"  # 联发科芯片专用
-        ]
-        
-        for path in android_paths:
-            if os.path.exists(path):
-                try:
-                    with open(path, "r") as f:
-                        val = f.read().strip()
-                        if val and val.isdigit():
-                            return int(val)
-                except Exception:
-                    continue
-                
-        # 针对 Win11 测试环境：调用系统 kernel32 动态链接库索要电量
-        if sys.platform == "win32":
-            try:
-                import ctypes
-                class SYSTEM_POWER_STATUS(ctypes.Structure):
-                    _fields_ = [
-                        ('ACLineStatus', ctypes.c_byte),
-                        ('BatteryFlag', ctypes.c_byte),
-                        ('BatteryLifePercent', ctypes.c_byte),
-                        ('Reserved1', ctypes.c_byte),
-                        ('BatteryLifeTime', ctypes.c_ulong),
-                        ('BatteryFullLifeTime', ctypes.c_ulong),
-                    ]
-                sps = SYSTEM_POWER_STATUS()
-                if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
-                    percent = sps.BatteryLifePercent
-                    if percent != 255:  
-                        return percent
-            except Exception:
-                pass
-                
-        return None
-
+    # 【修改点】：重构探针引擎，剔除无电池设备下的 255 返回值
     async def _update_battery_task(self):
         while True:
             try:
@@ -231,18 +190,35 @@ class NovelReaderApp:
                         is_mounted = False
                         
                     if is_mounted:
-                        level = self._get_system_battery()
-                        batt_str = f"{level}%" if level is not None else "--%"
+                        level = None
+                        try:
+                            # 路线 A 核心逻辑：尝试通过 plyer 调用底层 API
+                            from plyer import battery
+                            status = battery.status
+                            if status and 'percentage' in status and status['percentage'] is not None:
+                                raw_pct = int(status['percentage'])
+                                # 【核心拦截】：如果返回的是 255（Windows无电池错误码），则判定为无效电量
+                                if raw_pct != 255:
+                                    level = raw_pct
+                        except Exception:
+                            # 捕获 ImportError 或是 JNI 报错，静默处理
+                            pass
+                            
+                        # 双保险降级：成功拿到了就显示电量，否则退回时钟
+                        if level is not None:
+                            display_str = f"{level}%"
+                        else:
+                            display_str = datetime.now().strftime("%H:%M")
                         
-                        if self.info_battery.value != batt_str:
-                            self.info_battery.value = batt_str
+                        if self.info_battery.value != display_str:
+                            self.info_battery.value = display_str
                             try:
                                 self.info_battery.update()
                             except Exception:
                                 pass
             except Exception:
                 pass
-            await asyncio.sleep(10)
+            await asyncio.sleep(5)
             
     # ==========================
     # 终极弹窗与抽屉调度器
@@ -1030,7 +1006,8 @@ class NovelReaderApp:
 
         self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER, overflow=ft.TextOverflow.ELLIPSIS)
         
-        self.info_battery = ft.Text("--%", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
+        # 初始占位符直接设为系统时间，防止画面抖动
+        self.info_battery = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
         self.info_bar = ft.Container(
@@ -1081,6 +1058,7 @@ class NovelReaderApp:
             self.page.update()
             
             self.sync_theme_btn_ui()
+            self.refresh_system_overlay()
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
