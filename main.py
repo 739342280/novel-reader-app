@@ -124,6 +124,7 @@ class NovelReaderApp:
         
         self.follow_system_theme = True
         self.manual_theme_mode = "light" 
+        self.bottom_right_mode = "time"
 
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
@@ -161,8 +162,7 @@ class NovelReaderApp:
         self.main_container = ft.Container(expand=True)
         self.page.add(self.main_container)
         
-        # 挂载带有双保险机制的电量探测任务
-        self.page.run_task(self._update_battery_task)
+        self.page.run_task(self._update_bottom_right_task)
 
         self.build_home_view()
         self.refresh_system_overlay()
@@ -177,45 +177,98 @@ class NovelReaderApp:
             else:
                 self.page.theme_mode = ft.ThemeMode.LIGHT
         self.refresh_system_overlay()
+        self.sync_bottom_right_btns()
         self.page.update()
 
-    # 【修改点】：重构探针引擎，剔除无电池设备下的 255 返回值
-    async def _update_battery_task(self):
+    def _get_system_battery(self):
+        android_paths = [
+            "/sys/class/power_supply/battery/capacity",     
+            "/sys/class/power_supply/bms/capacity",         
+            "/sys/class/power_supply/main/capacity",        
+            "/sys/class/power_supply/mtk-battery/capacity"  
+        ]
+        
+        for path in android_paths:
+            if os.path.exists(path):
+                try:
+                    with open(path, "r") as f:
+                        val = f.read().strip()
+                        if val and val.isdigit():
+                            return int(val)
+                except Exception:
+                    continue
+                    
+        if sys.platform != "win32":
+            try:
+                import subprocess
+                out = subprocess.check_output(["dumpsys", "battery"], text=True, timeout=1)
+                for line in out.split('\n'):
+                    if "level:" in line:
+                        return int(line.split(':')[1].strip())
+            except Exception:
+                pass
+                
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                class SYSTEM_POWER_STATUS(ctypes.Structure):
+                    # 【核心修正】：全部改用 c_ubyte (无符号字节)，解决内存读取 255 变成负数的溢出问题
+                    _fields_ = [
+                        ('ACLineStatus', ctypes.c_ubyte),
+                        ('BatteryFlag', ctypes.c_ubyte),
+                        ('BatteryLifePercent', ctypes.c_ubyte),
+                        ('Reserved1', ctypes.c_ubyte),
+                        ('BatteryLifeTime', ctypes.c_ulong),
+                        ('BatteryFullLifeTime', ctypes.c_ulong),
+                    ]
+                sps = SYSTEM_POWER_STATUS()
+                if ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(sps)):
+                    return sps.BatteryLifePercent
+            except Exception:
+                pass
+                
+        return None
+
+    def _refresh_bottom_right_ui(self):
+        if not hasattr(self, "info_bottom_right_text") or not hasattr(self, "info_bottom_right_icon"):
+            return
+            
+        if self.bottom_right_mode == "battery":
+            level = self._get_system_battery()
+            
+            if level == 255:
+                self.info_bottom_right_text.visible = False
+                self.info_bottom_right_icon.visible = True
+            elif level is not None:
+                self.info_bottom_right_icon.visible = False
+                self.info_bottom_right_text.visible = True
+                self.info_bottom_right_text.value = f"{level}%"
+            else:
+                self.info_bottom_right_icon.visible = False
+                self.info_bottom_right_text.visible = True
+                self.info_bottom_right_text.value = "--%"
+        else:
+            self.info_bottom_right_icon.visible = False
+            self.info_bottom_right_text.visible = True
+            self.info_bottom_right_text.value = datetime.now().strftime("%H:%M")
+            
+        try:
+            self.info_bottom_right_text.update()
+            self.info_bottom_right_icon.update()
+        except Exception:
+            pass
+
+    async def _update_bottom_right_task(self):
         while True:
             try:
-                if hasattr(self, "info_battery"):
+                if hasattr(self, "info_bottom_right_text"):
                     try:
-                        is_mounted = self.info_battery.page is not None
+                        is_mounted = self.info_bottom_right_text.page is not None
                     except RuntimeError:
                         is_mounted = False
                         
                     if is_mounted:
-                        level = None
-                        try:
-                            # 路线 A 核心逻辑：尝试通过 plyer 调用底层 API
-                            from plyer import battery
-                            status = battery.status
-                            if status and 'percentage' in status and status['percentage'] is not None:
-                                raw_pct = int(status['percentage'])
-                                # 【核心拦截】：如果返回的是 255（Windows无电池错误码），则判定为无效电量
-                                if raw_pct != 255:
-                                    level = raw_pct
-                        except Exception:
-                            # 捕获 ImportError 或是 JNI 报错，静默处理
-                            pass
-                            
-                        # 双保险降级：成功拿到了就显示电量，否则退回时钟
-                        if level is not None:
-                            display_str = f"{level}%"
-                        else:
-                            display_str = datetime.now().strftime("%H:%M")
-                        
-                        if self.info_battery.value != display_str:
-                            self.info_battery.value = display_str
-                            try:
-                                self.info_battery.update()
-                            except Exception:
-                                pass
+                        self._refresh_bottom_right_ui()
             except Exception:
                 pass
             await asyncio.sleep(5)
@@ -374,6 +427,8 @@ class NovelReaderApp:
                     self.follow_system_theme = data.get("follow_system_theme", True)
                     self.manual_theme_mode = str(data.get("theme_mode", "light")).lower()
                     
+                    self.bottom_right_mode = data.get("bottom_right_mode", "time")
+                    
                     if self.follow_system_theme:
                         self.page.theme_mode = ft.ThemeMode.SYSTEM
                     else:
@@ -396,6 +451,7 @@ class NovelReaderApp:
         data_to_save["letter_spacing"] = self.letter_spacing
         
         data_to_save["follow_system_theme"] = self.follow_system_theme
+        data_to_save["bottom_right_mode"] = self.bottom_right_mode
         
         theme_str = str(self.page.theme_mode).lower()
         if "dark" in theme_str:
@@ -747,6 +803,32 @@ class NovelReaderApp:
     # 界面更新函数
     # ==========================
     
+    def sync_bottom_right_btns(self):
+        if not hasattr(self, "btn_time") or not hasattr(self, "btn_battery"):
+            return
+            
+        active_bg = "#1AFFFFFF" if self._get_is_dark_mode() else "#1A000000"
+        inactive_bg = ft.Colors.TRANSPARENT
+        
+        self.btn_time.style = ft.ButtonStyle(
+            bgcolor=active_bg if self.bottom_right_mode == "time" else inactive_bg,
+            color=ft.Colors.ON_SURFACE,
+            shape=ft.RoundedRectangleBorder(radius=8),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+        )
+        self.btn_battery.style = ft.ButtonStyle(
+            bgcolor=active_bg if self.bottom_right_mode == "battery" else inactive_bg,
+            color=ft.Colors.ON_SURFACE,
+            shape=ft.RoundedRectangleBorder(radius=8),
+            padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+        )
+        
+        try:
+            self.btn_time.update()
+            self.btn_battery.update()
+        except Exception:
+            pass
+
     def refresh_system_overlay(self):
         is_dark = self._get_is_dark_mode()
         icon_brightness = ft.Brightness.LIGHT if is_dark else ft.Brightness.DARK
@@ -943,6 +1025,8 @@ class NovelReaderApp:
                     self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
+            self.refresh_system_overlay()
+            self.sync_bottom_right_btns()  
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -957,6 +1041,41 @@ class NovelReaderApp:
             self.system_theme_switch
         ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
+        def set_bottom_right_mode(mode):
+            self.bottom_right_mode = mode
+            self.sync_bottom_right_btns()
+            self._refresh_bottom_right_ui()
+            self._save_config_to_appdata()
+
+        self.btn_time = ft.TextButton(
+            content=ft.Text("时间"),
+            icon=ft.Icons.ACCESS_TIME,
+            on_click=lambda _: set_bottom_right_mode("time"),
+            style=ft.ButtonStyle(
+                color=ft.Colors.ON_SURFACE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+            )
+        )
+        
+        self.btn_battery = ft.TextButton(
+            content=ft.Text("电量"),
+            icon=ft.Icons.BATTERY_FULL,
+            on_click=lambda _: set_bottom_right_mode("battery"),
+            style=ft.ButtonStyle(
+                color=ft.Colors.ON_SURFACE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+            )
+        )
+        
+        self.sync_bottom_right_btns()
+
+        bottom_right_row = ft.Row([
+            ft.Text("右下角信息栏", size=14, weight=ft.FontWeight.BOLD),
+            ft.Row([self.btn_time, self.btn_battery], spacing=4)
+        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+
         self.settings_sheet = ft.BottomSheet(
             content=ft.Container(
                 padding=12, 
@@ -966,6 +1085,9 @@ class NovelReaderApp:
                     
                     ft.Divider(height=6, thickness=0.5), 
                     theme_switch_row,
+                    
+                    ft.Divider(height=6, thickness=0.5), 
+                    bottom_right_row,
                     
                     ft.Divider(height=6, thickness=0.5), 
                     ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
@@ -1006,15 +1128,23 @@ class NovelReaderApp:
 
         self.info_chapter_name = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.CENTER, overflow=ft.TextOverflow.ELLIPSIS)
         
-        # 初始占位符直接设为系统时间，防止画面抖动
-        self.info_battery = ft.Text(datetime.now().strftime("%H:%M"), size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
+        self.info_bottom_right_text = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.RIGHT)
+        self.info_bottom_right_icon = ft.Icon(ft.Icons.POWER, size=14, color=ft.Colors.GREY_500, visible=False)
+        self.info_bottom_right = ft.Row(
+            controls=[self.info_bottom_right_icon, self.info_bottom_right_text],
+            alignment=ft.MainAxisAlignment.END,
+            spacing=2
+        )
+        
+        self._refresh_bottom_right_ui()
+        
         self.info_progress = ft.Text("", size=12, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         
         self.info_bar = ft.Container(
             content=ft.Row([
                 ft.Container(content=self.info_progress, expand=1, alignment=ft.Alignment(-1, 0)),
                 ft.Container(content=self.info_chapter_name, expand=2, alignment=ft.Alignment(0, 0)),
-                ft.Container(content=self.info_battery, expand=1, alignment=ft.Alignment(1, 0))
+                ft.Container(content=self.info_bottom_right, expand=1, alignment=ft.Alignment(1, 0))
             ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
             padding=ft.Padding(left=20, right=20, top=2, bottom=12),
             on_click=self.toggle_immersive,
@@ -1059,6 +1189,7 @@ class NovelReaderApp:
             
             self.sync_theme_btn_ui()
             self.refresh_system_overlay()
+            self.sync_bottom_right_btns()  
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
