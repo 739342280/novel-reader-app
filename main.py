@@ -82,7 +82,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.17"  # 【修改点 1】：升级版本号
+        self.version = "0.3.17"  # 版本号精确锁定 0.3.17
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -165,6 +165,7 @@ class NovelReaderApp:
         self.page.add(self.main_container)
         
         self.page.run_task(self._update_clock_task)
+        self.page.run_task(self._pc_auto_save_task)
 
         self.build_home_view()
 
@@ -201,11 +202,23 @@ class NovelReaderApp:
         
         for book in self.bookshelf:
             if book['path'] == self.current_book_path:
+                if book.get('last_chapter_idx') == current_idx and book.get('last_scroll_offset') == offset:
+                    break
+                    
                 book['last_chapter_idx'] = current_idx
                 book['last_chapter_title'] = title
                 book['last_scroll_offset'] = offset  
                 self._save_bookshelf()
                 break
+
+    async def _pc_auto_save_task(self):
+        if sys.platform == "win32":
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    self.save_current_progress()
+                except Exception:
+                    pass
 
     async def _update_clock_task(self):
         while True:
@@ -1188,7 +1201,6 @@ class NovelReaderApp:
             except Exception:
                 pass
 
-    # 【修改点 3】：重构底层加载任务引擎，接管淡入动画
     async def _finalize_chapter_load(self, col, offset):
         await asyncio.sleep(0.1) 
         try:
@@ -1250,8 +1262,8 @@ class NovelReaderApp:
             scroll=ft.ScrollMode.AUTO,
             on_scroll=self._on_text_scroll, 
             key="text_scroll_col",
-            opacity=0,                                                            # 【修改点 2】：初始透明度设为 0
-            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      # 【修改点 2】：配置 300 毫秒平滑淡入
+            opacity=0,                                                            
+            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      
         )
         
         self.text_panel.content = self.text_scroll_col
@@ -1272,7 +1284,6 @@ class NovelReaderApp:
         
         self.page.run_task(self._delayed_scroll_to_chapter, idx)
         
-        # 【修改点 4】：统一触发重构后的淡入转场引擎
         self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
 
     def load_prev(self, e):
