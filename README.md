@@ -51,7 +51,6 @@
 
 确保你的电脑已安装 `Python 3.12+`。
 
-```bash
 # 1. 克隆仓库
 git clone [https://github.com/YOUR_USERNAME/novel-reader-app.git](https://github.com/YOUR_USERNAME/novel-reader-app.git)
 cd novel-reader-app
