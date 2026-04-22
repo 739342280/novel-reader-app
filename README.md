@@ -83,6 +83,7 @@ novel-reader-app/
 │   ├── fonts/             # 预置中文字体 (ttf)
 │   └── backgrounds/       # 预置高斯纹理背景图 (牛皮纸等)
 └── .github/workflows/     # CI/CD 自动化构建配置
+```
 
 ##🔐 隐私与安全声明
 
