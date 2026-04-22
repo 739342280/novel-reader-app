@@ -56,12 +56,18 @@ class NovelEngine:
         total_chaps = len(chaps)
         
         if total_chaps == 0:
-            self.chapters_info.append({'start': 0, 'end': len(content), 'title': "正文 (全文无章节)"})
+            self.chapters_info.append({'start': 0, 'end': len(content), 'title': "正文 (全文无章节)", 'volume': ""})
         else:
+            current_vol = ""
             for i, m in enumerate(chaps):
-                title, start = m.group().strip(), m.start()
+                title = m.group().strip()
+                start = m.start()
+                
+                if re.search(r'^\s*(?:第\s*[0-9零一二三四五六七八九十百千万]+\s*[卷部]|卷\s*[0-9零一二三四五六七八九十百千万]+)', title):
+                    current_vol = title
+                    
                 end = chaps[i+1].start() if i+1 < len(chaps) else len(content)
-                self.chapters_info.append({'start': start, 'end': end, 'title': title})
+                self.chapters_info.append({'start': start, 'end': end, 'title': title, 'volume': current_vol})
                 
                 if progress_callback and i % 1000 == 0:
                     progress_callback(0.1 + (i/total_chaps)*0.8, f"分析中: {title}")
@@ -82,7 +88,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.18"  # 【修改点 1】：升级版本号为 0.3.18
+        self.version = "0.3.19"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -110,6 +116,7 @@ class NovelReaderApp:
         self.current_book_name = ""
         self.current_chapter_idx = 0
         self.current_scroll_offset = 0.0  
+        self.last_reported_pct = -1.0 
         
         self.font_size = 18
         self.line_height = 1.5           
@@ -119,9 +126,9 @@ class NovelReaderApp:
         self.last_search_query = None  
         self.is_immersive = False  
 
-        self.bg_color = None
+        self.bg_color = "#FFFFFF"
         self.bg_image = None  
-        self.reader_text_color = None
+        self.reader_text_color = "#212121"
         self.font_family = None
         
         self.follow_system_theme = True
@@ -175,6 +182,7 @@ class NovelReaderApp:
             self.sync_theme_btn_ui()
             self._sync_font_highlight() 
             self._sync_bg_highlight()
+            self._apply_theme_colors() 
         else:
             if "dark" in getattr(self, "manual_theme_mode", "light"):
                 self.page.theme_mode = ft.ThemeMode.DARK
@@ -188,6 +196,27 @@ class NovelReaderApp:
 
     def _on_text_scroll(self, e: ft.OnScrollEvent):
         self.current_scroll_offset = e.pixels
+        
+        if not self.engine.chapters_info: return
+        
+        max_ext = getattr(e, "max_scroll_extent", 0.0)
+        chap_pct = 0.0
+        if max_ext and max_ext > 0:
+            p = max(0.0, min(float(e.pixels), float(max_ext)))
+            chap_pct = p / max_ext
+            
+        total_length = len(self.engine.full_text_content)
+        if total_length > 0:
+            ch_info = self.engine.chapters_info[self.current_chapter_idx]
+            chap_len = ch_info['end'] - ch_info['start']
+            current_total_pct = ((ch_info['start'] + chap_len * chap_pct) / total_length) * 100
+            
+            if abs(current_total_pct - getattr(self, "last_reported_pct", -1.0)) >= 0.1:
+                self.last_reported_pct = current_total_pct
+                if hasattr(self, "info_progress"):
+                    self.info_progress.value = f"{current_total_pct:.1f}%"
+                    try: self.info_progress.update()
+                    except: pass
 
     def save_current_progress(self):
         if getattr(self, "current_book_path", "") == "":
@@ -200,6 +229,7 @@ class NovelReaderApp:
             return
             
         title = self.engine.chapters_info[current_idx]['title']
+        volume = self.engine.chapters_info[current_idx].get('volume', '')
         offset = getattr(self, "current_scroll_offset", 0.0)
         
         for book in self.bookshelf:
@@ -209,6 +239,7 @@ class NovelReaderApp:
                     
                 book['last_chapter_idx'] = current_idx
                 book['last_chapter_title'] = title
+                book['last_volume_title'] = volume 
                 book['last_scroll_offset'] = offset  
                 self._save_bookshelf()
                 break
@@ -395,9 +426,10 @@ class NovelReaderApp:
                     data = json.load(f)
                     for k in ["url", "key", "model", "prompt"]:
                         if k in data: self.ai_config[k] = data[k]
-                    self.bg_color = data.get("bg_color")
+                    bg_c = data.get("bg_color")
+                    self.bg_color = bg_c if bg_c else "#FFFFFF"
                     self.bg_image = data.get("bg_image")  
-                    self.reader_text_color = data.get("reader_text_color")
+                    self.reader_text_color = data.get("reader_text_color", "#212121")
                     self.font_family = data.get("font_family")
                     self.letter_spacing = data.get("letter_spacing", 0.0)
                     
@@ -615,6 +647,15 @@ class NovelReaderApp:
         for book in self.bookshelf:
             card_side = ft.BorderSide(1, "outlineVariant")
             card_border = ft.Border(top=card_side, bottom=card_side, left=card_side, right=card_side)
+            
+            vol_title = book.get('last_volume_title', '')
+            chap_title = book.get('last_chapter_title', '未读')
+            
+            info_col = ft.Column(spacing=2)
+            info_col.controls.append(ft.Text(book['name'], weight=ft.FontWeight.BOLD, size=15, color=ft.Colors.BLUE, max_lines=2, overflow=ft.TextOverflow.ELLIPSIS))
+            if vol_title:
+                info_col.controls.append(ft.Text(vol_title, size=11, color=ft.Colors.GREY_700, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
+            info_col.controls.append(ft.Text(chap_title, size=11, color=ft.Colors.GREY_500, max_lines=2 if not vol_title else 1, overflow=ft.TextOverflow.ELLIPSIS))
 
             card = ft.Container(
                 alignment=ft.Alignment(0, 0),
@@ -625,10 +666,7 @@ class NovelReaderApp:
                         ft.Container(width=160, height=220, border_radius=0, bgcolor="surface", border=card_border), 
                         ft.Container(width=14, height=218, left=1, top=1, bgcolor=ft.Colors.BLUE_700),
                         ft.Container(width=2, height=218, left=15, top=1, bgcolor=ft.Colors.BLUE_900),
-                        ft.Column([
-                            ft.Text(book['name'], weight=ft.FontWeight.BOLD, size=15, color=ft.Colors.BLUE),
-                            ft.Text(book.get('last_chapter_title', '未读'), size=12, color=ft.Colors.GREY, max_lines=2)
-                        ], left=30, top=20, width=120)
+                        ft.Container(content=info_col, left=30, top=20, width=120)
                     ])
                 )
             )
@@ -781,32 +819,22 @@ class NovelReaderApp:
     # ==========================
     
     def _sync_bg_highlight(self):
-        if not hasattr(self, "bg_btn_default"): return
-        
         is_dark = self._get_is_dark_mode()
-        highlight_color = ft.Colors.WHITE if is_dark else ft.Colors.BLACK
         shadow_color = "#66FFFFFF" if is_dark else "#66000000" 
-        
-        is_default = self.bg_color is None and self.bg_image is None
-        self.bg_btn_default.icon_color = highlight_color if is_default else None
         
         bg_configs = [
             (self.bg_btn_white, "#FFFFFF", None),
-            (self.bg_btn_kraft1, "#B9A080", "backgrounds/牛皮纸.jpg"),
-            (self.bg_btn_kraft2, "#D4C4A8", "backgrounds/牛皮纸2.jpg"),
+            (self.bg_btn_kraft1, "#D4A373", "backgrounds/牛皮纸.jpg"),
+            (self.bg_btn_kraft2, "#CBB28C", "backgrounds/牛皮纸2.jpg"),
             (self.bg_btn_kraft3, "#E8DCC8", "backgrounds/牛皮纸3.jpg"),
             (self.bg_btn_yellow, "#F5F5DC", None),
             (self.bg_btn_green, "#CCE8CF", None),
-            (self.bg_btn_night, "#1A1A1B", None),
         ]
         
         for btn, bg_c, bg_img in bg_configs:
             is_active = (self.bg_color == bg_c and self.bg_image == bg_img)
             
-            if bg_c == "#1A1A1B":
-                btn.border = ft.Border.all(1, ft.Colors.WHITE24)
-            else:
-                btn.border = ft.Border.all(1, ft.Colors.GREY_400)
+            btn.border = ft.Border.all(1, ft.Colors.GREY_400)
                 
             if is_active:
                 btn.shadow = ft.BoxShadow(
@@ -820,9 +848,6 @@ class NovelReaderApp:
                 
             try: btn.update()
             except Exception: pass
-            
-        try: self.bg_btn_default.update()
-        except Exception: pass
 
     def _sync_font_highlight(self):
         if not hasattr(self, "font_btn_default"): return
@@ -857,18 +882,61 @@ class NovelReaderApp:
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
                 ctrl.font_family = self.font_family
-                ctrl.color = self.reader_text_color
                 ctrl.update()
-        
-        if hasattr(self, "reading_base_layer"):
-            self.reading_base_layer.bgcolor = self.bg_color
-            self.reading_base_layer.image = ft.DecorationImage(
-                src=self.bg_image,
-                repeat="repeat"
-            ) if self.bg_image else None
-            self.reading_base_layer.update()
-        
+                
+        self._apply_theme_colors() 
         self._save_config_to_appdata()
+
+    def _apply_theme_colors(self):
+        is_dark = self._get_is_dark_mode()
+        
+        if is_dark:
+            bg_c = "#000000"
+            bg_i = None
+            menu_c = "surface"
+            text_c = "#B0B0B0"             
+            top_book_c = ft.Colors.GREY_500
+            top_chap_c = ft.Colors.WHITE   
+        else:
+            bg_c = self.bg_color
+            bg_i = self.bg_image
+            menu_c = self.bg_color if self.bg_color else "surface"
+            text_c = self.reader_text_color 
+            top_book_c = ft.Colors.GREY_600
+            top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
+            
+        if hasattr(self, "reading_base_layer"):
+            self.reading_base_layer.bgcolor = bg_c
+            self.reading_base_layer.image = ft.DecorationImage(src=bg_i, repeat="repeat") if bg_i else None
+            try: self.reading_base_layer.update()
+            except: pass
+            
+        if hasattr(self, "reader_text_controls"):
+            for ctrl in self.reader_text_controls:
+                if ctrl.color != text_c:
+                    ctrl.color = text_c
+                    try: ctrl.update()
+                    except: pass
+            
+        if hasattr(self, "reader_top_bar"):
+            self.reader_top_bar.bgcolor = menu_c
+            try: self.reader_top_bar.update()
+            except: pass
+            
+        if hasattr(self, "top_bar_book_name"):
+            self.top_bar_book_name.color = top_book_c
+            try: self.top_bar_book_name.update()
+            except: pass
+            
+        if hasattr(self, "top_bar_chapter_name"):
+            self.top_bar_chapter_name.color = top_chap_c
+            try: self.top_bar_chapter_name.update()
+            except: pass
+            
+        if hasattr(self, "reader_bottom_bar"):
+            self.reader_bottom_bar.bgcolor = menu_c
+            try: self.reader_bottom_bar.update()
+            except: pass
 
     def _get_is_dark_mode(self):
         if not getattr(self, "follow_system_theme", True):
@@ -927,27 +995,25 @@ class NovelReaderApp:
             self.update_reader_appearance(font=font_name)
             self._sync_font_highlight()
 
-        self.bg_btn_default = ft.IconButton(icon=ft.Icons.BRIGHTNESS_AUTO, tooltip="默认", on_click=lambda _: set_bg_preset(None, None, None))
         self.bg_btn_white = ft.Container(width=30, height=30, bgcolor="#FFFFFF", border_radius=15, tooltip="纯白", on_click=lambda _: set_bg_preset("#FFFFFF", "#212121"), border=ft.Border.all(1, ft.Colors.GREY_400))
         self.bg_btn_kraft1 = ft.Container(
-            width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸一", 
+            width=30, height=30, bgcolor="#D4A373", border_radius=15, tooltip="牛皮纸一", 
             image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb.jpg", fit="cover"),
-            on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
+            on_click=lambda _: set_bg_preset("#D4A373", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
         self.bg_btn_kraft2 = ft.Container(
-            width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸二", 
+            width=30, height=30, bgcolor="#CBB28C", border_radius=15, tooltip="牛皮纸二", 
             image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb2.jpg", fit="cover"),
-            on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
+            on_click=lambda _: set_bg_preset("#CBB28C", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
         self.bg_btn_kraft3 = ft.Container(
             width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸三", 
             image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb3.jpg", fit="cover"),
             on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
         self.bg_btn_yellow = ft.Container(width=30, height=30, bgcolor="#F5F5DC", border_radius=15, tooltip="米黄", on_click=lambda _: set_bg_preset("#F5F5DC", "#3E2723"), border=ft.Border.all(1, ft.Colors.GREY_400))
         self.bg_btn_green = ft.Container(width=30, height=30, bgcolor="#CCE8CF", border_radius=15, tooltip="护眼", on_click=lambda _: set_bg_preset("#CCE8CF", "#1B5E20"), border=ft.Border.all(1, ft.Colors.GREY_400))
-        self.bg_btn_night = ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24))
-
+        
         bg_options = ft.Row([
-            self.bg_btn_default, self.bg_btn_white, self.bg_btn_kraft1, self.bg_btn_kraft2, 
-            self.bg_btn_kraft3, self.bg_btn_yellow, self.bg_btn_green, self.bg_btn_night
+            self.bg_btn_white, self.bg_btn_kraft1, self.bg_btn_kraft2, 
+            self.bg_btn_kraft3, self.bg_btn_yellow, self.bg_btn_green
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
 
         self.font_btn_default = ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None))
@@ -1013,6 +1079,7 @@ class NovelReaderApp:
             self.sync_theme_btn_ui()
             self._sync_font_highlight() 
             self._sync_bg_highlight()
+            self._apply_theme_colors() 
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -1128,6 +1195,7 @@ class NovelReaderApp:
             self.sync_theme_btn_ui()
             self._sync_font_highlight() 
             self._sync_bg_highlight()
+            self._apply_theme_colors() 
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
@@ -1188,6 +1256,7 @@ class NovelReaderApp:
         self.main_container.content = self.reader_view
         self.page.update()
         
+        self._apply_theme_colors() 
         self._sync_bg_highlight()
         self._sync_font_highlight()
 
@@ -1301,19 +1370,30 @@ class NovelReaderApp:
         
         ch_info = self.engine.chapters_info[idx]
         title = ch_info['title']
+        volume = ch_info.get('volume', '')
         text = self.engine.get_chapter_text(idx)
 
         self.current_scroll_offset = target_offset
 
+        if hasattr(self, "top_bar_book_name"):
+            display_vol = volume if volume and volume != title else ""
+            self.top_bar_book_name.value = f"{self.current_book_name} | {display_vol}" if display_vol else self.current_book_name
         if hasattr(self, "top_bar_chapter_name"):
             self.top_bar_chapter_name.value = title
         if hasattr(self, "info_chapter_name"):
             self.info_chapter_name.value = title
             
         if hasattr(self, "info_progress"):
-            total_chaps = len(self.engine.chapters_info)
-            pct = ((idx + 1) / total_chaps) * 100 if total_chaps > 0 else 0.0
-            self.info_progress.value = f"{pct:.1f}%"
+            total_length = len(self.engine.full_text_content)
+            if total_length > 0:
+                base_pct = (ch_info['start'] / total_length) * 100
+            else:
+                base_pct = 0.0
+            self.last_reported_pct = base_pct
+            self.info_progress.value = f"{base_pct:.1f}%"
+        
+        # 【修改点】：创建文本段落时，调用最新且唯一的智能判断色
+        current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
         self.reader_text_controls = [
@@ -1322,7 +1402,7 @@ class NovelReaderApp:
                 size=self.font_size, 
                 style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
                 font_family=self.font_family, 
-                color=self.reader_text_color   
+                color=current_text_color   
             ) 
             for p in paragraphs
         ]
@@ -1470,7 +1550,15 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.18】UI 质感与交互细节打磨
+        log_text = """【v0.3.19】核心阅读体验与界面精调
+- (修复) 夜间模式沉浸感打磨：修复了夜间强制黑屏时，文字颜色依然保持日间色彩的 Bug；修复了顶部菜单文字在夜间模式下不可见的 Bug。
+- (优化) 重新提取并校准了“牛皮纸一”和“牛皮纸二”的 Base 底色，使其与真实图片材质更加贴合。
+- (修复) 彻底移除了导致阅读总进度“提前增加”的分子加一算法，精准还原真实阅读比例。
+- (新增) 精细化总进度百分比：总进度不再只按章节跳动，现在会实时包含“本章内的像素级滚动百分比”，精确到 0.1% 防抖刷新，掌控感拉满。
+- (新增) 卷名强化识别：底层分析引擎新增卷名状态机，并在书架界面的卡片及阅读页顶部菜单双重显性展示“卷+章”。
+- (优化) 智能日夜间 UI 联动：日间模式下，顶底菜单会自动变色并融入当前选定的背景纯色中；夜间模式则强行压制所有彩色背景为纯黑，真正做到深夜护眼。
+
+【v0.3.18】UI 质感与交互细节打磨
 - (优化) 状态显性反馈：全面升级了“设置”面板的选中状态视觉效果。字体选择新增了自适应深浅色模式的微光底色包裹；阅读背景选择引入了轻盈的“弥散发光阴影”交互（夜间白光/日间黑影），在不改变圆圈大小结构的前提下，提供了商业级的高级选中反馈。
 
 【v0.3.17】极致阅读沉浸感升级
@@ -1481,25 +1569,13 @@ class NovelReaderApp:
 - (优化) 底部信息栏排版：微调了阅读页底部（进度、章节名、时间）的垂直边距，优化视觉重心的同时兼顾安卓端防遮挡安全区。
 
 【v0.3.14】个性化阅读体验升级
-- (修复) 核心逻辑：重构了底层的系统主题状态管理架构。彻底解决了在“跟随系统”关闭状态下，因冷启动时底层 Flet 客户端强制同步导致的“深浅色手动配置被系统强行覆盖”的隐蔽 Bug。目前无论冷/热启动，用户的手动偏好都将如盘石般稳固。
-- (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关。开启后，阅读器将无缝监听操作系统的深浅色模式切换。
-- (优化) 冷热启动状态同步：全面接管 App 的生命周期。增强底层环境嗅探的容错率，彻底防范老旧机型冷启动由于 API 延迟导致的黑屏隐患，保证启动 100% 顺滑。
-- 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间），完美平衡视觉舒适度与审美。
-- 字体随心换：重磅引入精选中文字体，支持在设置面板一键无缝切换，提升阅读质感。
-- 细致排版：新增文章“字距”微调功能。
+- (修复) 核心逻辑：彻底解决了在“跟随系统”关闭状态下，因冷启动时底层强同步导致的配置强行覆盖Bug。
+- (新增) 智能系统主题联动：在“界面”设置中重磅推出“跟随系统主题”开关，无缝监听系统的深浅色模式切换。
+- 背景预设：新增经典四色背景切换（默认、纸张、护眼、夜间）。
+- 字体随心换：支持在设置面板一键无缝切换中文字体。
 
 【v0.3.13】AI交互体验进阶
-- AI流式输出视觉优化：针对 Flet 最新渲染架构进行了深度调优。通过多重异步补偿滚动机制，彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。
-
-【v0.3.12】核心存储机制与滚动体验终极优化
-- API 请求极度鲁棒化：深度重构了 AI 请求的底层异常捕获机制。
-- AI总结持久化存储：实现了 AI 总结内容的永久保存，关闭弹窗或重启应用不再丢失。
-- 致命数据丢失修复：重构底层存储寻址逻辑，彻底解决跨版本升级导致的数据清空问题。
-- 滚动排版架构重构：全面引入“轨道分离”技术，彻底根除安卓端滚动条遮挡文字的痛点。
-
-【v0.3.11】UI细节与提示框优化
-- 提示框重构：将底部提示栏升级为 Material 3 悬浮气泡模式。
-- 轻提示 (Toast) 视觉升级：实现了完全靠左对齐且宽度完美自适应文字长度的精致 Toast。
+- AI流式输出视觉优化：彻底解决了 Markdown 控件因高度重算延迟导致的自动滚动失效问题。
 """
         self.global_dialog.title = ft.Text("历史更新记录")
         
