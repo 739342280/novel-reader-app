@@ -82,14 +82,14 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.17"  # 版本号精确锁定 0.3.17
+        self.version = "0.3.18"  # 【修改点 1】：升级版本号为 0.3.18
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
         
         self.page.fonts = {
-            "思源黑体": "fonts/思源黑体.ttf",
-            "思源宋体": "fonts/思源宋体.ttf",
+            "汉仪旗黑": "fonts/汉仪旗黑.ttf",
+            "汉仪中宋": "fonts/汉仪中宋.ttf",
             "汉仪正圆": "fonts/汉仪正圆.ttf",
         }
 
@@ -173,6 +173,8 @@ class NovelReaderApp:
         if getattr(self, "follow_system_theme", True):
             self.page.theme_mode = ft.ThemeMode.SYSTEM
             self.sync_theme_btn_ui()
+            self._sync_font_highlight() 
+            self._sync_bg_highlight()
         else:
             if "dark" in getattr(self, "manual_theme_mode", "light"):
                 self.page.theme_mode = ft.ThemeMode.DARK
@@ -777,6 +779,75 @@ class NovelReaderApp:
     # ==========================
     # 界面更新函数
     # ==========================
+    
+    def _sync_bg_highlight(self):
+        if not hasattr(self, "bg_btn_default"): return
+        
+        is_dark = self._get_is_dark_mode()
+        highlight_color = ft.Colors.WHITE if is_dark else ft.Colors.BLACK
+        shadow_color = "#66FFFFFF" if is_dark else "#66000000" 
+        
+        is_default = self.bg_color is None and self.bg_image is None
+        self.bg_btn_default.icon_color = highlight_color if is_default else None
+        
+        bg_configs = [
+            (self.bg_btn_white, "#FFFFFF", None),
+            (self.bg_btn_kraft1, "#B9A080", "backgrounds/牛皮纸.jpg"),
+            (self.bg_btn_kraft2, "#D4C4A8", "backgrounds/牛皮纸2.jpg"),
+            (self.bg_btn_kraft3, "#E8DCC8", "backgrounds/牛皮纸3.jpg"),
+            (self.bg_btn_yellow, "#F5F5DC", None),
+            (self.bg_btn_green, "#CCE8CF", None),
+            (self.bg_btn_night, "#1A1A1B", None),
+        ]
+        
+        for btn, bg_c, bg_img in bg_configs:
+            is_active = (self.bg_color == bg_c and self.bg_image == bg_img)
+            
+            if bg_c == "#1A1A1B":
+                btn.border = ft.Border.all(1, ft.Colors.WHITE24)
+            else:
+                btn.border = ft.Border.all(1, ft.Colors.GREY_400)
+                
+            if is_active:
+                btn.shadow = ft.BoxShadow(
+                    spread_radius=2, 
+                    blur_radius=8, 
+                    color=shadow_color, 
+                    offset=ft.Offset(0, 0)
+                )
+            else:
+                btn.shadow = None
+                
+            try: btn.update()
+            except Exception: pass
+            
+        try: self.bg_btn_default.update()
+        except Exception: pass
+
+    def _sync_font_highlight(self):
+        if not hasattr(self, "font_btn_default"): return
+        
+        active_bg = "#1AFFFFFF" if self._get_is_dark_mode() else "#1A000000"
+        inactive_bg = ft.Colors.TRANSPARENT
+        
+        font_configs = [
+            (self.font_btn_default, None),
+            (self.font_btn_qihei, "汉仪旗黑"),
+            (self.font_btn_zhongsong, "汉仪中宋"),
+            (self.font_btn_zhengyuan, "汉仪正圆"),
+        ]
+        
+        for btn, f_family in font_configs:
+            is_active = (self.font_family == f_family)
+            btn.style = ft.ButtonStyle(
+                bgcolor=active_bg if is_active else inactive_bg,
+                color=ft.Colors.ON_SURFACE,
+                shape=ft.RoundedRectangleBorder(radius=8),
+                padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+            )
+            try: btn.update()
+            except Exception: pass
+            
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
         if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
@@ -850,39 +921,42 @@ class NovelReaderApp:
 
         def set_bg_preset(bg, text, bg_image=None):
             self.update_reader_appearance(bg=bg, text=text, bg_image=bg_image)
+            self._sync_bg_highlight()
 
         def set_font_preset(font_name):
             self.update_reader_appearance(font=font_name)
+            self._sync_font_highlight()
+
+        self.bg_btn_default = ft.IconButton(icon=ft.Icons.BRIGHTNESS_AUTO, tooltip="默认", on_click=lambda _: set_bg_preset(None, None, None))
+        self.bg_btn_white = ft.Container(width=30, height=30, bgcolor="#FFFFFF", border_radius=15, tooltip="纯白", on_click=lambda _: set_bg_preset("#FFFFFF", "#212121"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_kraft1 = ft.Container(
+            width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸一", 
+            image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb.jpg", fit="cover"),
+            on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_kraft2 = ft.Container(
+            width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸二", 
+            image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb2.jpg", fit="cover"),
+            on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_kraft3 = ft.Container(
+            width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸三", 
+            image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb3.jpg", fit="cover"),
+            on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_yellow = ft.Container(width=30, height=30, bgcolor="#F5F5DC", border_radius=15, tooltip="米黄", on_click=lambda _: set_bg_preset("#F5F5DC", "#3E2723"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_green = ft.Container(width=30, height=30, bgcolor="#CCE8CF", border_radius=15, tooltip="护眼", on_click=lambda _: set_bg_preset("#CCE8CF", "#1B5E20"), border=ft.Border.all(1, ft.Colors.GREY_400))
+        self.bg_btn_night = ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24))
 
         bg_options = ft.Row([
-            ft.IconButton(icon=ft.Icons.BRIGHTNESS_AUTO, tooltip="默认", on_click=lambda _: set_bg_preset(None, None, None)),
-            ft.Container(width=30, height=30, bgcolor="#FFFFFF", border_radius=15, tooltip="纯白", on_click=lambda _: set_bg_preset("#FFFFFF", "#212121"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            
-            ft.Container(
-                width=30, height=30, bgcolor="#B9A080", border_radius=15, tooltip="牛皮纸一", 
-                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb.jpg", fit="cover"),
-                on_click=lambda _: set_bg_preset("#B9A080", "#3E2723", "backgrounds/牛皮纸.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            
-            ft.Container(
-                width=30, height=30, bgcolor="#D4C4A8", border_radius=15, tooltip="牛皮纸二", 
-                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb2.jpg", fit="cover"),
-                on_click=lambda _: set_bg_preset("#D4C4A8", "#3E2723", "backgrounds/牛皮纸2.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            
-            ft.Container(
-                width=30, height=30, bgcolor="#E8DCC8", border_radius=15, tooltip="牛皮纸三", 
-                image=ft.DecorationImage(src="backgrounds/牛皮纸_thumb3.jpg", fit="cover"),
-                on_click=lambda _: set_bg_preset("#E8DCC8", "#3E2723", "backgrounds/牛皮纸3.jpg"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            
-            ft.Container(width=30, height=30, bgcolor="#F5F5DC", border_radius=15, tooltip="米黄", on_click=lambda _: set_bg_preset("#F5F5DC", "#3E2723"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            ft.Container(width=30, height=30, bgcolor="#CCE8CF", border_radius=15, tooltip="护眼", on_click=lambda _: set_bg_preset("#CCE8CF", "#1B5E20"), border=ft.Border.all(1, ft.Colors.GREY_400)),
-            ft.Container(width=30, height=30, bgcolor="#1A1A1B", border_radius=15, tooltip="夜间", on_click=lambda _: set_bg_preset("#1A1A1B", "#B0B0B0"), border=ft.Border.all(1, ft.Colors.WHITE24)),
+            self.bg_btn_default, self.bg_btn_white, self.bg_btn_kraft1, self.bg_btn_kraft2, 
+            self.bg_btn_kraft3, self.bg_btn_yellow, self.bg_btn_green, self.bg_btn_night
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND, scroll=ft.ScrollMode.AUTO)
 
+        self.font_btn_default = ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None))
+        self.font_btn_qihei = ft.TextButton(content=ft.Text("旗黑", font_family="汉仪旗黑", size=15), on_click=lambda _: set_font_preset("汉仪旗黑"))
+        self.font_btn_zhongsong = ft.TextButton(content=ft.Text("中宋", font_family="汉仪中宋", size=15), on_click=lambda _: set_font_preset("汉仪中宋"))
+        self.font_btn_zhengyuan = ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"))
+
         font_options = ft.Row([
-            ft.TextButton(content=ft.Text("默认", size=15), on_click=lambda _: set_font_preset(None), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("旗黑", font_family="汉仪旗黑", size=15), on_click=lambda _: set_font_preset("汉仪旗黑"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("中宋", font_family="汉仪中宋", size=15), on_click=lambda _: set_font_preset("汉仪中宋"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
-            ft.TextButton(content=ft.Text("正圆", font_family="汉仪正圆", size=15), on_click=lambda _: set_font_preset("汉仪正圆"), style=ft.ButtonStyle(color=ft.Colors.ON_SURFACE)),
+            self.font_btn_default, self.font_btn_qihei, self.font_btn_zhongsong, self.font_btn_zhengyuan
         ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
         typography_row = ft.Row([
@@ -937,6 +1011,8 @@ class NovelReaderApp:
                     self.manual_theme_mode = "light"
             self.page.update()
             self.sync_theme_btn_ui()
+            self._sync_font_highlight() 
+            self._sync_bg_highlight()
             self._save_config_to_appdata()
 
         self.system_theme_switch = ft.Switch(
@@ -1050,6 +1126,8 @@ class NovelReaderApp:
             self.page.update()
             
             self.sync_theme_btn_ui()
+            self._sync_font_highlight() 
+            self._sync_bg_highlight()
             self._save_config_to_appdata()
 
         self.theme_btn = ft.Button(
@@ -1109,6 +1187,9 @@ class NovelReaderApp:
         
         self.main_container.content = self.reader_view
         self.page.update()
+        
+        self._sync_bg_highlight()
+        self._sync_font_highlight()
 
     def _btn_prev(self):
         self.btn_prev = ft.Button(
@@ -1389,7 +1470,10 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.17】极致阅读沉浸感升级
+        log_text = """【v0.3.18】UI 质感与交互细节打磨
+- (优化) 状态显性反馈：全面升级了“设置”面板的选中状态视觉效果。字体选择新增了自适应深浅色模式的微光底色包裹；阅读背景选择引入了轻盈的“弥散发光阴影”交互（夜间白光/日间黑影），在不改变圆圈大小结构的前提下，提供了商业级的高级选中反馈。
+
+【v0.3.17】极致阅读沉浸感升级
 - (新增) 像素级进度记忆：重构了底层的进度追踪与持久化引擎。现在软件不仅能记录你读到了哪一章，还能精确到毫秒级记录你在这章滑动到了哪个像素位置。结合生命周期防杀后台机制，随时退出，随时无缝续读。
 - (优化) 优雅的淡入转场：为了掩盖底层渲染跳转时的画面抖动，全新引入了丝滑的 300 毫秒文本淡入动画（Fade-in Animation）。无论是切换章节还是恢复进度，文字都会如水般自然浮现。
 
