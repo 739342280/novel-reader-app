@@ -60,6 +60,7 @@ pip install -r requirements.txt
 
 # 3. 启动应用
 python main.py
+
 ### 2. 编译 Android APK (云端/本地)
 
 **方式一：使用 GitHub Actions 自动构建（极力推荐）**
@@ -69,7 +70,7 @@ python main.py
 3. 喝杯咖啡，构建成功后在 `Artifacts` 中下载生成的 APK 文件。
 
 **方式二：本地手动编译（需要本地配置 Flutter SDK）**
-```bash
+
 flet build apk
 
 📂 项目结构 (Project Structure)
