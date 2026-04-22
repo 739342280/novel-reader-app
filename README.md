@@ -85,16 +85,16 @@ novel-reader-app/
 └── .github/workflows/     # CI/CD 自动化构建配置
 ```
 
-##🔐 隐私与安全声明
+## 🔐 隐私与安全声明
 
 纯本地架构：你的所有书籍文件、阅读进度、排版偏好均保存在本地设备（AppData 或安卓沙盒），无任何云端数据收集。
 API Key 安全：应用仅在触发“AI 总结”时，与你配置的 LLM 提供商进行接口直连通信。API Key 明文仅存放在本机配置文件中，请妥善保管你的配置文件，切勿将含有 Key 的文件或截图外传。
 
-##🤝 参与贡献 (Contributing)
+## 🤝 参与贡献 (Contributing)
 
 发现 Bug？有更好的 UX 改进点？欢迎提交 Issue 或 Pull Request！
 这是一款为热爱阅读的“极客”量身打造的产品，每一行代码的打磨都离不开社区的灵感碰撞。
 
-##📄 许可证 (License)
+## 📄 许可证 (License)
 
 [MIT License](LICENSE)
