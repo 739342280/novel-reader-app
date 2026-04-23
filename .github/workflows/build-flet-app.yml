@@ -12,6 +12,10 @@ on:
 permissions:
   contents: write
 
+env:
+  # 【修复点 1】：强制升级 actions 运行环境到 Node 24，彻底干掉警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
@@ -53,8 +57,7 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
         
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
+    # 【修复点 2】：删除了耗时 6 分钟且导致 404 的 Setup Gradle 缓存步骤
     
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
@@ -69,7 +72,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: true 
+        cache: false # 【修复点 3】：关闭安卓端 Flutter 缓存，加快后处理速度
     
     - name: Verify Flutter
       run: |
@@ -99,29 +102,29 @@ jobs:
         echo "APKs renamed successfully!"
     
     - name: Upload arm64-v8a APK
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
+        name: 小说智读-APK-arm64-v8a
         path: 小说智读_v*arm64-v8a.apk                 
-        archive: false    
         if-no-files-found: warn
 
     - name: Upload armeabi-v7a APK
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
+        name: 小说智读-APK-armeabi-v7a
         path: 小说智读_v*armeabi-v7a.apk                 
-        archive: false    
         if-no-files-found: warn
 
     - name: Upload x86_64 APK
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@v4
       with:
+        name: 小说智读-APK-x86_64
         path: 小说智读_v*x86_64.apk                 
-        archive: false    
         if-no-files-found: warn
     
     - name: Release APK
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: 小说智读_v*.apk
         name: 小说智读 v${{ env.APP_VERSION }}
@@ -170,7 +173,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: true 
+        cache: false # 【修复点 4】：关闭 Windows 端 Flutter 缓存，省出 3分半 钟
     
     - name: Verify Flutter
       shell: bash
@@ -181,7 +184,7 @@ jobs:
     - name: Build Flet Windows App
       shell: bash
       env:
-        PYTHONUTF8: "1"  # 【修复点】：强制启用 UTF-8，彻底解决 Flet 进度条导致 Windows 控制台崩溃的 bug
+        PYTHONUTF8: "1"  
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
@@ -199,7 +202,7 @@ jobs:
     
     - name: Release Windows ZIP
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v1
+      uses: softprops/action-gh-release@v2
       with:
         files: 小说智读_v*_windows.zip
       env:
