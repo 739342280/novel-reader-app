@@ -88,7 +88,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.1"  
+        self.version = "0.4.2"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -116,6 +116,7 @@ class NovelReaderApp:
         self.current_book_name = ""
         self.current_chapter_idx = 0
         self.current_scroll_offset = 0.0  
+        self.current_max_scroll_extent = 0.0 
         self.last_reported_pct = -1.0 
         
         self.font_size = 18
@@ -148,7 +149,7 @@ class NovelReaderApp:
                 "# 总结维度\n"
                 "1. **一句话概括**：用一句话说清这章讲了什么。\n"
                 "2. **情节脉络**：\n"
-                "   - 起因：\n"
+                "   -起因：\n"
                 "   - 经过（转折点）：\n"
                 "   - 结果：\n"
                 "3. **人物弧光**：主角在这一章的心态变化曲线（例如：从愤怒 -> 冷静 -> 下定决心）。\n"
@@ -196,10 +197,11 @@ class NovelReaderApp:
 
     def _on_text_scroll(self, e: ft.OnScrollEvent):
         self.current_scroll_offset = e.pixels
+        self.current_max_scroll_extent = getattr(e, "max_scroll_extent", 0.0) 
         
         if not self.engine.chapters_info: return
         
-        max_ext = getattr(e, "max_scroll_extent", 0.0)
+        max_ext = self.current_max_scroll_extent
         chap_pct = 0.0
         if max_ext and max_ext > 0:
             p = max(0.0, min(float(e.pixels), float(max_ext)))
@@ -890,7 +892,6 @@ class NovelReaderApp:
             text_c = "#B0B0B0"             
             top_book_c = ft.Colors.GREY_500
             top_chap_c = ft.Colors.WHITE   
-            # 【恢复旧版】：暗黑模式强行硬编码回舒适的 #2C2C2C
             btn_bg_c = "#2C2C2C" 
         else:
             bg_c = self.bg_color
@@ -900,21 +901,20 @@ class NovelReaderApp:
             top_book_c = ft.Colors.GREY_600
             top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
             
-            # 【核心修复】：彻底放弃泥巴色的叠加机制，全部使用精准调配的 HEX 纯色！
             if bg_c == "#FFFFFF":
-                btn_bg_c = "#F8F8F8"       # 纯白微灰，保持上一版效果
+                btn_bg_c = "#F8F8F8"       
             elif bg_c == "#D4A373":
-                btn_bg_c = "#E8B787"       # 牛皮纸一 (提亮纯色)
+                btn_bg_c = "#E8B787"       
             elif bg_c == "#CBB28C":
-                btn_bg_c = "#DFC6A0"       # 牛皮纸二 (提亮纯色)
+                btn_bg_c = "#DFC6A0"       
             elif bg_c == "#E8DCC8":
-                btn_bg_c = "#F7EBD7"       # 牛皮纸三 (提亮纯色)
+                btn_bg_c = "#F7EBD7"       
             elif bg_c == "#F5F5DC":
-                btn_bg_c = "#FFFFE6"       # 米黄 (提亮纯色)
+                btn_bg_c = "#FFFFE6"       
             elif bg_c == "#CCE8CF":
-                btn_bg_c = "#E0FCE3"       # 护眼绿 (提亮纯色，专治你的截图！)
+                btn_bg_c = "#E0FCE3"       
             else:
-                btn_bg_c = "#F0F0F0"       # 兜底色
+                btn_bg_c = "#F0F0F0"       
             
         if hasattr(self, "reading_base_layer"):
             self.reading_base_layer.bgcolor = bg_c
@@ -966,6 +966,11 @@ class NovelReaderApp:
             try: self.reader_bottom_bar.update()
             except Exception: pass
 
+        if hasattr(self, "btn_more") and self.btn_more:
+            self.btn_more.icon_color = top_chap_c
+            try: self.btn_more.update()
+            except Exception: pass
+
         pad_12 = ft.Padding.symmetric(horizontal=12)
         pad_8 = ft.Padding.symmetric(horizontal=8)
         
@@ -983,7 +988,6 @@ class NovelReaderApp:
                     except Exception: pass
                 
                 btn.icon_color = top_chap_c
-                # 应用最新的纯色背景 btn_bg_c，彻底剥离 Material 3 的阴影污染
                 btn.style = ft.ButtonStyle(
                     color=top_chap_c, 
                     bgcolor=btn_bg_c,  
@@ -1180,6 +1184,18 @@ class NovelReaderApp:
         self.top_bar_book_name = ft.Text(self.current_book_name, size=13, color=ft.Colors.GREY_500, overflow=ft.TextOverflow.ELLIPSIS)
         self.top_bar_chapter_name = ft.Text("", size=17, weight=ft.FontWeight.BOLD, overflow=ft.TextOverflow.ELLIPSIS)
 
+        # 【修改点1】：增加 tooltip="设置"，覆盖掉默认的 Show menu
+        self.btn_more = ft.PopupMenuButton(
+            icon=ft.Icons.MORE_VERT,
+            tooltip="设置",
+            items=[
+                ft.PopupMenuItem(
+                    content=ft.Row([ft.Icon(ft.Icons.BAR_CHART), ft.Text("阅读统计")], spacing=10),
+                    on_click=self.show_statistics_dialog
+                ),
+            ]
+        )
+
         self.reader_top_bar = ft.Container(
             top=0, left=0, right=0,
             content=ft.Row([
@@ -1188,6 +1204,7 @@ class NovelReaderApp:
                     self.top_bar_book_name,
                     self.top_bar_chapter_name
                 ], expand=True, spacing=2, horizontal_alignment=ft.CrossAxisAlignment.START, alignment=ft.MainAxisAlignment.CENTER),
+                self.btn_more  
             ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
             padding=ft.Padding(top=40, left=10, right=10, bottom=10),
             bgcolor="surface",
@@ -1432,6 +1449,7 @@ class NovelReaderApp:
         text = self.engine.get_chapter_text(idx)
 
         self.current_scroll_offset = target_offset
+        self.current_max_scroll_extent = 0.0 
 
         if hasattr(self, "top_bar_book_name"):
             display_vol = volume if volume and volume != title else ""
@@ -1602,6 +1620,83 @@ class NovelReaderApp:
     # ==========================
     # 弹窗逻辑
     # ==========================
+    
+    def show_statistics_dialog(self, e):
+        if not self.engine.chapters_info: return
+
+        # 方案 A：使用字符串重组瞬间剥离全书所有空格和换行符，拿到纯文字真实总字数
+        total_words = len("".join(self.engine.full_text_content.split()))
+        total_chaps = len(self.engine.chapters_info)
+        
+        vols = set(ch['volume'] for ch in self.engine.chapters_info)
+        total_vols = len(vols)
+
+        current_idx = self.current_chapter_idx
+        curr_ch_info = self.engine.chapters_info[current_idx]
+        curr_vol = curr_ch_info.get('volume', '')
+
+        # 单独精准剥离本章的空白符
+        curr_chap_words = len("".join(self.engine.get_chapter_text(current_idx).split()))
+
+        # 【核心增强】：重构循环，全局已读/未读和当前卷已读/未读一次性全部精准核算
+        total_read_words = 0
+        vol_total_words = 0
+        vol_read_words = 0
+
+        # 获取精确到像素的滑动比例
+        max_ext = getattr(self, "current_max_scroll_extent", 0.0)
+        pct = 0.0
+        if max_ext > 0:
+            pct = min(1.0, max(0.0, self.current_scroll_offset / max_ext))
+
+        for i, ch in enumerate(self.engine.chapters_info):
+            # 获取该章节剔除空白符后的纯字数
+            words = len("".join(self.engine.get_chapter_text(i).split()))
+            
+            is_curr_vol = (ch.get('volume', '') == curr_vol)
+            if is_curr_vol:
+                vol_total_words += words
+
+            if i < current_idx:
+                total_read_words += words
+                if is_curr_vol:
+                    vol_read_words += words
+            elif i == current_idx:
+                read_part = int(words * pct)
+                total_read_words += read_part
+                if is_curr_vol:
+                    vol_read_words += read_part
+
+        total_unread_words = total_words - total_read_words
+        vol_unread_words = vol_total_words - vol_read_words
+
+        self.global_dialog.modal = False
+        self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=20, vertical=24)
+        self.global_dialog.content_padding = ft.Padding(20, 20, 20, 10)
+
+        # 【界面净化】：移除所有的 emoji，采用极其清爽且严格的排序
+        self.global_dialog.title = ft.Text("阅读统计", size=18, weight=ft.FontWeight.BOLD)
+
+        stat_content = ft.Column([
+            ft.Text(f"卷数：{total_vols}", size=14),
+            ft.Text(f"章节数：{total_chaps}", size=14),
+            ft.Text(f"总字数：{total_words:,}", size=14),
+            ft.Text(f"本卷字数：{vol_total_words:,}", size=14),
+            ft.Text(f"本章字数：{curr_chap_words:,}", size=14),
+            ft.Divider(height=10, thickness=0.5),
+            ft.Text(f"已读：{total_read_words:,}", size=14),
+            ft.Text(f"未读：{total_unread_words:,}", size=14),
+            ft.Text(f"本卷已读：{vol_read_words:,}", size=14),
+            ft.Text(f"本卷未读：{vol_unread_words:,}", size=14),
+        ], tight=True, spacing=8)
+
+        self.global_dialog.content = stat_content
+        self.global_dialog.actions = [
+            ft.Button(content=ft.Text("关闭"), on_click=lambda _: self._close_dialog())
+        ]
+
+        self._open_dialog()
+
     def show_settings_dialog(self, e):
         self.global_dialog.modal = False
         self.global_dialog.inset_padding = None
@@ -1634,7 +1729,11 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.4.0】沉浸式阅读交互大升级
+        # 【日志更新】：追加 v0.4.2 的记录
+        log_text = """【v0.4.2】阅读统计与界面完善
+- (新增) 右上角“设置”菜单，加入基于文本去水（剔除空白符）的精确“阅读统计”功能，包含卷/章/全局与卷内维度的详尽已读未读数据。
+
+【v0.4.0】沉浸式阅读交互大升级
 - (新增) 正文尾部追加“下一章”无缝跳转按钮：当阅读到章节最末尾时，无需再唤出底侧菜单即可直接点击进入下一章，彻底打破跨章割裂感，保持心流沉浸。
 
 【v0.3.19】核心阅读体验与界面精调
