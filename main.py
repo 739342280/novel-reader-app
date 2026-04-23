@@ -88,7 +88,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.0"  
+        self.version = "0.4.1"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -890,6 +890,8 @@ class NovelReaderApp:
             text_c = "#B0B0B0"             
             top_book_c = ft.Colors.GREY_500
             top_chap_c = ft.Colors.WHITE   
+            # 按钮提亮算法：暗色模式下，按钮稍微比纯黑亮一点
+            btn_bg_c = "#2C2C2C" 
         else:
             bg_c = self.bg_color
             bg_i = self.bg_image
@@ -897,6 +899,13 @@ class NovelReaderApp:
             text_c = self.reader_text_color 
             top_book_c = ft.Colors.GREY_600
             top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
+            
+            if bg_c == "#FFFFFF":
+                # 按钮提亮算法：纯白模式下，按钮稍微比纯白暗一点才能看见
+                btn_bg_c = "#F0F0F0"
+            else:
+                # 按钮提亮算法：牛皮纸/有色模式下，叠加 25% 的纯白，完美实现“同色系微亮”
+                btn_bg_c = "#40FFFFFF" 
             
         if hasattr(self, "reading_base_layer"):
             self.reading_base_layer.bgcolor = bg_c
@@ -910,10 +919,19 @@ class NovelReaderApp:
                     ctrl.color = text_c
                     try: ctrl.update()
                     except Exception: pass
-                    
+
         if hasattr(self, "inline_next_btn") and self.inline_next_btn:
             if isinstance(self.inline_next_btn.content, ft.TextButton):
-                self.inline_next_btn.content.style = ft.ButtonStyle(color=text_c)
+                self.inline_next_btn.content.style = ft.ButtonStyle(
+                    color=text_c,
+                    bgcolor=ft.Colors.TRANSPARENT, # 行内按钮保持纯文本透明
+                    elevation=0
+                )
+                self.inline_next_btn.content.icon_color = text_c
+                if getattr(self.inline_next_btn.content, "content", None) and isinstance(self.inline_next_btn.content.content, ft.Text):
+                    self.inline_next_btn.content.content.color = text_c
+                    try: self.inline_next_btn.content.content.update()
+                    except Exception: pass
             elif isinstance(self.inline_next_btn.content, ft.Text):
                 self.inline_next_btn.content.color = text_c
             try: self.inline_next_btn.update()
@@ -938,6 +956,33 @@ class NovelReaderApp:
             self.reader_bottom_bar.bgcolor = menu_c
             try: self.reader_bottom_bar.update()
             except Exception: pass
+
+        # 【核心修正】：用提亮色覆盖原本发脏的透明背景，同时强制去除 elevation(阴影)
+        pad_12 = ft.Padding.symmetric(horizontal=12)
+        pad_8 = ft.Padding.symmetric(horizontal=8)
+        
+        for btn, pad in [
+            (getattr(self, "btn_prev", None), pad_12),
+            (getattr(self, "btn_next", None), pad_12),
+            (getattr(self, "btn_toc", None), pad_8),
+            (getattr(self, "theme_btn", None), pad_8),
+            (getattr(self, "btn_settings", None), pad_8)
+        ]:
+            if btn:
+                if getattr(btn, "content", None) and isinstance(btn.content, ft.Text):
+                    btn.content.color = top_chap_c
+                    try: btn.content.update()
+                    except Exception: pass
+                
+                btn.icon_color = top_chap_c
+                btn.style = ft.ButtonStyle(
+                    color=top_chap_c, 
+                    bgcolor=btn_bg_c,  # 应用提亮色
+                    elevation=0,       # 强行斩除底层阴影，避免变泥巴色
+                    padding=pad
+                )
+                try: btn.update()
+                except Exception: pass
 
     def _get_is_dark_mode(self):
         if not getattr(self, "follow_system_theme", True):
@@ -1207,6 +1252,20 @@ class NovelReaderApp:
         )
         self.sync_theme_btn_ui()
 
+        self.btn_toc = ft.Button(
+            content=ft.Text("目录"), 
+            icon=ft.Icons.MENU_BOOK, 
+            on_click=self._open_toc_sheet,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
+        )
+        
+        self.btn_settings = ft.Button(
+            content=ft.Text("界面"), 
+            icon=ft.Icons.FORMAT_SIZE, 
+            on_click=self._open_settings_sheet,
+            style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
+        )
+
         self.reader_bottom_bar = ft.Container(
             bottom=0, left=0, right=0,
             padding=10, 
@@ -1219,12 +1278,7 @@ class NovelReaderApp:
                 ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
                 
                 ft.Row([
-                    ft.Button(
-                        content=ft.Text("目录"), 
-                        icon=ft.Icons.MENU_BOOK, 
-                        on_click=self._open_toc_sheet,
-                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
-                    ),
+                    self.btn_toc,
                     self.theme_btn,
                     ft.Button(
                         content=ft.Text("AI总结"), 
@@ -1236,12 +1290,7 @@ class NovelReaderApp:
                             padding=ft.Padding.symmetric(horizontal=8) 
                         )
                     ),
-                    ft.Button(
-                        content=ft.Text("界面"), 
-                        icon=ft.Icons.FORMAT_SIZE, 
-                        on_click=self._open_settings_sheet,
-                        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
-                    )
+                    self.btn_settings
                 ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
             ], tight=True, spacing=10),
             offset=ft.Offset(0, 0),
@@ -1809,7 +1858,6 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
         self.global_dialog.content_padding = ft.Padding(left=20, top=15, right=4, bottom=15)
         
-        # 【精准修正】：文案调整为“AI 总结”，字号定格为 16
         self.global_dialog.title = ft.Text(f"✨ AI 总结 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD)
         self.global_dialog.content = ft.Container(
             content=ai_scroll_col,
