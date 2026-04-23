@@ -13,8 +13,8 @@ permissions:
   contents: write
 
 env:
-  # 【修复点 1】：强制升级 actions 运行环境到 Node 24，彻底干掉警告
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
+  # 【修复点】：加上了双引号，变成合法字符串，系统将立刻恢复自动打包！
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
 
 jobs:
   build-android:
@@ -57,8 +57,6 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
         
-    # 【修复点 2】：删除了耗时 6 分钟且导致 404 的 Setup Gradle 缓存步骤
-    
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
     
@@ -72,7 +70,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: false # 【修复点 3】：关闭安卓端 Flutter 缓存，加快后处理速度
+        cache: "false" # 【修复点】：布尔值全部加双引号，防患于未然
     
     - name: Verify Flutter
       run: |
@@ -173,7 +171,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: false # 【修复点 4】：关闭 Windows 端 Flutter 缓存，省出 3分半 钟
+        cache: "false" # 【修复点】：加双引号
     
     - name: Verify Flutter
       shell: bash
