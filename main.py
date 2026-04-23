@@ -537,7 +537,7 @@ class NovelReaderApp:
                 ft.IconButton(icon=ft.Icons.SETTINGS, tooltip="AI设置", on_click=self.show_settings_dialog),
                 ft.IconButton(icon=ft.Icons.HISTORY, tooltip="更新日志", on_click=self.show_changelog_dialog),
             ]),
-            padding=ft.Padding(left=30, top=20, right=30, bottom=10)
+            padding=ft.Padding(left=30, top=50, right=30, bottom=10)
         )
 
         self.bookshelf_grid = ft.GridView(
@@ -1356,13 +1356,11 @@ class NovelReaderApp:
     async def _finalize_chapter_load(self, col, offset):
         await asyncio.sleep(0.1) 
         try:
-            if col.page is not None:
-                if offset > 0:
-                    await col.scroll_to(offset=offset, duration=0)
-                    await asyncio.sleep(0.05) 
-                
-                col.opacity = 1
-                col.update()
+            if offset > 0:
+                await col.scroll_to(offset=offset, duration=0)
+                await asyncio.sleep(0.05) 
+            col.opacity = 1
+            col.update()
         except Exception:
             pass
 
@@ -1811,7 +1809,8 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
         self.global_dialog.content_padding = ft.Padding(left=20, top=15, right=4, bottom=15)
         
-        self.global_dialog.title = ft.Text(f"✨ AI 智能总结 - {ch_info['title']}")
+        # 【精准修正】：文案调整为“AI 总结”，字号定格为 16
+        self.global_dialog.title = ft.Text(f"✨ AI 总结 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD)
         self.global_dialog.content = ft.Container(
             content=ai_scroll_col,
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
