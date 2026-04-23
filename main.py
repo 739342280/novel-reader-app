@@ -88,7 +88,7 @@ class NovelEngine:
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.3.19"  
+        self.version = "0.4.0"  
         self.author = "手背儿"
         
         self.page.title = f"小说智读 - v{self.version}"
@@ -216,7 +216,7 @@ class NovelReaderApp:
                 if hasattr(self, "info_progress"):
                     self.info_progress.value = f"{current_total_pct:.1f}%"
                     try: self.info_progress.update()
-                    except: pass
+                    except Exception: pass
 
     def save_current_progress(self):
         if getattr(self, "current_book_path", "") == "":
@@ -257,19 +257,13 @@ class NovelReaderApp:
         while True:
             try:
                 if hasattr(self, "info_time"):
-                    try:
-                        is_mounted = self.info_time.page is not None
-                    except RuntimeError:
-                        is_mounted = False
-                        
-                    if is_mounted:
-                        now_str = datetime.now().strftime("%H:%M")
-                        if self.info_time.value != now_str:
-                            self.info_time.value = now_str
-                            try:
-                                self.info_time.update()
-                            except Exception:
-                                pass
+                    now_str = datetime.now().strftime("%H:%M")
+                    if self.info_time.value != now_str:
+                        self.info_time.value = now_str
+                        try:
+                            self.info_time.update()
+                        except Exception:
+                            pass
             except Exception:
                 pass
             await asyncio.sleep(5)
@@ -288,8 +282,7 @@ class NovelReaderApp:
             try: self.page.open(control)
             except Exception: pass
 
-        try:
-            if control.page: control.update()
+        try: control.update()
         except Exception: pass
         self.page.update()
 
@@ -301,8 +294,7 @@ class NovelReaderApp:
             try: self.page.close(control)
             except Exception: pass
 
-        try:
-            if control.page: control.update()
+        try: control.update()
         except Exception: pass
         self.page.update()
 
@@ -358,11 +350,13 @@ class NovelReaderApp:
                 
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
-            self.reader_top_bar.update()
+            try: self.reader_top_bar.update()
+            except Exception: pass
 
         if hasattr(self, "reader_bottom_bar"):
             self.reader_bottom_bar.offset = ft.Offset(0, 1) if self.is_immersive else ft.Offset(0, 0)
-            self.reader_bottom_bar.update()
+            try: self.reader_bottom_bar.update()
+            except Exception: pass
             
         self.page.update()
 
@@ -850,8 +844,6 @@ class NovelReaderApp:
             except Exception: pass
 
     def _sync_font_highlight(self):
-        if not hasattr(self, "font_btn_default"): return
-        
         active_bg = "#1AFFFFFF" if self._get_is_dark_mode() else "#1A000000"
         inactive_bg = ft.Colors.TRANSPARENT
         
@@ -882,7 +874,8 @@ class NovelReaderApp:
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
                 ctrl.font_family = self.font_family
-                ctrl.update()
+                try: ctrl.update()
+                except Exception: pass
                 
         self._apply_theme_colors() 
         self._save_config_to_appdata()
@@ -909,34 +902,42 @@ class NovelReaderApp:
             self.reading_base_layer.bgcolor = bg_c
             self.reading_base_layer.image = ft.DecorationImage(src=bg_i, repeat="repeat") if bg_i else None
             try: self.reading_base_layer.update()
-            except: pass
+            except Exception: pass
             
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
                 if ctrl.color != text_c:
                     ctrl.color = text_c
                     try: ctrl.update()
-                    except: pass
+                    except Exception: pass
+                    
+        if hasattr(self, "inline_next_btn") and self.inline_next_btn:
+            if isinstance(self.inline_next_btn.content, ft.TextButton):
+                self.inline_next_btn.content.style = ft.ButtonStyle(color=text_c)
+            elif isinstance(self.inline_next_btn.content, ft.Text):
+                self.inline_next_btn.content.color = text_c
+            try: self.inline_next_btn.update()
+            except Exception: pass
             
         if hasattr(self, "reader_top_bar"):
             self.reader_top_bar.bgcolor = menu_c
             try: self.reader_top_bar.update()
-            except: pass
+            except Exception: pass
             
         if hasattr(self, "top_bar_book_name"):
             self.top_bar_book_name.color = top_book_c
             try: self.top_bar_book_name.update()
-            except: pass
+            except Exception: pass
             
         if hasattr(self, "top_bar_chapter_name"):
             self.top_bar_chapter_name.color = top_chap_c
             try: self.top_bar_chapter_name.update()
-            except: pass
+            except Exception: pass
             
         if hasattr(self, "reader_bottom_bar"):
             self.reader_bottom_bar.bgcolor = menu_c
             try: self.reader_bottom_bar.update()
-            except: pass
+            except Exception: pass
 
     def _get_is_dark_mode(self):
         if not getattr(self, "follow_system_theme", True):
@@ -959,7 +960,7 @@ class NovelReaderApp:
             self.theme_btn.icon = ft.Icons.DARK_MODE
             
         try: self.theme_btn.update()
-        except: pass
+        except Exception: pass
 
     # ==========================================
     # 视图：阅读沉浸页面
@@ -1181,7 +1182,7 @@ class NovelReaderApp:
             if hasattr(self, "system_theme_switch"):
                 self.system_theme_switch.value = False
                 try: self.system_theme_switch.update()
-                except: pass
+                except Exception: pass
 
             is_dark = self._get_is_dark_mode()
             if is_dark:
@@ -1332,7 +1333,8 @@ class NovelReaderApp:
                     expected_color = ft.Colors.BLUE if idx == self.current_chapter_idx else None
                     if text_ctrl.color != expected_color:
                         text_ctrl.color = expected_color
-                        text_ctrl.update()
+                        try: text_ctrl.update()
+                        except Exception: pass
                 except Exception:
                     pass
 
@@ -1392,7 +1394,6 @@ class NovelReaderApp:
             self.last_reported_pct = base_pct
             self.info_progress.value = f"{base_pct:.1f}%"
         
-        # 【修改点】：创建文本段落时，调用最新且唯一的智能判断色
         current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
@@ -1407,8 +1408,29 @@ class NovelReaderApp:
             for p in paragraphs
         ]
 
+        prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
+        next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
+
+        if next_valid != -1:
+            self.inline_next_btn = ft.Container(
+                content=ft.TextButton(
+                    content=ft.Text("下一章"),
+                    icon=ft.Icons.ARROW_FORWARD,
+                    on_click=self.load_next,
+                    style=ft.ButtonStyle(color=current_text_color)
+                ),
+                alignment=ft.Alignment(0, 0),
+                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+            )
+        else:
+            self.inline_next_btn = ft.Container(
+                content=ft.Text("— 已经是最后一章了 —", color=current_text_color, size=13),
+                alignment=ft.Alignment(0, 0),
+                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+            )
+
         self.inner_text_col = ft.Column(
-            controls=self.reader_text_controls, 
+            controls=self.reader_text_controls + [self.inline_next_btn],
             spacing=self.paragraph_spacing
         )
 
@@ -1429,8 +1451,6 @@ class NovelReaderApp:
         
         self.text_panel.content = self.text_scroll_col
 
-        prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
-        next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
         self.btn_prev.disabled = prev_valid == -1
         self.btn_next.disabled = next_valid == -1
 
@@ -1447,12 +1467,12 @@ class NovelReaderApp:
         
         self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
 
-    def load_prev(self, e):
+    def load_prev(self, e=None):
         if self.current_chapter_idx > 0:
             valid_idx = self._find_valid_chapter(self.current_chapter_idx - 1, -1)
             if valid_idx != -1: self.load_chapter(valid_idx) 
 
-    def load_next(self, e):
+    def load_next(self, e=None):
         if self.current_chapter_idx < len(self.engine.chapters_info) - 1:
             valid_idx = self._find_valid_chapter(self.current_chapter_idx + 1, 1)
             if valid_idx != -1: self.load_chapter(valid_idx) 
@@ -1464,10 +1484,12 @@ class NovelReaderApp:
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.size = self.font_size
-                    ctrl.update()
+                    try: ctrl.update()
+                    except Exception: pass
             if hasattr(self, "font_size_text"):
                 self.font_size_text.value = str(self.font_size)
-                self.font_size_text.update()
+                try: self.font_size_text.update()
+                except Exception: pass
 
     def change_line_height(self, delta):
         new_height = round(self.line_height + delta, 1)
@@ -1476,10 +1498,12 @@ class NovelReaderApp:
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    ctrl.update()
+                    try: ctrl.update()
+                    except Exception: pass
             if hasattr(self, "line_height_text"):
                 self.line_height_text.value = f"{self.line_height:.1f}"
-                self.line_height_text.update()
+                try: self.line_height_text.update()
+                except Exception: pass
 
     def change_paragraph_spacing(self, delta):
         new_spacing = int(self.paragraph_spacing + delta)
@@ -1487,10 +1511,12 @@ class NovelReaderApp:
             self.paragraph_spacing = new_spacing
             if hasattr(self, "inner_text_col"):
                 self.inner_text_col.spacing = self.paragraph_spacing
-                self.inner_text_col.update()
+                try: self.inner_text_col.update()
+                except Exception: pass
             if hasattr(self, "para_spacing_text"):
                 self.para_spacing_text.value = str(self.paragraph_spacing)
-                self.para_spacing_text.update()
+                try: self.para_spacing_text.update()
+                except Exception: pass
 
     def change_letter_spacing(self, delta):
         new_spacing = round(self.letter_spacing + delta, 1)
@@ -1499,10 +1525,12 @@ class NovelReaderApp:
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    ctrl.update()
+                    try: ctrl.update()
+                    except Exception: pass
             if hasattr(self, "letter_spacing_text"):
                 self.letter_spacing_text.value = f"{self.letter_spacing:.1f}"
-                self.letter_spacing_text.update()
+                try: self.letter_spacing_text.update()
+                except Exception: pass
 
     async def copy_current(self, e):
         if not self.engine.chapters_info: return
@@ -1550,7 +1578,10 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.3.19】核心阅读体验与界面精调
+        log_text = """【v0.4.0】沉浸式阅读交互大升级
+- (新增) 正文尾部追加“下一章”无缝跳转按钮：当阅读到章节最末尾时，无需再唤出底侧菜单即可直接点击进入下一章，彻底打破跨章割裂感，保持心流沉浸。
+
+【v0.3.19】核心阅读体验与界面精调
 - (修复) 夜间模式沉浸感打磨：修复了夜间强制黑屏时，文字颜色依然保持日间色彩的 Bug；修复了顶部菜单文字在夜间模式下不可见的 Bug。
 - (优化) 重新提取并校准了“牛皮纸一”和“牛皮纸二”的 Base 底色，使其与真实图片材质更加贴合。
 - (修复) 彻底移除了导致阅读总进度“提前增加”的分子加一算法，精准还原真实阅读比例。
@@ -1648,8 +1679,7 @@ class NovelReaderApp:
             async def safe_scroll_task():
                 while is_streaming[0]:
                     try:
-                        if ai_scroll_col.page is not None:
-                            await ai_scroll_col.scroll_to(offset=-1, duration=0)
+                        await ai_scroll_col.scroll_to(offset=-1, duration=0)
                     except Exception:
                         pass
                     await asyncio.sleep(0.1)
