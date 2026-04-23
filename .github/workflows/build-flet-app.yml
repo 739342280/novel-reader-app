@@ -12,10 +12,6 @@ on:
 permissions:
   contents: write
 
-env:
-  # 【修复点】：加上了双引号，变成合法字符串，系统将立刻恢复自动打包！
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
-
 jobs:
   build-android:
     runs-on: ubuntu-latest
@@ -57,6 +53,9 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
         
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+    
     - name: Setup Android SDK
       uses: android-actions/setup-android@v3
     
@@ -70,7 +69,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: "false" # 【修复点】：布尔值全部加双引号，防患于未然
+        cache: true 
     
     - name: Verify Flutter
       run: |
@@ -171,7 +170,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: "false" # 【修复点】：加双引号
+        cache: true 
     
     - name: Verify Flutter
       shell: bash
