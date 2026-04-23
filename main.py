@@ -149,7 +149,7 @@ class NovelReaderApp:
                 "# 总结维度\n"
                 "1. **一句话概括**：用一句话说清这章讲了什么。\n"
                 "2. **情节脉络**：\n"
-                "   -起因：\n"
+                "   - 起因：\n"
                 "   - 经过（转折点）：\n"
                 "   - 结果：\n"
                 "3. **人物弧光**：主角在这一章的心态变化曲线（例如：从愤怒 -> 冷静 -> 下定决心）。\n"
@@ -878,6 +878,13 @@ class NovelReaderApp:
                 ctrl.font_family = self.font_family
                 try: ctrl.update()
                 except Exception: pass
+
+        # 【同步修改点】：同步接管标题字体的切换
+        if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+            if isinstance(self.chapter_title_control.content, ft.Text):
+                self.chapter_title_control.content.font_family = self.font_family
+                try: self.chapter_title_control.content.update()
+                except Exception: pass
                 
         self._apply_theme_colors() 
         self._save_config_to_appdata()
@@ -921,6 +928,13 @@ class NovelReaderApp:
             self.reading_base_layer.image = ft.DecorationImage(src=bg_i, repeat="repeat") if bg_i else None
             try: self.reading_base_layer.update()
             except Exception: pass
+
+        # 【同步修改点】：同步接管标题的日夜间变色
+        if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+            if isinstance(self.chapter_title_control.content, ft.Text):
+                self.chapter_title_control.content.color = text_c
+                try: self.chapter_title_control.content.update()
+                except Exception: pass
             
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
@@ -1184,7 +1198,6 @@ class NovelReaderApp:
         self.top_bar_book_name = ft.Text(self.current_book_name, size=13, color=ft.Colors.GREY_500, overflow=ft.TextOverflow.ELLIPSIS)
         self.top_bar_chapter_name = ft.Text("", size=17, weight=ft.FontWeight.BOLD, overflow=ft.TextOverflow.ELLIPSIS)
 
-        # 【修改点1】：增加 tooltip="设置"，覆盖掉默认的 Show menu
         self.btn_more = ft.PopupMenuButton(
             icon=ft.Icons.MORE_VERT,
             tooltip="设置",
@@ -1471,16 +1484,36 @@ class NovelReaderApp:
         current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
         
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
-        self.reader_text_controls = [
-            ft.Text(
-                p, 
-                size=self.font_size, 
-                style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
-                font_family=self.font_family, 
-                color=current_text_color   
-            ) 
-            for p in paragraphs
-        ]
+        
+        self.reader_text_controls = []
+        self.chapter_title_control = None
+        
+        # 【修改点1】：独立提取首行作为章节标题，并应用定制排版
+        if paragraphs:
+            title_text = paragraphs.pop(0)
+            self.chapter_title_control = ft.Container(
+                content=ft.Text(
+                    title_text,
+                    size=self.font_size + 2,  
+                    weight=ft.FontWeight.BOLD, 
+                    style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
+                    font_family=self.font_family,
+                    color=current_text_color,
+                    text_align=ft.TextAlign.LEFT 
+                ),
+                padding=ft.Padding(left=0, top=0, right=0, bottom=15) 
+            )
+
+            for p in paragraphs:
+                self.reader_text_controls.append(
+                    ft.Text(
+                        p, 
+                        size=self.font_size, 
+                        style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
+                        font_family=self.font_family, 
+                        color=current_text_color   
+                    )
+                )
 
         prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
         next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
@@ -1503,8 +1536,14 @@ class NovelReaderApp:
                 padding=ft.Padding(top=30, bottom=50, left=0, right=0)
             )
 
+        controls_to_add = []
+        if self.chapter_title_control:
+            controls_to_add.append(self.chapter_title_control)
+        controls_to_add.extend(self.reader_text_controls)
+        controls_to_add.append(self.inline_next_btn)
+
         self.inner_text_col = ft.Column(
-            controls=self.reader_text_controls + [self.inline_next_btn],
+            controls=controls_to_add,
             spacing=self.paragraph_spacing
         )
 
@@ -1555,6 +1594,14 @@ class NovelReaderApp:
         new_size = self.font_size + delta
         if 12 <= new_size <= 48:
             self.font_size = new_size
+            
+            # 【修改点2】：同步接管标题字号调整
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.size = self.font_size + 2
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.size = self.font_size
@@ -1569,6 +1616,14 @@ class NovelReaderApp:
         new_height = round(self.line_height + delta, 1)
         if 1.0 <= new_height <= 3.0:
             self.line_height = new_height
+            
+            # 【修改点2】：同步接管标题行高调整
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
@@ -1596,6 +1651,14 @@ class NovelReaderApp:
         new_spacing = round(self.letter_spacing + delta, 1)
         if 0.0 <= new_spacing <= 10.0:
             self.letter_spacing = new_spacing
+            
+            # 【修改点2】：同步接管标题字距调整
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
                     ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
@@ -1624,7 +1687,6 @@ class NovelReaderApp:
     def show_statistics_dialog(self, e):
         if not self.engine.chapters_info: return
 
-        # 方案 A：使用字符串重组瞬间剥离全书所有空格和换行符，拿到纯文字真实总字数
         total_words = len("".join(self.engine.full_text_content.split()))
         total_chaps = len(self.engine.chapters_info)
         
@@ -1635,22 +1697,18 @@ class NovelReaderApp:
         curr_ch_info = self.engine.chapters_info[current_idx]
         curr_vol = curr_ch_info.get('volume', '')
 
-        # 单独精准剥离本章的空白符
         curr_chap_words = len("".join(self.engine.get_chapter_text(current_idx).split()))
 
-        # 【核心增强】：重构循环，全局已读/未读和当前卷已读/未读一次性全部精准核算
         total_read_words = 0
         vol_total_words = 0
         vol_read_words = 0
 
-        # 获取精确到像素的滑动比例
         max_ext = getattr(self, "current_max_scroll_extent", 0.0)
         pct = 0.0
         if max_ext > 0:
             pct = min(1.0, max(0.0, self.current_scroll_offset / max_ext))
 
         for i, ch in enumerate(self.engine.chapters_info):
-            # 获取该章节剔除空白符后的纯字数
             words = len("".join(self.engine.get_chapter_text(i).split()))
             
             is_curr_vol = (ch.get('volume', '') == curr_vol)
@@ -1674,7 +1732,6 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=20, vertical=24)
         self.global_dialog.content_padding = ft.Padding(20, 20, 20, 10)
 
-        # 【界面净化】：移除所有的 emoji，采用极其清爽且严格的排序
         self.global_dialog.title = ft.Text("阅读统计", size=18, weight=ft.FontWeight.BOLD)
 
         stat_content = ft.Column([
@@ -1729,8 +1786,9 @@ class NovelReaderApp:
         self.global_dialog.inset_padding = None
         self.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        # 【日志更新】：追加 v0.4.2 的记录
+        # 【修改点3】：补充 v0.4.2 的新增章节名独立排版日志
         log_text = """【v0.4.2】阅读统计与界面完善
+- (新增) 章节名独立排版：正文内第一行章节名自动识别并独立进行加大加粗处理，左对齐排列，底部增加微小留白，拉开阅读层次感。
 - (新增) 右上角“设置”菜单，加入基于文本去水（剔除空白符）的精确“阅读统计”功能，包含卷/章/全局与卷内维度的详尽已读未读数据。
 
 【v0.4.0】沉浸式阅读交互大升级
