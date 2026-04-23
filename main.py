@@ -890,7 +890,7 @@ class NovelReaderApp:
             text_c = "#B0B0B0"             
             top_book_c = ft.Colors.GREY_500
             top_chap_c = ft.Colors.WHITE   
-            # 按钮提亮算法：暗色模式下，按钮稍微比纯黑亮一点
+            # 【恢复旧版】：暗黑模式强行硬编码回舒适的 #2C2C2C
             btn_bg_c = "#2C2C2C" 
         else:
             bg_c = self.bg_color
@@ -900,12 +900,21 @@ class NovelReaderApp:
             top_book_c = ft.Colors.GREY_600
             top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
             
+            # 【核心修复】：彻底放弃泥巴色的叠加机制，全部使用精准调配的 HEX 纯色！
             if bg_c == "#FFFFFF":
-                # 按钮提亮算法：纯白模式下，按钮稍微比纯白暗一点才能看见
-                btn_bg_c = "#F0F0F0"
+                btn_bg_c = "#F8F8F8"       # 纯白微灰，保持上一版效果
+            elif bg_c == "#D4A373":
+                btn_bg_c = "#E8B787"       # 牛皮纸一 (提亮纯色)
+            elif bg_c == "#CBB28C":
+                btn_bg_c = "#DFC6A0"       # 牛皮纸二 (提亮纯色)
+            elif bg_c == "#E8DCC8":
+                btn_bg_c = "#F7EBD7"       # 牛皮纸三 (提亮纯色)
+            elif bg_c == "#F5F5DC":
+                btn_bg_c = "#FFFFE6"       # 米黄 (提亮纯色)
+            elif bg_c == "#CCE8CF":
+                btn_bg_c = "#E0FCE3"       # 护眼绿 (提亮纯色，专治你的截图！)
             else:
-                # 按钮提亮算法：牛皮纸/有色模式下，叠加 25% 的纯白，完美实现“同色系微亮”
-                btn_bg_c = "#40FFFFFF" 
+                btn_bg_c = "#F0F0F0"       # 兜底色
             
         if hasattr(self, "reading_base_layer"):
             self.reading_base_layer.bgcolor = bg_c
@@ -924,7 +933,7 @@ class NovelReaderApp:
             if isinstance(self.inline_next_btn.content, ft.TextButton):
                 self.inline_next_btn.content.style = ft.ButtonStyle(
                     color=text_c,
-                    bgcolor=ft.Colors.TRANSPARENT, # 行内按钮保持纯文本透明
+                    bgcolor=ft.Colors.TRANSPARENT,
                     elevation=0
                 )
                 self.inline_next_btn.content.icon_color = text_c
@@ -957,7 +966,6 @@ class NovelReaderApp:
             try: self.reader_bottom_bar.update()
             except Exception: pass
 
-        # 【核心修正】：用提亮色覆盖原本发脏的透明背景，同时强制去除 elevation(阴影)
         pad_12 = ft.Padding.symmetric(horizontal=12)
         pad_8 = ft.Padding.symmetric(horizontal=8)
         
@@ -975,10 +983,11 @@ class NovelReaderApp:
                     except Exception: pass
                 
                 btn.icon_color = top_chap_c
+                # 应用最新的纯色背景 btn_bg_c，彻底剥离 Material 3 的阴影污染
                 btn.style = ft.ButtonStyle(
                     color=top_chap_c, 
-                    bgcolor=btn_bg_c,  # 应用提亮色
-                    elevation=0,       # 强行斩除底层阴影，避免变泥巴色
+                    bgcolor=btn_bg_c,  
+                    elevation=0,       
                     padding=pad
                 )
                 try: btn.update()
