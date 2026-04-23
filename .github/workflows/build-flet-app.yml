@@ -20,7 +20,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    # 【修复点】：使用跨平台极其稳健的 grep + sed 组合提取版本号
     - name: Extract Version from main.py
       id: extract_version
       run: |
@@ -143,7 +142,6 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    # 【修复点】：同步在此处应用稳健的 sed 提取法，彻底避开 Git Bash 对 -P 的区域限制报错
     - name: Extract Version from main.py
       id: extract_version
       shell: bash 
@@ -182,6 +180,8 @@ jobs:
         
     - name: Build Flet Windows App
       shell: bash
+      env:
+        PYTHONUTF8: "1"  # 【修复点】：强制启用 UTF-8，彻底解决 Flet 进度条导致 Windows 控制台崩溃的 bug
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
