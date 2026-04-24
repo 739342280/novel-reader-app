@@ -15,11 +15,13 @@ permissions:
 env:
   # 修复 Node.js 弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
+  # 提前占位，消除 IDE 的静态语法检查黄色警告
+  APP_VERSION: "" 
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    # 【彻底消除黄线】：在 Job 内部声明局部环境变量，满足最严苛的语法检查
+    # 【彻底消除黄线】：在 Job 内部声明局部环境变量
     env:
       APP_VERSION: "0.0.0"
     
@@ -105,6 +107,7 @@ jobs:
         done
         echo "APKs renamed successfully!"
     
+    # 使用 v7 并开启 archive: false 实现直链下载
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
@@ -202,10 +205,18 @@ jobs:
             mv "$f" "小说智读.exe"
           fi
         done
+        # 退回到根目录
+        cd ../..
+        
+        # 【终极防闪退修复】：强行把静态资源拷贝到免安装目录中，防止安装版“裸奔”！
+        if [ -d "assets" ]; then cp -R assets build/windows/; fi
+        if [ -d "fonts" ]; then cp -R fonts build/windows/; fi
+        if [ -d "images" ]; then cp -R images build/windows/; fi
         
     - name: Build Installer Setup (向导安装版)
       shell: pwsh
       run: |
+        # 这里的脚本已经精简，只做版本号替换，不再重复画蛇添足加 WorkingDir
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
         $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版"
@@ -219,7 +230,7 @@ jobs:
       run: |
         rm -rf build
         
-        # 强制包含资源文件夹，解决字体和纹理丢失问题
+        # 强制包含资源文件夹，解决便携版字体和纹理丢失问题
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
@@ -228,6 +239,7 @@ jobs:
         
         eval $PACK_CMD
 
+    # 使用 v7 并开启 archive: false 实现直链下载
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
