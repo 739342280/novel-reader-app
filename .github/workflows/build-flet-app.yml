@@ -178,8 +178,6 @@ jobs:
         flutter --version
         flutter doctor -v
         
-    # 虽然去掉了打 ZIP 包的步骤，但这个基础的 Build 必须保留
-    # 因为下面制作 Inno Setup 安装包需要用到这里的 "build/windows" 文件夹素材
     - name: Build Flet Windows App (Folder base)
       shell: bash
       env:
@@ -187,20 +185,21 @@ jobs:
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
+    # 【修复点 1：将打安装包的步骤提前，先消耗掉 build 文件夹】
+    - name: Build Installer Setup (向导安装版)
+      shell: pwsh
+      run: |
+        (Get-Content installer_script.iss) -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}" -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版" | Set-Content installer_script.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
+        
+    # 【修复点 2：把便携版挪到最后，并在打便携版前强制删掉 build 文件夹，彻底干掉人工确认弹窗】
     - name: Build Single Portable EXE (单文件便携版)
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
+        rm -rf build
         flet pack main.py --name "小说智读_v${{ env.APP_VERSION }}_便携版" --product-name "小说智读" --product-version "${{ env.APP_VERSION }}"
-        
-    - name: Build Installer Setup (向导安装版)
-      shell: pwsh
-      run: |
-        # 使用 PowerShell 动态替换配置文件里的版本号
-        (Get-Content installer_script.iss) -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}" -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版" | Set-Content installer_script.iss
-        # 调用系统自带的 Inno Setup 引擎编译安装包
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
     - name: Upload All Windows Artifacts
       uses: actions/upload-artifact@v4
