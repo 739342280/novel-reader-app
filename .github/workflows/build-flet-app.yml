@@ -132,7 +132,7 @@ jobs:
 
 
   # =========================================================
-  # Windows 桌面端独立构建任务
+  # Windows 桌面端独立构建任务（便携版 + 安装版）
   # =========================================================
   build-windows:
     name: Build Windows EXE
@@ -185,7 +185,7 @@ jobs:
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
-        # 【修复核心 1】：将 Flet 随机生成的 .exe 强制改名为 小说智读.exe，匹配安装包逻辑
+        # 强制改名以匹配安装包逻辑
         cd build/windows
         for f in *.exe; do
           if [ "$f" != "小说智读.exe" ]; then
@@ -206,7 +206,7 @@ jobs:
       run: |
         rm -rf build
         
-        # 【修复核心 2】：动态扫描并打包静态资源（assets、fonts、images等），防止便携版变白板
+        # 动态扫描并打包静态资源
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
@@ -214,14 +214,20 @@ jobs:
         if [ -d "images" ]; then PACK_CMD="$PACK_CMD --add-data \"images;images\""; fi
         
         eval $PACK_CMD
-        
-    - name: Upload All Windows Artifacts
+
+    # 【优化点】：拆分上传步骤，实现分别下载
+    - name: Upload Portable EXE
       uses: actions/upload-artifact@v4
       with:
-        name: 小说智读_Windows_产物集合
-        path: |
-          dist/小说智读_v*_便携版.exe
-          dist_installer/小说智读_v*_安装版.exe
+        name: 小说智读-Windows-便携版
+        path: dist/小说智读_v*_便携版.exe
+        if-no-files-found: warn
+
+    - name: Upload Installer EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: 小说智读-Windows-安装版
+        path: dist_installer/小说智读_v*_安装版.exe
         if-no-files-found: warn
     
     - name: Release Windows Files
