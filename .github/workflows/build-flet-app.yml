@@ -123,11 +123,26 @@ jobs:
           fi
         done
         
-    - name: Upload APK to Artifacts
+    # 【核心修改点】：拆分安卓上传任务，确保 Artifacts 列表独立展示
+    - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v4
       with:
-        name: android-apks
-        path: 小说智读_v*.apk
+        name: 小说智读_v${{ env.APP_VERSION }}_arm64-v8a.apk
+        path: 小说智读_v*arm64-v8a.apk
+        if-no-files-found: warn
+
+    - name: Upload armeabi-v7a APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: 小说智读_v${{ env.APP_VERSION }}_armeabi-v7a.apk
+        path: 小说智读_v*armeabi-v7a.apk
+        if-no-files-found: warn
+
+    - name: Upload x86_64 APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: 小说智读_v${{ env.APP_VERSION }}_x86_64.apk
+        path: 小说智读_v*x86_64.apk
         if-no-files-found: warn
 
     # 【独立发版】：只要安卓打完了，就直接追加入建好的 Release 里
@@ -211,13 +226,19 @@ jobs:
         
         eval $PACK_CMD
 
-    - name: Upload EXE to Artifacts
+    # 【核心修改点】：拆分 Windows 上传任务，确保 Artifacts 列表独立展示
+    - name: Upload Portable EXE
       uses: actions/upload-artifact@v4
       with:
-        name: windows-exes
-        path: |
-          dist/小说智读_v*_便携版.exe
-          dist_installer/小说智读_v*_安装版.exe
+        name: 小说智读_v${{ env.APP_VERSION }}_便携版.exe
+        path: dist/小说智读_v*_便携版.exe
+        if-no-files-found: warn
+
+    - name: Upload Installer EXE
+      uses: actions/upload-artifact@v4
+      with:
+        name: 小说智读_v${{ env.APP_VERSION }}_安装版.exe
+        path: dist_installer/小说智读_v*_安装版.exe
         if-no-files-found: warn
 
     # 【独立发版】：Windows 跑得快，打完包直接秒发，绝对不惯着安卓！
