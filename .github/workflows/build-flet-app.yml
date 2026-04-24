@@ -13,12 +13,15 @@ permissions:
   contents: write
 
 env:
+  # 修复 Node.js 弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
+  # 提前占位，消除 IDE 的静态语法检查黄色警告
   APP_VERSION: "" 
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    # 在 Job 内部声明局部环境变量消除黄线
     env:
       APP_VERSION: "0.0.0"
     
@@ -137,7 +140,7 @@ jobs:
 
 
   # =========================================================
-  # Windows 桌面端独立构建任务（双 PyInstaller 架构，坚如磐石）
+  # Windows 桌面端独立构建任务（纯血 PyInstaller 架构）
   # =========================================================
   build-windows:
     name: Build Windows EXE
@@ -172,7 +175,7 @@ jobs:
         pip install flet==0.84.0 pyinstaller
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 【核心变动】：放弃 Flutter C++ 启动器，使用绝对稳定的 PyInstaller 生成免安装目录！
+    # 使用绝对稳定的 PyInstaller 生成免安装基础目录
     - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
       env:
@@ -198,15 +201,17 @@ jobs:
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
-    # 单文件便携版保持不变（本就是 PyInstaller 引擎）
     - name: Build Single Portable EXE (单文件便携版)
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
-        # 备份之前的目录，防止冲突
+        # 备份之前的 dist 目录，防止被覆盖
         mv dist dist_folder_backup
         mkdir dist
+        
+        # 彻底解决那个卡死人的 Do you want to delete build directory? (y/n) 报错！
+        rm -rf build
         
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
