@@ -13,15 +13,12 @@ permissions:
   contents: write
 
 env:
-  # 修复 Node.js 弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
-  # 提前占位，消除 IDE 的静态语法检查黄色警告
   APP_VERSION: "" 
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    # 在 Job 内部声明局部环境变量消除黄线
     env:
       APP_VERSION: "0.0.0"
     
@@ -172,10 +169,10 @@ jobs:
     - name: Install dependencies
       shell: bash
       run: |
-        pip install flet==0.84.0 pyinstaller
+        # 【关键修复 1】：主动把 flet-desktop 装上！
+        pip install flet==0.84.0 flet-desktop==0.84.0 pyinstaller
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 使用绝对稳定的 PyInstaller 生成免安装基础目录
     - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
       env:
@@ -183,8 +180,8 @@ jobs:
       run: |
         rm -rf dist build
         
-        # 目录模式打包（--onedir），专供安装包打包使用
-        PACK_CMD="pyinstaller --noconsole --windowed --onedir --name \"小说智读\" main.py"
+        # 【关键修复 2】：加上 --collect-all 强制提取 Flet 所有隐藏的引擎依赖！
+        PACK_CMD="pyinstaller --noconsole --windowed --onedir --name \"小说智读\" --collect-all flet --collect-all flet_desktop main.py"
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
         if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
@@ -206,11 +203,9 @@ jobs:
       env:
         PYTHONUTF8: "1"
       run: |
-        # 备份之前的 dist 目录，防止被覆盖
         mv dist dist_folder_backup
         mkdir dist
         
-        # 彻底解决那个卡死人的 Do you want to delete build directory? (y/n) 报错！
         rm -rf build
         
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
