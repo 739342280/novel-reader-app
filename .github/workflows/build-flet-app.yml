@@ -209,8 +209,6 @@ jobs:
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
         $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版"
-        # 为图标和运行命令补全 WorkingDir 配置，防止闪退
-        $iss = $iss -replace 'Filename: "{app}\\小说智读.exe"', 'Filename: "{app}\小说智读.exe"; WorkingDir: "{app}"'
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
