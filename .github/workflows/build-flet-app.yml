@@ -12,9 +12,16 @@ on:
 permissions:
   contents: write
 
+env:
+  # 修复 Node.js 弃用警告
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
+
 jobs:
   build-android:
     runs-on: ubuntu-latest
+    # 【彻底消除黄线】：在 Job 内部声明局部环境变量，满足最严苛的语法检查
+    env:
+      APP_VERSION: "0.0.0"
     
     steps:
     - name: Checkout code
@@ -69,7 +76,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: true 
+        cache: "false" 
     
     - name: Verify Flutter
       run: |
@@ -99,24 +106,24 @@ jobs:
         echo "APKs renamed successfully!"
     
     - name: Upload arm64-v8a APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: 小说智读-APK-arm64-v8a
         path: 小说智读_v*arm64-v8a.apk                 
+        archive: false
         if-no-files-found: warn
 
     - name: Upload armeabi-v7a APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: 小说智读-APK-armeabi-v7a
         path: 小说智读_v*armeabi-v7a.apk                 
+        archive: false
         if-no-files-found: warn
 
     - name: Upload x86_64 APK
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: 小说智读-APK-x86_64
         path: 小说智读_v*x86_64.apk                 
+        archive: false
         if-no-files-found: warn
     
     - name: Release APK
@@ -136,7 +143,10 @@ jobs:
   # =========================================================
   build-windows:
     name: Build Windows EXE
-    runs-on: windows-latest  
+    runs-on: windows-latest
+    # 【彻底消除黄线】：在 Windows Job 内部也同步声明
+    env:
+      APP_VERSION: "0.0.0"
     
     steps:
     - name: Checkout code
@@ -170,7 +180,7 @@ jobs:
       with:
         flutter-version: '3.41.4'  
         channel: 'stable'
-        cache: true 
+        cache: "false" 
     
     - name: Verify Flutter
       shell: bash
@@ -185,7 +195,7 @@ jobs:
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
-        # 强制改名以匹配安装包逻辑
+        # 确保主程序改名为 小说智读.exe，匹配安装包路径
         cd build/windows
         for f in *.exe; do
           if [ "$f" != "小说智读.exe" ]; then
@@ -196,7 +206,12 @@ jobs:
     - name: Build Installer Setup (向导安装版)
       shell: pwsh
       run: |
-        (Get-Content installer_script.iss) -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}" -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版" | Set-Content installer_script.iss
+        $iss = Get-Content installer_script.iss
+        $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版"
+        # 为图标和运行命令补全 WorkingDir 配置，防止闪退
+        $iss = $iss -replace 'Filename: "{app}\\小说智读.exe"', 'Filename: "{app}\小说智读.exe"; WorkingDir: "{app}"'
+        $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
     - name: Build Single Portable EXE (单文件便携版)
@@ -206,7 +221,7 @@ jobs:
       run: |
         rm -rf build
         
-        # 动态扫描并打包静态资源
+        # 强制包含资源文件夹，解决字体和纹理丢失问题
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
@@ -215,19 +230,18 @@ jobs:
         
         eval $PACK_CMD
 
-    # 【优化点】：拆分上传步骤，实现分别下载
     - name: Upload Portable EXE
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: 小说智读-Windows-便携版
         path: dist/小说智读_v*_便携版.exe
+        archive: false
         if-no-files-found: warn
 
     - name: Upload Installer EXE
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v7
       with:
-        name: 小说智读-Windows-安装版
         path: dist_installer/小说智读_v*_安装版.exe
+        archive: false
         if-no-files-found: warn
     
     - name: Release Windows Files
