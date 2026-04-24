@@ -132,7 +132,7 @@ jobs:
 
 
   # =========================================================
-  # Windows 桌面端独立构建任务
+  # Windows 桌面端独立构建任务（新增便携版与安装版）
   # =========================================================
   build-windows:
     name: Build Windows EXE
@@ -162,7 +162,7 @@ jobs:
     - name: Install dependencies
       shell: bash
       run: |
-        pip install flet==0.84.0
+        pip install flet==0.84.0 pyinstaller
         pip install -r requirements.txt || echo "No requirements.txt"
 
     - name: Setup Flutter
@@ -178,29 +178,50 @@ jobs:
         flutter --version
         flutter doctor -v
         
-    - name: Build Flet Windows App
+    - name: Build Flet Windows App (Folder base)
       shell: bash
       env:
         PYTHONUTF8: "1"  
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
-    - name: Package Windows App to ZIP
+    - name: Package Windows App to ZIP (绿色免安装版)
       shell: pwsh
       run: |
-        Compress-Archive -Path build\windows\* -DestinationPath "小说智读_v${env:APP_VERSION}_windows.zip"
+        Compress-Archive -Path build\windows\* -DestinationPath "小说智读_v${env:APP_VERSION}_绿色版.zip"
         
-    - name: Upload Windows Artifact
+    - name: Build Single Portable EXE (单文件便携版)
+      shell: bash
+      env:
+        PYTHONUTF8: "1"
+      run: |
+        flet pack main.py --name "小说智读_v${{ env.APP_VERSION }}_便携版" --product-name "小说智读" --product-version "${{ env.APP_VERSION }}"
+        
+    - name: Build Installer Setup (向导安装版)
+      shell: pwsh
+      run: |
+        # 使用 PowerShell 动态替换配置文件里的版本号
+        (Get-Content installer_script.iss) -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}" -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版" | Set-Content installer_script.iss
+        # 调用系统自带的 Inno Setup 引擎编译安装包
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
+        
+    - name: Upload All Windows Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: 小说智读_Windows_ZIP
-        path: 小说智读_v*_windows.zip                 
+        name: 小说智读_Windows_产物集合
+        path: |
+          小说智读_v*_绿色版.zip
+          dist/小说智读_v*_便携版.exe
+          dist_installer/小说智读_v*_安装版.exe
         if-no-files-found: warn
     
-    - name: Release Windows ZIP
+    - name: Release Windows Files
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
-        files: 小说智读_v*_windows.zip
+        files: |
+          小说智读_v*_绿色版.zip
+          dist/小说智读_v*_便携版.exe
+          dist_installer/小说智读_v*_安装版.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

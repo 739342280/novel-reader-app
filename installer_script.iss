@@ -1,0 +1,24 @@
+[Setup]
+AppName=小说智读
+AppVersion=1.0.0
+DefaultDirName={autopf}\小说智读
+DefaultGroupName=小说智读
+OutputDir=dist_installer
+OutputBaseFilename=小说智读_安装版
+Compression=lzma
+SolidCompression=yes
+PrivilegesRequired=admin
+
+[Files]
+; 将打包好的整个免安装目录塞进安装包
+Source: "build\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+
+[Icons]
+Name: "{autoprograms}\小说智读"; Filename: "{app}\小说智读.exe"
+Name: "{autodesktop}\小说智读"; Filename: "{app}\小说智读.exe"; Tasks: desktopicon
+
+[Tasks]
+Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "其他任务:";
+
+[Run]
+Filename: "{app}\小说智读.exe"; Description: "立即运行 小说智读"; Flags: nowait postinstall skipifsilent
