@@ -132,7 +132,7 @@ jobs:
 
 
   # =========================================================
-  # Windows 桌面端独立构建任务（便携版 + 安装版）
+  # Windows 桌面端独立构建任务
   # =========================================================
   build-windows:
     name: Build Windows EXE
@@ -185,21 +185,35 @@ jobs:
       run: |
         flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
         
-    # 【修复点 1：将打安装包的步骤提前，先消耗掉 build 文件夹】
+        # 【修复核心 1】：将 Flet 随机生成的 .exe 强制改名为 小说智读.exe，匹配安装包逻辑
+        cd build/windows
+        for f in *.exe; do
+          if [ "$f" != "小说智读.exe" ]; then
+            mv "$f" "小说智读.exe"
+          fi
+        done
+        
     - name: Build Installer Setup (向导安装版)
       shell: pwsh
       run: |
         (Get-Content installer_script.iss) -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}" -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版" | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
-    # 【修复点 2：把便携版挪到最后，并在打便携版前强制删掉 build 文件夹，彻底干掉人工确认弹窗】
     - name: Build Single Portable EXE (单文件便携版)
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
         rm -rf build
-        flet pack main.py --name "小说智读_v${{ env.APP_VERSION }}_便携版" --product-name "小说智读" --product-version "${{ env.APP_VERSION }}"
+        
+        # 【修复核心 2】：动态扫描并打包静态资源（assets、fonts、images等），防止便携版变白板
+        PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
+        
+        if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
+        if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
+        if [ -d "images" ]; then PACK_CMD="$PACK_CMD --add-data \"images;images\""; fi
+        
+        eval $PACK_CMD
         
     - name: Upload All Windows Artifacts
       uses: actions/upload-artifact@v4
