@@ -159,7 +159,11 @@ class DialogManager:
         app.global_dialog.inset_padding = None
         app.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.4.3】解析提速与架构打通
+        log_text = """【v0.4.4】上帝类代码结构重塑
+- (优化) 对高达 1200 行的主控制器进行视觉层架构大扫除。划定六大专属业务防区 (Region)，彻底根治“找函数如大海捞针”的开发痛点，提升代码长效可维护性。
+- (优化) 重塑生命周期承重墙 `load_chapter` 物理结构，划分布局生成、数据抽取与滚动触发三层物理隔离，防御潜在的时序竞态问题。
+
+【v0.4.3】解析提速与架构打通
 - (新增) TXT 目录结构缓存：首次解析书籍后将自动在本地生成目录索引。下次阅读同一本书时，将彻底跳过耗时的正则扫描流程，实现秒开阅读。
 - (优化) 核心引擎解耦：支持从外部注入预解析数据，大幅降低 CPU 开销。
 
@@ -169,14 +173,6 @@ class DialogManager:
 
 【v0.4.0】沉浸式阅读交互大升级
 - (新增) 正文尾部追加“下一章”无缝跳转按钮：当阅读到章节最末尾时，无需再唤出底侧菜单即可直接点击进入下一章，彻底打破跨章割裂感，保持心流沉浸。
-
-【v0.3.19】核心阅读体验与界面精调
-- (修复) 夜间模式沉浸感打磨：修复了夜间强制黑屏时，文字颜色依然保持日间色彩的 Bug；修复了顶部菜单文字在夜间模式下不可见的 Bug。
-- (优化) 重新提取并校准了“牛皮纸一”和“牛皮纸二”的 Base 底色，使其与真实图片材质更加贴合。
-- (修复) 彻底移除了导致阅读总进度“提前增加”的分子加一算法，精准还原真实阅读比例。
-- (新增) 精细化总进度百分比：总进度不再只按章节跳动，现在会实时包含“本章内的像素级滚动百分比”，精确到 0.1% 防抖刷新，掌控感拉满。
-- (新增) 卷名强化识别：底层分析引擎新增卷名状态机，并在书架界面的卡片及阅读页顶部菜单双重显性展示“卷+章”。
-- (优化) 智能日夜间 UI 联动：日间模式下，顶底菜单会自动变色并融入当前选定的背景纯色中；夜间模式则强行压制所有彩色背景为纯黑，真正做到深夜护眼。
 """
         app.global_dialog.title = ft.Text("历史更新记录")
         
@@ -201,153 +197,330 @@ class DialogManager:
     @staticmethod
     def show_ai_dialog(app, e):
         if not app.engine.chapters_info: return
-        
         app.global_dialog.modal = True
-        
         target_idx = app.current_chapter_idx
         ch_info = app.engine.chapters_info[target_idx]
         
-        existing_summary = app.current_book_summaries.get(str(target_idx), "")
-        
-        init_text = existing_summary if existing_summary else "点击下方按钮，开始使用 AI 梳理本章节剧情...\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
-        btn_text = "🔄 重新总结" if existing_summary else "🚀 总结本章"
-        
-        result_text = ft.Markdown(init_text, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB)
-        
-        ai_scroll_col = ft.Column(
-            controls=[
-                ft.Container(
-                    content=result_text,
-                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
-                )
-            ], 
-            scroll=ft.ScrollMode.AUTO, 
-            auto_scroll=False,
-            tight=True
-        )
-        
-        btn_start = ft.Button(
-            content=ft.Text(btn_text), 
-            style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE)
-        )
-        btn_copy = ft.Button(
-            content=ft.Text("📋 复制"), 
-            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE)
-        )
+        # --- 数据格式向后兼容升级 ---
+        target_idx_str = str(target_idx)
+        saved_data = app.current_book_summaries.get(target_idx_str, {})
+        if isinstance(saved_data, str):
+            saved_data = {"main": saved_data}
+            app.current_book_summaries[target_idx_str] = saved_data
 
-        def start_ai(e):
+        # --- 对话与模式状态机 ---
+        state = {
+            "mode": "main",         
+            "chat": [],             
+            "is_streaming": False
+        }
+
+        # --- UI 控件声明 ---
+        chat_list_col = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=15, expand=True)
+        
+        chat_input = ft.TextField(
+            hint_text="追问AI本章细节...", 
+            text_size=13,
+            expand=True, dense=True, 
+            content_padding=10, border_radius=20,
+            on_submit=lambda _: send_message(None)
+        )
+        
+        send_btn = ft.IconButton(icon=ft.Icons.SEND, icon_color="onSurface", on_click=lambda _: send_message(None))
+
+        mode_btn_main = ft.TextButton(content=ft.Text("主线总结", color="onSurface"))
+        mode_btn_char = ft.TextButton(content=ft.Text("人物梳理", color="onSurface"))
+        mode_btn_clue = ft.TextButton(content=ft.Text("伏笔剖析", color="onSurface"))
+
+        btn_regen = ft.Button(content=ft.Text(""), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
+        
+        btn_copy = ft.Button(content=ft.Text("复制", color="onSurface"))
+        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog())
+
+        def update_mode_btns_ui():
+            is_dark = app._get_is_dark_mode()
+            
+            active_bg = "#1AFFFFFF" if is_dark else "#1A000000"
+            inactive_bg = ft.Colors.TRANSPARENT
+            
+            for btn, m in [(mode_btn_main, "main"), (mode_btn_char, "characters"), (mode_btn_clue, "clues")]:
+                is_active = (state["mode"] == m)
+                btn.style = ft.ButtonStyle(
+                    shape=ft.RoundedRectangleBorder(radius=8),
+                    bgcolor=active_bg if is_active else inactive_bg,
+                    elevation=0,
+                    padding=ft.Padding.symmetric(horizontal=12, vertical=8)
+                )
+                try: btn.update()
+                except Exception: pass
+
+            # 【核心修改点】：增加 radius=30 的圆角边框，让复制和关闭按钮变得圆圆的
+            action_bg = "#2C2C2C" if is_dark else "#F8F8F8"
+            action_style = ft.ButtonStyle(
+                bgcolor=action_bg,
+                color="onSurface",
+                elevation=0,
+                shape=ft.RoundedRectangleBorder(radius=30),
+                padding=ft.Padding.symmetric(horizontal=16, vertical=8)
+            )
+            btn_copy.style = action_style
+            btn_close.style = action_style
+            try: btn_copy.update()
+            except Exception: pass
+            try: btn_close.update()
+            except Exception: pass
+
+        def get_sys_prompt():
+            if state["mode"] == "main": 
+                return app.ai_config["prompt"]
+            if state["mode"] == "characters": 
+                return "提取本章出现的所有人物，用一句话标明他们的阵营、当前状态、以及与主角的关系。严禁脑补未发生的情节。"
+            if state["mode"] == "clues": 
+                return "找出本章看似不起眼的环境描写、对话停顿或异常行为，推测作者可能埋下的伏笔与线索。尽量精简干练。"
+
+        def render_chat():
+            chat_list_col.controls.clear()
+            
+            base_content = saved_data.get(state["mode"], "")
+            if not base_content:
+                base_content = "暂无内容，请点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
+                btn_regen.content.value = "总结本章"
+            else:
+                btn_regen.content.value = "重新总结"
+                
+            try: btn_regen.update()
+            except Exception: pass
+            
+            chat_list_col.controls.append(
+                ft.Container(
+                    content=ft.Markdown(base_content, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
+                    bgcolor="surfaceVariant",
+                    padding=12,
+                    border_radius=8
+                )
+            )
+
+            for msg in state["chat"]:
+                if msg["role"] == "user":
+                    chat_list_col.controls.append(
+                        ft.Container(
+                            content=ft.Text(msg["content"], color=ft.Colors.WHITE),
+                            bgcolor=ft.Colors.BLUE_600,
+                            padding=10, border_radius=8,
+                            alignment=ft.Alignment.CENTER_RIGHT, 
+                            margin=ft.margin.only(left=40)
+                        )
+                    )
+                else:
+                    chat_list_col.controls.append(
+                        ft.Container(
+                            content=ft.Markdown(msg["content"], selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
+                            bgcolor=ft.Colors.TRANSPARENT,
+                            padding=10, border_radius=8,
+                            margin=ft.margin.only(right=40)
+                        )
+                    )
+            
+            try:
+                chat_list_col.update()
+            except Exception: pass
+
+            async def safe_scroll():
+                try: await chat_list_col.scroll_to(offset=-1, duration=100)
+                except Exception: pass
+            app.page.run_task(safe_scroll)
+
+        def switch_mode(new_mode):
+            if state["is_streaming"]: return
+            state["mode"] = new_mode
+            state["chat"].clear() 
+            update_mode_btns_ui()
+            render_chat()
+
+        mode_btn_main.on_click = lambda _: switch_mode("main")
+        mode_btn_char.on_click = lambda _: switch_mode("characters")
+        mode_btn_clue.on_click = lambda _: switch_mode("clues")
+
+        def generate_base(e):
             if not app.ai_config["key"]:
                 app.show_snack_bar("⚠️ 请先配置 API Key")
                 return
+            if state["is_streaming"]: return
+
+            state["is_streaming"] = True
+            state["chat"].clear() 
+            btn_regen.disabled = True
             
-            btn_start.disabled = True
-            btn_start.content.value = "思考中..."
-            result_text.value = "✨ 大模型正在阅读本章并进行多维度梳理，请稍候...\n\n"
-            
-            try:
-                btn_start.update()
-                result_text.update()
-            except Exception:
-                pass
+            btn_regen.content.value = "总结中..."
+            saved_data[state["mode"]] = "✨ 大模型正在阅读本章并进行梳理，请稍候...\n\n"
+            render_chat()
+            try: btn_regen.update()
+            except Exception: pass
 
             chapter_text = app.engine.get_chapter_text(target_idx)[:15000]
+            messages = [{"role": "system", "content": f"{get_sys_prompt()}\n\n【参考文本开始】\n{chapter_text}\n【参考文本结束】"}]
+
+            stream_buffer = [""]
             
-            stream_buffer = [""] 
-            is_streaming = [True]
-
-            async def safe_scroll_task():
-                while is_streaming[0]:
-                    try:
-                        await ai_scroll_col.scroll_to(offset=-1, duration=0)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(0.1)
-
             async def ui_updater():
-                app.page.run_task(safe_scroll_task)
-                last_text = stream_buffer[0]
-                try:
-                    while is_streaming[0]:
-                        current_text = stream_buffer[0]
-                        if current_text != last_text:
-                            result_text.value = current_text
-                            try:
-                                result_text.update()
-                            except: pass
-                            last_text = current_text
-                        await asyncio.sleep(0.05) 
-                finally:
-                    if stream_buffer[0] != last_text:
-                        result_text.value = stream_buffer[0]
-                        try: result_text.update()
-                        except: pass
-                    
+                last_text = ""
+                while state["is_streaming"]:
+                    curr = stream_buffer[0]
+                    if curr != last_text and curr:
+                        try:
+                            chat_list_col.controls[0].content.value = curr
+                            chat_list_col.controls[0].content.update()
+                            await chat_list_col.scroll_to(offset=-1, duration=0)
+                        except Exception: pass
+                        last_text = curr
+                    await asyncio.sleep(0.05)
+                if stream_buffer[0] != last_text and stream_buffer[0]:
                     try:
-                        btn_start.disabled = False
-                        btn_start.content.value = "🔄 重新总结"
-                        btn_start.update()
-                    except: pass
+                        chat_list_col.controls[0].content.value = stream_buffer[0]
+                        chat_list_col.controls[0].content.update()
+                        await chat_list_col.scroll_to(offset=-1, duration=0)
+                    except Exception: pass
 
-            def on_chunk(text_delta):
-                stream_buffer[0] += text_delta
-                
-            def on_complete(full_text):
-                is_streaming[0] = False
-                app.current_book_summaries[str(target_idx)] = full_text
+            app.page.run_task(ui_updater)
+
+            def on_chunk(delta):
+                stream_buffer[0] += delta
+
+            def on_complete(full):
+                state["is_streaming"] = False
+                saved_data[state["mode"]] = full
                 app._save_book_summaries()
-                
-            def on_error(error_msg):
-                is_streaming[0] = False
-                stream_buffer[0] = error_msg
-                
+                try:
+                    btn_regen.disabled = False
+                    btn_regen.content.value = "重新总结"
+                    btn_regen.update()
+                except Exception: pass
+
+            def on_error(err):
+                state["is_streaming"] = False
+                stream_buffer[0] = err
+                saved_data[state["mode"]] = err
+                try:
+                    btn_regen.disabled = False
+                    btn_regen.content.value = "重新总结"
+                    btn_regen.update()
+                except Exception: pass
+
             def is_active():
                 return getattr(app.global_dialog, "open", False)
 
+            threading.Thread(target=AIService.stream_chat, args=(app.ai_config, messages, on_chunk, on_complete, on_error, is_active), daemon=True).start()
+
+        def send_message(e):
+            if not app.ai_config["key"]:
+                app.show_snack_bar("⚠️ 请先配置 API Key")
+                return
+            text = chat_input.value.strip()
+            if not text or state["is_streaming"]: return
+            
+            chat_input.value = ""
+            try: chat_input.update()
+            except Exception: pass
+
+            state["is_streaming"] = True
+            state["chat"].append({"role": "user", "content": text})
+            state["chat"].append({"role": "assistant", "content": "⏳ 思考中..."})
+            render_chat()
+
+            chapter_text = app.engine.get_chapter_text(target_idx)[:15000]
+            
+            messages = [{"role": "system", "content": f"{get_sys_prompt()}\n\n【参考文本开始】\n{chapter_text}\n【参考文本结束】"}]
+            if saved_data.get(state["mode"]):
+                messages.append({"role": "assistant", "content": saved_data[state["mode"]]})
+            
+            for msg in state["chat"][:-1]: 
+                messages.append(msg)
+
+            stream_buffer = [""]
+
+            async def ui_updater():
+                last_text = ""
+                while state["is_streaming"]:
+                    curr = stream_buffer[0]
+                    if curr != last_text and curr:
+                        try:
+                            chat_list_col.controls[-1].content.value = curr
+                            chat_list_col.controls[-1].content.update()
+                            await chat_list_col.scroll_to(offset=-1, duration=0)
+                        except Exception: pass
+                        last_text = curr
+                    await asyncio.sleep(0.05)
+                
+                if stream_buffer[0] != last_text and stream_buffer[0]:
+                    try:
+                        chat_list_col.controls[-1].content.value = stream_buffer[0]
+                        chat_list_col.controls[-1].content.update()
+                        await chat_list_col.scroll_to(offset=-1, duration=0)
+                    except Exception: pass
+
             app.page.run_task(ui_updater)
-            threading.Thread(
-                target=AIService.stream_summary, 
-                args=(app.ai_config, chapter_text, on_chunk, on_complete, on_error, is_active), 
-                daemon=True
-            ).start()
+
+            def on_chunk(delta):
+                stream_buffer[0] += delta
+
+            def on_complete(full):
+                state["is_streaming"] = False
+                state["chat"][-1]["content"] = full
+            
+            def on_error(err):
+                state["is_streaming"] = False
+                stream_buffer[0] = f"请求失败: {err}"
+                state["chat"][-1]["content"] = stream_buffer[0]
+            
+            def is_active():
+                return getattr(app.global_dialog, "open", False)
+
+            threading.Thread(target=AIService.stream_chat, args=(app.ai_config, messages, on_chunk, on_complete, on_error, is_active), daemon=True).start()
 
         async def copy_result(e):
-            app._execute_copy(result_text.value)
-            app.show_snack_bar("✅ 总结已复制")
+            content_to_copy = saved_data.get(state["mode"], "")
+            
+            if state["chat"]:
+                content_to_copy += "\n\n--- 追问记录 ---\n"
+                for msg in state["chat"]:
+                    role_name = "【我】" if msg["role"] == "user" else "【AI】"
+                    content_to_copy += f"\n{role_name}：\n{msg['content']}\n"
 
-            btn_copy.content.value = "✅ 复制成功"
-            btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_700, color=ft.Colors.WHITE)
+            if not content_to_copy.strip(): return
+            app._execute_copy(content_to_copy.strip())
+            app.show_snack_bar("✅ 已完整复制分析结果与对话")
+
+            btn_copy.content.value = "复制成功"
             try: btn_copy.update()
-            except: pass
+            except Exception: pass
             
             await asyncio.sleep(2)
-            btn_copy.content.value = "📋 复制"
-            btn_copy.style = ft.ButtonStyle(bgcolor=ft.Colors.GREEN_500, color=ft.Colors.WHITE)
+            btn_copy.content.value = "复制"
             try: btn_copy.update()
-            except: pass
+            except Exception: pass
 
-        btn_start.on_click = start_ai
+        btn_regen.on_click = generate_base
         btn_copy.on_click = copy_result
+
+        update_mode_btns_ui()
+        render_chat()
 
         app.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
         app.global_dialog.content_padding = ft.Padding(left=20, top=15, right=4, bottom=15)
         
-        app.global_dialog.title = ft.Text(f"✨ AI 总结 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD)
+        app.global_dialog.title = ft.Text(f"✨ AI 助手 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD)
         app.global_dialog.content = ft.Container(
-            content=ai_scroll_col,
+            content=chat_list_col,
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
         app.global_dialog.actions = [
             ft.Container(
-                content=ft.Row(
-                    controls=[
-                        btn_start, 
-                        btn_copy, 
-                        ft.Button(content=ft.Text("关闭"), on_click=lambda _: app._close_dialog())
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_AROUND,
-                    wrap=True
-                ),
+                content=ft.Column([
+                    ft.Row([mode_btn_main, mode_btn_char, mode_btn_clue], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([btn_regen, btn_copy, btn_close], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([chat_input, send_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                ], tight=True, spacing=10),
                 width=600
             )
         ]

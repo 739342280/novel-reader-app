@@ -4,9 +4,10 @@ import json
 
 class AIService:
     @staticmethod
-    def stream_summary(config, chapter_text, on_chunk, on_complete, on_error, is_active=None):
+    def stream_chat(config, messages, on_chunk, on_complete, on_error, is_active=None):
         """
-        核心的 AI 流式请求方法，完全脱离 UI 控件。
+        支持多轮对话的 AI 流式请求方法，完全脱离 UI 控件。
+        messages: 格式为 [{"role": "system", "content": "..."}, {"role": "user", "content": "..."}]
         is_active: 用于检测是否中途关闭了弹窗的回调函数
         """
         is_success = True
@@ -15,11 +16,8 @@ class AIService:
         
         try:
             req_data = {
-                "model": config["model"],
-                "messages": [
-                    {"role": "system", "content": config["prompt"]},
-                    {"role": "user", "content": f"请总结以下内容：\n\n{chapter_text}"}
-                ],
+                "model": config.get("model", "deepseek-chat"),
+                "messages": messages,
                 "stream": True
             }
             req = urllib.request.Request(

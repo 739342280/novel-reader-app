@@ -31,17 +31,17 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.3"  
+        self.version = "0.4.4"  
         self.author = "手背儿"
-        
         self.page.title = f"小说智读 - v{self.version}"
-        
+
+        # --- 1. 全局引擎与 UI 底盘配置 ---
+        self.engine = NovelEngine()
         self.page.fonts = {
             "汉仪旗黑": "fonts/汉仪旗黑.ttf",
             "汉仪中宋": "fonts/汉仪中宋.ttf",
             "汉仪正圆": "fonts/汉仪正圆.ttf",
         }
-
         target_font = "Microsoft YaHei" if sys.platform.startswith("win") else None
         self.page.theme = ft.Theme(
             color_scheme_seed=ft.Colors.BLUE,
@@ -52,35 +52,35 @@ class NovelReaderApp:
             )
         ) 
         self.page.padding = 0
-        
-        self.engine = NovelEngine()
-        
+
+        # --- 2. 核心业务状态 ---
+        self.bookshelf = []
+        self.current_book_summaries = {}
         self.current_book_path = ""
         self.current_book_name = ""
         self.current_chapter_idx = 0
         self.current_scroll_offset = 0.0  
         self.current_max_scroll_extent = 0.0 
         self.last_reported_pct = -1.0 
-        
-        self.font_size = 18
-        self.line_height = 1.5           
-        self.paragraph_spacing = 10      
-        self.letter_spacing = 0.0  
         self.filtered_toc_mapping = []
         self.last_search_query = None  
         self.is_immersive = False  
 
+        # --- 3. UI 样式默认配置 ---
+        self.font_size = 18
+        self.line_height = 1.5           
+        self.paragraph_spacing = 10      
+        self.letter_spacing = 0.0  
         self.bg_color = "#FFFFFF"
         self.bg_image = None  
         self.reader_text_color = "#212121"
         self.font_family = None
-        
         self.follow_system_theme = True
         self.manual_theme_mode = "light" 
 
+        # --- 4. 弹窗管控与 AI 配置 ---
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
-
         self.ai_config = {
             "url": "https://api.deepseek.com/v1/chat/completions",
             "key": "",
@@ -103,27 +103,23 @@ class NovelReaderApp:
                 "- 严禁评价剧情“好不好看”，只做客观梳理。"
             )
         }
-        self.bookshelf = []
-        self.current_book_summaries = {}
 
+        # --- 5. 生命周期拉起与路由挂载 ---
         self._load_config_from_appdata()
         self._load_bookshelf()
         
         self.page.on_platform_brightness_change = self._on_os_theme_change
         self.page.on_app_lifecycle_state_change = self._on_app_lifecycle
-
         self.page.on_route_change = self.route_change
         self.page.on_view_pop = self.view_pop
 
         self.page.run_task(self._update_clock_task)
         self.page.run_task(self._pc_auto_save_task)
-
         self.page.run_task(self.page.push_route, self.page.route or "/")
         self.route_change(None)
 
-    # ==========================
-    # 原生路由管理模块 (Flet 0.84.0 标准规范)
-    # ==========================
+    # region 1. 生命周期与原生路由管理
+    # =========================================================================
     def route_change(self, e):
         current_route = self.page.route
         self.page.views.clear()
@@ -158,177 +154,10 @@ class NovelReaderApp:
     def _on_app_lifecycle(self, e):
         if "RESUME" not in str(e.state).upper():
             self.save_current_progress()
+    # endregion
 
-    def _on_text_scroll(self, e: ft.OnScrollEvent):
-        self.current_scroll_offset = e.pixels
-        self.current_max_scroll_extent = getattr(e, "max_scroll_extent", 0.0) 
-        
-        if not self.engine.chapters_info: return
-        
-        max_ext = self.current_max_scroll_extent
-        chap_pct = 0.0
-        if max_ext and max_ext > 0:
-            p = max(0.0, min(float(e.pixels), float(max_ext)))
-            chap_pct = p / max_ext
-            
-        total_length = len(self.engine.full_text_content)
-        if total_length > 0:
-            ch_info = self.engine.chapters_info[self.current_chapter_idx]
-            chap_len = ch_info['end'] - ch_info['start']
-            current_total_pct = ((ch_info['start'] + chap_len * chap_pct) / total_length) * 100
-            
-            if abs(current_total_pct - getattr(self, "last_reported_pct", -1.0)) >= 0.1:
-                self.last_reported_pct = current_total_pct
-                if hasattr(self, "info_progress"):
-                    self.info_progress.value = f"{current_total_pct:.1f}%"
-                    try: self.info_progress.update()
-                    except Exception: pass
-
-    def save_current_progress(self):
-        if getattr(self, "current_book_path", "") == "":
-            return
-        if not hasattr(self, "engine") or not self.engine.chapters_info:
-            return
-            
-        current_idx = getattr(self, "current_chapter_idx", 0)
-        if current_idx < 0 or current_idx >= len(self.engine.chapters_info):
-            return
-            
-        title = self.engine.chapters_info[current_idx]['title']
-        volume = self.engine.chapters_info[current_idx].get('volume', '')
-        offset = getattr(self, "current_scroll_offset", 0.0)
-        
-        for book in self.bookshelf:
-            if book['path'] == self.current_book_path:
-                if book.get('last_chapter_idx') == current_idx and book.get('last_scroll_offset') == offset:
-                    break
-                    
-                book['last_chapter_idx'] = current_idx
-                book['last_chapter_title'] = title
-                book['last_volume_title'] = volume 
-                book['last_scroll_offset'] = offset  
-                self._save_bookshelf()
-                break
-
-    async def _pc_auto_save_task(self):
-        if sys.platform == "win32":
-            while True:
-                await asyncio.sleep(5)
-                try:
-                    self.save_current_progress()
-                except Exception:
-                    pass
-
-    async def _update_clock_task(self):
-        while True:
-            try:
-                if hasattr(self, "info_time"):
-                    now_str = datetime.now().strftime("%H:%M")
-                    if self.info_time.value != now_str:
-                        self.info_time.value = now_str
-                        try:
-                            self.info_time.update()
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            await asyncio.sleep(5)
-            
-    # ==========================
-    # 终极弹窗与抽屉调度器
-    # ==========================
-    def _universal_open(self, control):
-        if hasattr(self.page, "overlay") and control not in self.page.overlay:
-            self.page.overlay.append(control)
-
-        try: control.open = True
-        except Exception: pass
-
-        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
-            try: self.page.open(control)
-            except Exception: pass
-
-        try: control.update()
-        except Exception: pass
-        self.page.update()
-
-    def _universal_close(self, control):
-        try: control.open = False
-        except Exception: pass
-
-        if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
-            try: self.page.close(control)
-            except Exception: pass
-
-        try: control.update()
-        except Exception: pass
-        self.page.update()
-
-    def show_snack_bar(self, msg):
-        self.snack_counter += 1
-        
-        toast_ui = ft.Container(
-            content=ft.Text(msg, color=ft.Colors.ON_INVERSE_SURFACE),
-            bgcolor=ft.Colors.INVERSE_SURFACE,
-            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
-            border_radius=8,
-        )
-        
-        new_snack = ft.SnackBar(
-            content=ft.Row([toast_ui], alignment=ft.MainAxisAlignment.START), 
-            behavior=ft.SnackBarBehavior.FLOATING,
-            bgcolor=ft.Colors.TRANSPARENT,  
-            elevation=0,                    
-            padding=0,                      
-            duration=1200,                  
-            key=f"snack_{self.snack_counter}"
-        )
-        self._universal_open(new_snack)
-
-    def _open_dialog(self):
-        self._universal_open(self.global_dialog)
-
-    def _close_dialog(self):
-        self._universal_close(self.global_dialog)
-
-    def _open_toc_sheet(self, e=None):
-        self._universal_open(self.toc_sheet)
-        self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
-
-    def _close_toc_sheet(self, e=None):
-        self._universal_close(self.toc_sheet)
-
-    def _open_settings_sheet(self, e=None):
-        self._universal_open(self.settings_sheet)
-
-    def _close_settings_sheet(self, e=None):
-        self._universal_close(self.settings_sheet)
-
-    def toggle_immersive(self, e=None):
-        self.is_immersive = not getattr(self, "is_immersive", False)
-        
-        platform_str = str(self.page.platform).lower()
-        if "android" in platform_str or "ios" in platform_str:
-            try:
-                self.page.window.full_screen = self.is_immersive
-            except Exception:
-                pass
-                
-        if hasattr(self, "reader_top_bar"):
-            self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
-            try: self.reader_top_bar.update()
-            except Exception: pass
-
-        if hasattr(self, "reader_bottom_bar"):
-            self.reader_bottom_bar.offset = ft.Offset(0, 1) if self.is_immersive else ft.Offset(0, 0)
-            try: self.reader_bottom_bar.update()
-            except Exception: pass
-            
-        self.page.update()
-
-    # ==========================
-    # 数据存取逻辑
-    # ==========================
+    # region 2. 数据持久化与存储总线
+    # =========================================================================
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
@@ -386,35 +215,41 @@ class NovelReaderApp:
     def _save_book_summaries(self):
         StorageManager.save_book_summaries(self.current_book_path, self.current_book_summaries)
 
-    def _execute_copy(self, text):
-        try:
-            if hasattr(self.page, "set_clipboard"):
-                self.page.set_clipboard(text)
-        except Exception:
-            pass
+    def save_current_progress(self):
+        if getattr(self, "current_book_path", "") == "":
+            return
+        if not hasattr(self, "engine") or not self.engine.chapters_info:
+            return
             
-        if sys.platform.startswith("win"):
-            try:
-                import subprocess
-                subprocess.run(['clip.exe'], input=text, text=True, check=True)
-            except Exception:
-                pass
+        current_idx = getattr(self, "current_chapter_idx", 0)
+        if current_idx < 0 or current_idx >= len(self.engine.chapters_info):
+            return
+            
+        title = self.engine.chapters_info[current_idx]['title']
+        volume = self.engine.chapters_info[current_idx].get('volume', '')
+        offset = getattr(self, "current_scroll_offset", 0.0)
+        
+        for book in self.bookshelf:
+            if book['path'] == self.current_book_path:
+                if book.get('last_chapter_idx') == current_idx and book.get('last_scroll_offset') == offset:
+                    break
+                    
+                book['last_chapter_idx'] = current_idx
+                book['last_chapter_title'] = title
+                book['last_volume_title'] = volume 
+                book['last_scroll_offset'] = offset  
+                self._save_bookshelf()
+                break
 
-    def _find_valid_chapter(self, start_idx, step=1):
-        idx = start_idx
-        while 0 <= idx < len(self.engine.chapters_info):
-            ch_info = self.engine.chapters_info[idx]
-            text = self.engine.get_chapter_text(idx).strip()
-            title = ch_info['title'].strip()
-            content_only = text.replace(title, "", 1).strip()
-            if len(content_only) > 15:
-                return idx
-            idx += step
-        return -1
+    async def _pc_auto_save_task(self):
+        if sys.platform == "win32":
+            while True:
+                await asyncio.sleep(5)
+                try:
+                    self.save_current_progress()
+                except Exception:
+                    pass
 
-    # ==========================
-    # 书架关联控制逻辑
-    # ==========================
     def rename_book(self, path, new_name):
         for book in self.bookshelf:
             if book['path'] == path:
@@ -427,13 +262,6 @@ class NovelReaderApp:
         self.bookshelf = [b for b in self.bookshelf if b['path'] != path]
         self._save_bookshelf()
         self.route_change(None)
-
-    def check_and_load_book(self, path):
-        if not os.path.exists(path):
-            self.show_snack_bar("文件丢失，可能已被移动或删除，将自动移出书架。")
-            self.remove_from_bookshelf(path)
-            return
-        self.start_parsing(path)
 
     async def trigger_file_picker(self, e):
         try:
@@ -502,81 +330,6 @@ class NovelReaderApp:
             self.status_text.value = msg
         self.page.update()
 
-    def start_parsing(self, path):
-        self.current_book_path = path
-        
-        custom_name = os.path.splitext(os.path.basename(path))[0]
-        for b in self.bookshelf:
-            if b['path'] == path:
-                custom_name = b.get('name', custom_name)
-                break
-        self.current_book_name = custom_name
-        
-        # 【核心修改】：先检查 TOC 缓存
-        toc_cache = StorageManager.load_book_toc(path)
-        if toc_cache:
-            # 存在缓存，秒开
-            self.engine.load_with_cache(path, toc_cache)
-            self.on_parse_success()
-            return
-
-        # 无缓存，进入解析流程
-        if hasattr(self, "status_text"): self.status_text.visible = True
-        if hasattr(self, "progress_bar"): 
-            self.progress_bar.visible = True
-            self.progress_bar.value = 0
-        self.page.update()
-        
-        def task():
-            try:
-                chaps = self.engine.load_and_analyze(path, self._sync_progress)
-                # 解析成功后，自动保存缓存
-                StorageManager.save_book_toc(path, chaps)
-                self.on_parse_success()
-            except Exception as e:
-                self.show_snack_bar(f"解析失败: {str(e)}")
-                if hasattr(self, "status_text"): self.status_text.visible = False
-                if hasattr(self, "progress_bar"): self.progress_bar.visible = False
-                self.page.update()
-                
-        threading.Thread(target=task, daemon=True).start()
-
-    def on_parse_success(self):
-        if hasattr(self, "status_text"): self.status_text.visible = False
-        if hasattr(self, "progress_bar"): self.progress_bar.visible = False
-        
-        target_idx = -1
-        target_offset = 0.0
-        book_exists = False
-        for book in self.bookshelf:
-            if book['path'] == self.current_book_path:
-                book_exists = True
-                target_idx = book.get('last_chapter_idx', -1)
-                target_offset = book.get('last_scroll_offset', 0.0)
-                break
-
-        if not book_exists:
-            self.bookshelf.insert(0, {
-                "name": self.current_book_name,
-                "path": self.current_book_path,
-                "last_chapter_idx": 0,
-                "last_chapter_title": "未读",
-                "last_scroll_offset": 0.0
-            })
-            self._save_bookshelf()
-            
-        self._load_book_summaries()
-
-        if target_idx != -1 and target_idx < len(self.engine.chapters_info):
-            self.current_chapter_idx = target_idx
-        else:
-            valid_idx = self._find_valid_chapter(0, 1)
-            self.current_chapter_idx = valid_idx if valid_idx != -1 else 0
-            
-        self.current_scroll_offset = target_offset
-
-        self.page.run_task(self.page.push_route, "/reader")
-
     def refresh_bookshelf_ui(self):
         if not hasattr(self, "bookshelf_grid"): return
         self.bookshelf_grid.controls.clear()
@@ -628,10 +381,484 @@ class NovelReaderApp:
             )
             self.bookshelf_grid.controls.append(card)
         self.page.update()
+    # endregion
 
-    # ==========================
-    # 界面更新辅助控制逻辑
-    # ==========================
+    # region 3. 阅读核心引擎与交互
+    # =========================================================================
+    def check_and_load_book(self, path):
+        if not os.path.exists(path):
+            self.show_snack_bar("文件丢失，可能已被移动或删除，将自动移出书架。")
+            self.remove_from_bookshelf(path)
+            return
+        self.start_parsing(path)
+
+    def start_parsing(self, path):
+        self.current_book_path = path
+        
+        custom_name = os.path.splitext(os.path.basename(path))[0]
+        for b in self.bookshelf:
+            if b['path'] == path:
+                custom_name = b.get('name', custom_name)
+                break
+        self.current_book_name = custom_name
+        
+        toc_cache = StorageManager.load_book_toc(path)
+        if toc_cache:
+            self.engine.load_with_cache(path, toc_cache)
+            self.on_parse_success()
+            return
+
+        if hasattr(self, "status_text"): self.status_text.visible = True
+        if hasattr(self, "progress_bar"): 
+            self.progress_bar.visible = True
+            self.progress_bar.value = 0
+        self.page.update()
+        
+        def task():
+            try:
+                chaps = self.engine.load_and_analyze(path, self._sync_progress)
+                StorageManager.save_book_toc(path, chaps)
+                self.on_parse_success()
+            except Exception as e:
+                self.show_snack_bar(f"解析失败: {str(e)}")
+                if hasattr(self, "status_text"): self.status_text.visible = False
+                if hasattr(self, "progress_bar"): self.progress_bar.visible = False
+                self.page.update()
+                
+        threading.Thread(target=task, daemon=True).start()
+
+    def on_parse_success(self):
+        if hasattr(self, "status_text"): self.status_text.visible = False
+        if hasattr(self, "progress_bar"): self.progress_bar.visible = False
+        
+        target_idx = -1
+        target_offset = 0.0
+        book_exists = False
+        for book in self.bookshelf:
+            if book['path'] == self.current_book_path:
+                book_exists = True
+                target_idx = book.get('last_chapter_idx', -1)
+                target_offset = book.get('last_scroll_offset', 0.0)
+                break
+
+        if not book_exists:
+            self.bookshelf.insert(0, {
+                "name": self.current_book_name,
+                "path": self.current_book_path,
+                "last_chapter_idx": 0,
+                "last_chapter_title": "未读",
+                "last_scroll_offset": 0.0
+            })
+            self._save_bookshelf()
+            
+        self._load_book_summaries()
+
+        if target_idx != -1 and target_idx < len(self.engine.chapters_info):
+            self.current_chapter_idx = target_idx
+        else:
+            valid_idx = self._find_valid_chapter(0, 1)
+            self.current_chapter_idx = valid_idx if valid_idx != -1 else 0
+            
+        self.current_scroll_offset = target_offset
+
+        self.page.run_task(self.page.push_route, "/reader")
+
+    def load_chapter(self, idx, target_offset=0.0):
+        if not self.engine.chapters_info: return
+        self.current_chapter_idx = idx
+        
+        ch_info = self.engine.chapters_info[idx]
+        title = ch_info['title']
+        volume = ch_info.get('volume', '')
+        text = self.engine.get_chapter_text(idx)
+
+        self.current_scroll_offset = target_offset
+        self.current_max_scroll_extent = 0.0 
+
+        # --- 1. 更新顶部菜单与状态进度 ---
+        if hasattr(self, "top_bar_book_name"):
+            display_vol = volume if volume and volume != title else ""
+            self.top_bar_book_name.value = f"{self.current_book_name} | {display_vol}" if display_vol else self.current_book_name
+        if hasattr(self, "top_bar_chapter_name"):
+            self.top_bar_chapter_name.value = title
+        if hasattr(self, "info_chapter_name"):
+            self.info_chapter_name.value = title
+            
+        if hasattr(self, "info_progress"):
+            total_length = len(self.engine.full_text_content)
+            if total_length > 0:
+                base_pct = (ch_info['start'] / total_length) * 100
+            else:
+                base_pct = 0.0
+            self.last_reported_pct = base_pct
+            self.info_progress.value = f"{base_pct:.1f}%"
+        
+        current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
+        
+        # --- 2. 切分文本并生成 UI 正文节点 ---
+        paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
+        
+        self.reader_text_controls = []
+        self.chapter_title_control = None
+        
+        if paragraphs:
+            title_text = paragraphs.pop(0)
+            self.chapter_title_control = ft.Container(
+                content=ft.Text(
+                    title_text,
+                    size=self.font_size + 2,  
+                    weight=ft.FontWeight.BOLD, 
+                    style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
+                    font_family=self.font_family,
+                    color=current_text_color,
+                    text_align=ft.TextAlign.LEFT 
+                ),
+                padding=ft.Padding(left=0, top=0, right=0, bottom=15) 
+            )
+
+            for p in paragraphs:
+                self.reader_text_controls.append(
+                    ft.Text(
+                        p, 
+                        size=self.font_size, 
+                        style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
+                        font_family=self.font_family, 
+                        color=current_text_color   
+                    )
+                )
+
+        prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
+        next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
+
+        if next_valid != -1:
+            self.inline_next_btn = ft.Container(
+                content=ft.TextButton(
+                    content=ft.Text("下一章"),
+                    icon=ft.Icons.ARROW_FORWARD,
+                    on_click=self.load_next,
+                    style=ft.ButtonStyle(color=current_text_color)
+                ),
+                alignment=ft.Alignment(0, 0),
+                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+            )
+        else:
+            self.inline_next_btn = ft.Container(
+                content=ft.Text("— 已经是最后一章了 —", color=current_text_color, size=13),
+                alignment=ft.Alignment(0, 0),
+                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+            )
+
+        controls_to_add = []
+        if self.chapter_title_control:
+            controls_to_add.append(self.chapter_title_control)
+        controls_to_add.extend(self.reader_text_controls)
+        controls_to_add.append(self.inline_next_btn)
+
+        self.inner_text_col = ft.Column(
+            controls=controls_to_add,
+            spacing=self.paragraph_spacing
+        )
+
+        self.text_scroll_col = ft.Column(
+            controls=[
+                ft.Container(
+                    content=self.inner_text_col,
+                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
+                )
+            ],
+            expand=True, 
+            scroll=ft.ScrollMode.AUTO,
+            on_scroll=self._on_text_scroll, 
+            key="text_scroll_col",
+            opacity=0,                                                            
+            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      
+        )
+        
+        if hasattr(self, "text_panel"):
+            self.text_panel.content = self.text_scroll_col
+
+        if hasattr(self, "btn_prev"): self.btn_prev.disabled = prev_valid == -1
+        if hasattr(self, "btn_next"): self.btn_next.disabled = next_valid == -1
+
+        self.save_current_progress() 
+
+        if not hasattr(self, "toc_listview") or not self.toc_listview.controls:
+            self.filter_toc(None) 
+        else:
+            self._update_toc_highlight()
+            
+        self.page.update()
+        
+        # --- 3. 触发滚动与透明度淡入动画 ---
+        self.page.run_task(self._delayed_scroll_to_chapter, idx)
+        self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
+
+    def load_prev(self, e=None):
+        if self.current_chapter_idx > 0:
+            valid_idx = self._find_valid_chapter(self.current_chapter_idx - 1, -1)
+            if valid_idx != -1: self.load_chapter(valid_idx) 
+
+    def load_next(self, e=None):
+        if self.current_chapter_idx < len(self.engine.chapters_info) - 1:
+            valid_idx = self._find_valid_chapter(self.current_chapter_idx + 1, 1)
+            if valid_idx != -1: self.load_chapter(valid_idx) 
+
+    def _on_text_scroll(self, e: ft.OnScrollEvent):
+        self.current_scroll_offset = e.pixels
+        self.current_max_scroll_extent = getattr(e, "max_scroll_extent", 0.0) 
+        
+        if not self.engine.chapters_info: return
+        
+        max_ext = self.current_max_scroll_extent
+        chap_pct = 0.0
+        if max_ext and max_ext > 0:
+            p = max(0.0, min(float(e.pixels), float(max_ext)))
+            chap_pct = p / max_ext
+            
+        total_length = len(self.engine.full_text_content)
+        if total_length > 0:
+            ch_info = self.engine.chapters_info[self.current_chapter_idx]
+            chap_len = ch_info['end'] - ch_info['start']
+            current_total_pct = ((ch_info['start'] + chap_len * chap_pct) / total_length) * 100
+            
+            if abs(current_total_pct - getattr(self, "last_reported_pct", -1.0)) >= 0.1:
+                self.last_reported_pct = current_total_pct
+                if hasattr(self, "info_progress"):
+                    self.info_progress.value = f"{current_total_pct:.1f}%"
+                    try: self.info_progress.update()
+                    except Exception: pass
+
+    def filter_toc(self, e=None):
+        if e is not None and getattr(e, "name", "") != "change":
+            return
+
+        query = getattr(self, "search_tf", None).value.lower() if getattr(self, "search_tf", None) and self.search_tf.value else ""
+        
+        if getattr(self, "last_search_query", None) == query:
+            return 
+        self.last_search_query = query
+        
+        new_controls = []
+        new_mapping = []
+        for i, ch in enumerate(self.engine.chapters_info):
+            if query in ch['title'].lower():
+                def make_click(idx):
+                    def click_handler(e):
+                        self._close_toc_sheet()
+                        self.load_chapter(idx)
+                    return click_handler
+                
+                color = ft.Colors.BLUE if i == self.current_chapter_idx else None
+                item = ft.Container(
+                    key=f"toc_{i}", 
+                    content=ft.Text(ch['title'], color=color),
+                    padding=10, border_radius=5,
+                    height=42, 
+                    ink=True, on_click=make_click(i)
+                )
+                new_controls.append(item)
+                new_mapping.append(i)
+        
+        if hasattr(self, "toc_listview"):
+            self.toc_listview.controls.clear()
+            self.toc_listview.controls.extend(new_controls)
+            self.filtered_toc_mapping = new_mapping
+            self.page.update()
+
+    def _update_toc_highlight(self):
+        if not hasattr(self, "toc_listview"): return
+        for i, idx in enumerate(self.filtered_toc_mapping):
+            if i < len(self.toc_listview.controls):
+                try:
+                    text_ctrl = self.toc_listview.controls[i].content
+                    expected_color = ft.Colors.BLUE if idx == self.current_chapter_idx else None
+                    if text_ctrl.color != expected_color:
+                        text_ctrl.color = expected_color
+                        try: text_ctrl.update()
+                        except Exception: pass
+                except Exception:
+                    pass
+
+    async def _delayed_scroll_to_chapter(self, idx, delay=0.1):
+        if not hasattr(self, "toc_listview"): return
+        display_idx = -1
+        try:
+            display_idx = self.filtered_toc_mapping.index(idx)
+        except ValueError:
+            pass
+            
+        if display_idx != -1:
+            await asyncio.sleep(delay) 
+            try:
+                calculated_offset = display_idx * 44
+                await self.toc_listview.scroll_to(offset=calculated_offset, duration=300)
+            except Exception:
+                pass
+
+    async def _finalize_chapter_load(self, col, offset):
+        await asyncio.sleep(0.1) 
+        try:
+            if offset > 0:
+                await col.scroll_to(offset=offset, duration=0)
+                await asyncio.sleep(0.05) 
+            col.opacity = 1
+            col.update()
+        except Exception:
+            pass
+
+    def go_back_home(self, e):
+        self.save_current_progress() 
+        if getattr(self, "is_immersive", False):
+            self.toggle_immersive(None)
+        self.page.run_task(self.page.push_route, "/")
+    
+    async def copy_current(self, e):
+        if not self.engine.chapters_info: return
+        text = self.engine.get_chapter_text(self.current_chapter_idx)
+        self._execute_copy(text)
+        self.show_snack_bar("✅ 本章内容已复制到剪贴板")
+        try:
+            self._close_toc_sheet() 
+            self.page.close(self.settings_sheet)
+        except Exception:
+            pass
+    # endregion
+
+    # region 4. 主题排版与 UI 渲染刷子
+    # =========================================================================
+    def update_reader_appearance(self, **kwargs):
+        if "bg" in kwargs: self.bg_color = kwargs["bg"]
+        if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
+        if "text" in kwargs: self.reader_text_color = kwargs["text"]
+        if "font" in kwargs: self.font_family = kwargs["font"]
+        
+        if hasattr(self, "reader_text_controls"):
+            for ctrl in self.reader_text_controls:
+                ctrl.font_family = self.font_family
+                try: ctrl.update()
+                except Exception: pass
+
+        if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+            if isinstance(self.chapter_title_control.content, ft.Text):
+                self.chapter_title_control.content.font_family = self.font_family
+                try: self.chapter_title_control.content.update()
+                except Exception: pass
+                
+        self._apply_theme_colors() 
+        self._save_config_to_appdata()
+
+    def sync_theme_btn_ui(self):
+        if not hasattr(self, "theme_btn"): return
+        is_dark = self._get_is_dark_mode()
+        
+        if is_dark:
+            self.theme_btn.content.value = "日间"
+            self.theme_btn.icon = ft.Icons.LIGHT_MODE
+        else:
+            self.theme_btn.content.value = "夜间"
+            self.theme_btn.icon = ft.Icons.DARK_MODE
+            
+        try: self.theme_btn.update()
+        except Exception: pass
+
+    def toggle_immersive(self, e=None):
+        self.is_immersive = not getattr(self, "is_immersive", False)
+        
+        platform_str = str(self.page.platform).lower()
+        if "android" in platform_str or "ios" in platform_str:
+            try:
+                self.page.window.full_screen = self.is_immersive
+            except Exception:
+                pass
+                
+        if hasattr(self, "reader_top_bar"):
+            self.reader_top_bar.offset = ft.Offset(0, -1) if self.is_immersive else ft.Offset(0, 0)
+            try: self.reader_top_bar.update()
+            except Exception: pass
+
+        if hasattr(self, "reader_bottom_bar"):
+            self.reader_bottom_bar.offset = ft.Offset(0, 1) if self.is_immersive else ft.Offset(0, 0)
+            try: self.reader_bottom_bar.update()
+            except Exception: pass
+            
+        self.page.update()
+
+    def change_font(self, delta):
+        new_size = self.font_size + delta
+        if 12 <= new_size <= 48:
+            self.font_size = new_size
+            
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.size = self.font_size + 2
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.size = self.font_size
+                    try: ctrl.update()
+                    except Exception: pass
+            if hasattr(self, "font_size_text"):
+                self.font_size_text.value = str(self.font_size)
+                try: self.font_size_text.update()
+                except Exception: pass
+
+    def change_line_height(self, delta):
+        new_height = round(self.line_height + delta, 1)
+        if 1.0 <= new_height <= 3.0:
+            self.line_height = new_height
+            
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: ctrl.update()
+                    except Exception: pass
+            if hasattr(self, "line_height_text"):
+                self.line_height_text.value = f"{self.line_height:.1f}"
+                try: self.line_height_text.update()
+                except Exception: pass
+
+    def change_paragraph_spacing(self, delta):
+        new_spacing = int(self.paragraph_spacing + delta)
+        if 0 <= new_spacing <= 50:
+            self.paragraph_spacing = new_spacing
+            if hasattr(self, "inner_text_col"):
+                self.inner_text_col.spacing = self.paragraph_spacing
+                try: self.inner_text_col.update()
+                except Exception: pass
+            if hasattr(self, "para_spacing_text"):
+                self.para_spacing_text.value = str(self.paragraph_spacing)
+                try: self.para_spacing_text.update()
+                except Exception: pass
+
+    def change_letter_spacing(self, delta):
+        new_spacing = round(self.letter_spacing + delta, 1)
+        if 0.0 <= new_spacing <= 10.0:
+            self.letter_spacing = new_spacing
+            
+            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
+                if isinstance(self.chapter_title_control.content, ft.Text):
+                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: self.chapter_title_control.content.update()
+                    except Exception: pass
+                    
+            if hasattr(self, "reader_text_controls"):
+                for ctrl in self.reader_text_controls:
+                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: ctrl.update()
+                    except Exception: pass
+            if hasattr(self, "letter_spacing_text"):
+                self.letter_spacing_text.value = f"{self.letter_spacing:.1f}"
+                try: self.letter_spacing_text.update()
+                except Exception: pass
+
     def _sync_bg_highlight(self):
         is_dark = self._get_is_dark_mode()
         shadow_color = "#66FFFFFF" if is_dark else "#66000000" 
@@ -686,27 +913,15 @@ class NovelReaderApp:
             )
             try: btn.update()
             except Exception: pass
-            
-    def update_reader_appearance(self, **kwargs):
-        if "bg" in kwargs: self.bg_color = kwargs["bg"]
-        if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
-        if "text" in kwargs: self.reader_text_color = kwargs["text"]
-        if "font" in kwargs: self.font_family = kwargs["font"]
-        
-        if hasattr(self, "reader_text_controls"):
-            for ctrl in self.reader_text_controls:
-                ctrl.font_family = self.font_family
-                try: ctrl.update()
-                except Exception: pass
 
-        if hasattr(self, "chapter_title_control") and self.chapter_title_control:
-            if isinstance(self.chapter_title_control.content, ft.Text):
-                self.chapter_title_control.content.font_family = self.font_family
-                try: self.chapter_title_control.content.update()
-                except Exception: pass
-                
-        self._apply_theme_colors() 
-        self._save_config_to_appdata()
+    def _get_is_dark_mode(self):
+        if not getattr(self, "follow_system_theme", True):
+            return "dark" in getattr(self, "manual_theme_mode", "light")
+            
+        pb = self.page.platform_brightness
+        if pb is None:
+            return False 
+        return str(pb).lower().endswith("dark")
 
     def _apply_theme_colors(self):
         is_dark = self._get_is_dark_mode()
@@ -828,346 +1043,77 @@ class NovelReaderApp:
                 )
                 try: btn.update()
                 except Exception: pass
+    # endregion
 
-    def _get_is_dark_mode(self):
-        if not getattr(self, "follow_system_theme", True):
-            return "dark" in getattr(self, "manual_theme_mode", "light")
-            
-        pb = self.page.platform_brightness
-        if pb is None:
-            return False 
-        return str(pb).lower().endswith("dark")
+    # region 5. 弹窗抽屉与浮层调度
+    # =========================================================================
+    def _universal_open(self, control):
+        if hasattr(self.page, "overlay") and control not in self.page.overlay:
+            self.page.overlay.append(control)
 
-    def sync_theme_btn_ui(self):
-        if not hasattr(self, "theme_btn"): return
-        is_dark = self._get_is_dark_mode()
-        
-        if is_dark:
-            self.theme_btn.content.value = "日间"
-            self.theme_btn.icon = ft.Icons.LIGHT_MODE
-        else:
-            self.theme_btn.content.value = "夜间"
-            self.theme_btn.icon = ft.Icons.DARK_MODE
-            
-        try: self.theme_btn.update()
+        try: control.open = True
         except Exception: pass
 
-    # ==========================
-    # 阅读与交互控制逻辑
-    # ==========================
-    def go_back_home(self, e):
-        self.save_current_progress() 
-        if getattr(self, "is_immersive", False):
-            self.toggle_immersive(None)
-            
-        self.page.run_task(self.page.push_route, "/")
+        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
+            try: self.page.open(control)
+            except Exception: pass
 
-    def filter_toc(self, e=None):
-        if e is not None and getattr(e, "name", "") != "change":
-            return
-
-        query = getattr(self, "search_tf", None).value.lower() if getattr(self, "search_tf", None) and self.search_tf.value else ""
-        
-        if getattr(self, "last_search_query", None) == query:
-            return 
-        self.last_search_query = query
-        
-        new_controls = []
-        new_mapping = []
-        for i, ch in enumerate(self.engine.chapters_info):
-            if query in ch['title'].lower():
-                def make_click(idx):
-                    def click_handler(e):
-                        self._close_toc_sheet()
-                        self.load_chapter(idx)
-                    return click_handler
-                
-                color = ft.Colors.BLUE if i == self.current_chapter_idx else None
-                item = ft.Container(
-                    key=f"toc_{i}", 
-                    content=ft.Text(ch['title'], color=color),
-                    padding=10, border_radius=5,
-                    height=42, 
-                    ink=True, on_click=make_click(i)
-                )
-                new_controls.append(item)
-                new_mapping.append(i)
-        
-        if hasattr(self, "toc_listview"):
-            self.toc_listview.controls.clear()
-            self.toc_listview.controls.extend(new_controls)
-            self.filtered_toc_mapping = new_mapping
-            self.page.update()
-
-    def _update_toc_highlight(self):
-        if not hasattr(self, "toc_listview"): return
-        for i, idx in enumerate(self.filtered_toc_mapping):
-            if i < len(self.toc_listview.controls):
-                try:
-                    text_ctrl = self.toc_listview.controls[i].content
-                    expected_color = ft.Colors.BLUE if idx == self.current_chapter_idx else None
-                    if text_ctrl.color != expected_color:
-                        text_ctrl.color = expected_color
-                        try: text_ctrl.update()
-                        except Exception: pass
-                except Exception:
-                    pass
-
-    async def _delayed_scroll_to_chapter(self, idx, delay=0.1):
-        if not hasattr(self, "toc_listview"): return
-        display_idx = -1
-        try:
-            display_idx = self.filtered_toc_mapping.index(idx)
-        except ValueError:
-            pass
-            
-        if display_idx != -1:
-            await asyncio.sleep(delay) 
-            try:
-                calculated_offset = display_idx * 44
-                await self.toc_listview.scroll_to(offset=calculated_offset, duration=300)
-            except Exception:
-                pass
-
-    async def _finalize_chapter_load(self, col, offset):
-        await asyncio.sleep(0.1) 
-        try:
-            if offset > 0:
-                await col.scroll_to(offset=offset, duration=0)
-                await asyncio.sleep(0.05) 
-            col.opacity = 1
-            col.update()
-        except Exception:
-            pass
-
-    def load_chapter(self, idx, target_offset=0.0):
-        if not self.engine.chapters_info: return
-        self.current_chapter_idx = idx
-        
-        ch_info = self.engine.chapters_info[idx]
-        title = ch_info['title']
-        volume = ch_info.get('volume', '')
-        text = self.engine.get_chapter_text(idx)
-
-        self.current_scroll_offset = target_offset
-        self.current_max_scroll_extent = 0.0 
-
-        if hasattr(self, "top_bar_book_name"):
-            display_vol = volume if volume and volume != title else ""
-            self.top_bar_book_name.value = f"{self.current_book_name} | {display_vol}" if display_vol else self.current_book_name
-        if hasattr(self, "top_bar_chapter_name"):
-            self.top_bar_chapter_name.value = title
-        if hasattr(self, "info_chapter_name"):
-            self.info_chapter_name.value = title
-            
-        if hasattr(self, "info_progress"):
-            total_length = len(self.engine.full_text_content)
-            if total_length > 0:
-                base_pct = (ch_info['start'] / total_length) * 100
-            else:
-                base_pct = 0.0
-            self.last_reported_pct = base_pct
-            self.info_progress.value = f"{base_pct:.1f}%"
-        
-        current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
-        
-        paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
-        
-        self.reader_text_controls = []
-        self.chapter_title_control = None
-        
-        if paragraphs:
-            title_text = paragraphs.pop(0)
-            self.chapter_title_control = ft.Container(
-                content=ft.Text(
-                    title_text,
-                    size=self.font_size + 2,  
-                    weight=ft.FontWeight.BOLD, 
-                    style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
-                    font_family=self.font_family,
-                    color=current_text_color,
-                    text_align=ft.TextAlign.LEFT 
-                ),
-                padding=ft.Padding(left=0, top=0, right=0, bottom=15) 
-            )
-
-            for p in paragraphs:
-                self.reader_text_controls.append(
-                    ft.Text(
-                        p, 
-                        size=self.font_size, 
-                        style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
-                        font_family=self.font_family, 
-                        color=current_text_color   
-                    )
-                )
-
-        prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
-        next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
-
-        if next_valid != -1:
-            self.inline_next_btn = ft.Container(
-                content=ft.TextButton(
-                    content=ft.Text("下一章"),
-                    icon=ft.Icons.ARROW_FORWARD,
-                    on_click=self.load_next,
-                    style=ft.ButtonStyle(color=current_text_color)
-                ),
-                alignment=ft.Alignment(0, 0),
-                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
-            )
-        else:
-            self.inline_next_btn = ft.Container(
-                content=ft.Text("— 已经是最后一章了 —", color=current_text_color, size=13),
-                alignment=ft.Alignment(0, 0),
-                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
-            )
-
-        controls_to_add = []
-        if self.chapter_title_control:
-            controls_to_add.append(self.chapter_title_control)
-        controls_to_add.extend(self.reader_text_controls)
-        controls_to_add.append(self.inline_next_btn)
-
-        self.inner_text_col = ft.Column(
-            controls=controls_to_add,
-            spacing=self.paragraph_spacing
-        )
-
-        self.text_scroll_col = ft.Column(
-            controls=[
-                ft.Container(
-                    content=self.inner_text_col,
-                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
-                )
-            ],
-            expand=True, 
-            scroll=ft.ScrollMode.AUTO,
-            on_scroll=self._on_text_scroll, 
-            key="text_scroll_col",
-            opacity=0,                                                            
-            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      
-        )
-        
-        if hasattr(self, "text_panel"):
-            self.text_panel.content = self.text_scroll_col
-
-        if hasattr(self, "btn_prev"): self.btn_prev.disabled = prev_valid == -1
-        if hasattr(self, "btn_next"): self.btn_next.disabled = next_valid == -1
-
-        self.save_current_progress() 
-
-        if not hasattr(self, "toc_listview") or not self.toc_listview.controls:
-            self.filter_toc(None) 
-        else:
-            self._update_toc_highlight()
-            
+        try: control.update()
+        except Exception: pass
         self.page.update()
+
+    def _universal_close(self, control):
+        try: control.open = False
+        except Exception: pass
+
+        if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
+            try: self.page.close(control)
+            except Exception: pass
+
+        try: control.update()
+        except Exception: pass
+        self.page.update()
+
+    def show_snack_bar(self, msg):
+        self.snack_counter += 1
         
-        self.page.run_task(self._delayed_scroll_to_chapter, idx)
+        toast_ui = ft.Container(
+            content=ft.Text(msg, color=ft.Colors.ON_INVERSE_SURFACE),
+            bgcolor=ft.Colors.INVERSE_SURFACE,
+            padding=ft.Padding.symmetric(horizontal=16, vertical=10),
+            border_radius=8,
+        )
         
-        self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
+        new_snack = ft.SnackBar(
+            content=ft.Row([toast_ui], alignment=ft.MainAxisAlignment.START), 
+            behavior=ft.SnackBarBehavior.FLOATING,
+            bgcolor=ft.Colors.TRANSPARENT,  
+            elevation=0,                    
+            padding=0,                      
+            duration=1200,                  
+            key=f"snack_{self.snack_counter}"
+        )
+        self._universal_open(new_snack)
 
-    def load_prev(self, e=None):
-        if self.current_chapter_idx > 0:
-            valid_idx = self._find_valid_chapter(self.current_chapter_idx - 1, -1)
-            if valid_idx != -1: self.load_chapter(valid_idx) 
+    def _open_dialog(self):
+        self._universal_open(self.global_dialog)
 
-    def load_next(self, e=None):
-        if self.current_chapter_idx < len(self.engine.chapters_info) - 1:
-            valid_idx = self._find_valid_chapter(self.current_chapter_idx + 1, 1)
-            if valid_idx != -1: self.load_chapter(valid_idx) 
+    def _close_dialog(self):
+        self._universal_close(self.global_dialog)
 
-    def change_font(self, delta):
-        new_size = self.font_size + delta
-        if 12 <= new_size <= 48:
-            self.font_size = new_size
-            
-            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
-                if isinstance(self.chapter_title_control.content, ft.Text):
-                    self.chapter_title_control.content.size = self.font_size + 2
-                    try: self.chapter_title_control.content.update()
-                    except Exception: pass
-                    
-            if hasattr(self, "reader_text_controls"):
-                for ctrl in self.reader_text_controls:
-                    ctrl.size = self.font_size
-                    try: ctrl.update()
-                    except Exception: pass
-            if hasattr(self, "font_size_text"):
-                self.font_size_text.value = str(self.font_size)
-                try: self.font_size_text.update()
-                except Exception: pass
+    def _open_toc_sheet(self, e=None):
+        self._universal_open(self.toc_sheet)
+        self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
 
-    def change_line_height(self, delta):
-        new_height = round(self.line_height + delta, 1)
-        if 1.0 <= new_height <= 3.0:
-            self.line_height = new_height
-            
-            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
-                if isinstance(self.chapter_title_control.content, ft.Text):
-                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: self.chapter_title_control.content.update()
-                    except Exception: pass
-                    
-            if hasattr(self, "reader_text_controls"):
-                for ctrl in self.reader_text_controls:
-                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: ctrl.update()
-                    except Exception: pass
-            if hasattr(self, "line_height_text"):
-                self.line_height_text.value = f"{self.line_height:.1f}"
-                try: self.line_height_text.update()
-                except Exception: pass
+    def _close_toc_sheet(self, e=None):
+        self._universal_close(self.toc_sheet)
 
-    def change_paragraph_spacing(self, delta):
-        new_spacing = int(self.paragraph_spacing + delta)
-        if 0 <= new_spacing <= 50:
-            self.paragraph_spacing = new_spacing
-            if hasattr(self, "inner_text_col"):
-                self.inner_text_col.spacing = self.paragraph_spacing
-                try: self.inner_text_col.update()
-                except Exception: pass
-            if hasattr(self, "para_spacing_text"):
-                self.para_spacing_text.value = str(self.paragraph_spacing)
-                try: self.para_spacing_text.update()
-                except Exception: pass
+    def _open_settings_sheet(self, e=None):
+        self._universal_open(self.settings_sheet)
 
-    def change_letter_spacing(self, delta):
-        new_spacing = round(self.letter_spacing + delta, 1)
-        if 0.0 <= new_spacing <= 10.0:
-            self.letter_spacing = new_spacing
-            
-            if hasattr(self, "chapter_title_control") and self.chapter_title_control:
-                if isinstance(self.chapter_title_control.content, ft.Text):
-                    self.chapter_title_control.content.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: self.chapter_title_control.content.update()
-                    except Exception: pass
-                    
-            if hasattr(self, "reader_text_controls"):
-                for ctrl in self.reader_text_controls:
-                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: ctrl.update()
-                    except Exception: pass
-            if hasattr(self, "letter_spacing_text"):
-                self.letter_spacing_text.value = f"{self.letter_spacing:.1f}"
-                try: self.letter_spacing_text.update()
-                except Exception: pass
+    def _close_settings_sheet(self, e=None):
+        self._universal_close(self.settings_sheet)
 
-    async def copy_current(self, e):
-        if not self.engine.chapters_info: return
-        text = self.engine.get_chapter_text(self.current_chapter_idx)
-        self._execute_copy(text)
-        self.show_snack_bar("✅ 本章内容已复制到剪贴板")
-        try:
-            self._close_toc_sheet() 
-            self.page.close(self.settings_sheet)
-        except Exception:
-            pass
-
-    # ==========================
-    # 弹窗逻辑 (委托给 DialogManager)
-    # ==========================
     def show_book_options_dialog(self, path, current_name):
         DialogManager.show_book_options_dialog(self, path, current_name)
 
@@ -1182,7 +1128,51 @@ class NovelReaderApp:
 
     def show_ai_dialog(self, e):
         DialogManager.show_ai_dialog(self, e)
+    # endregion
 
+    # region 6. 底层纯工具函数
+    # =========================================================================
+    def _execute_copy(self, text):
+        try:
+            if hasattr(self.page, "set_clipboard"):
+                self.page.set_clipboard(text)
+        except Exception:
+            pass
+            
+        if sys.platform.startswith("win"):
+            try:
+                import subprocess
+                subprocess.run(['clip.exe'], input=text, text=True, check=True)
+            except Exception:
+                pass
+
+    def _find_valid_chapter(self, start_idx, step=1):
+        idx = start_idx
+        while 0 <= idx < len(self.engine.chapters_info):
+            ch_info = self.engine.chapters_info[idx]
+            text = self.engine.get_chapter_text(idx).strip()
+            title = ch_info['title'].strip()
+            content_only = text.replace(title, "", 1).strip()
+            if len(content_only) > 15:
+                return idx
+            idx += step
+        return -1
+
+    async def _update_clock_task(self):
+        while True:
+            try:
+                if hasattr(self, "info_time"):
+                    now_str = datetime.now().strftime("%H:%M")
+                    if self.info_time.value != now_str:
+                        self.info_time.value = now_str
+                        try:
+                            self.info_time.update()
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            await asyncio.sleep(5)
+    # endregion
 
 def main(page: ft.Page):
     app = NovelReaderApp(page)
