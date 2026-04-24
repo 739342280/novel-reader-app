@@ -11,6 +11,7 @@ import shutil
 import time  
 import hashlib
 from datetime import datetime
+import traceback  # 【修复】：补上了这句至关重要的库引用，否则捕兽夹会失效！
 
 # --- 【闪退捕兽夹】代码开始 ---
 def global_crash_catcher(exctype, value, tb):
@@ -2059,5 +2060,20 @@ class NovelReaderApp:
 def main(page: ft.Page):
     app = NovelReaderApp(page)
 
+# ==========================================
+# 【终极寻路系统】
+# 夺回 Flet 引擎控制权，强行计算绝对路径，告别体积翻倍
+# ==========================================
+if getattr(sys, 'frozen', False):
+    # 如果是被 PyInstaller 打包成了 exe，取 exe 所在的真实物理目录
+    application_path = os.path.dirname(sys.executable)
+else:
+    # 如果是开发环境 (python main.py)，取当前 py 文件所在目录
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+# 强行合成资源的绝对路径
+ASSETS_DIR = os.path.join(application_path, "assets")
+
 if __name__ == "__main__":
-    ft.run(main, assets_dir="assets")
+    # 【关键发车指令】：强行把绝对路径喂给 Flet 引擎！
+    ft.app(target=main, assets_dir=ASSETS_DIR)
