@@ -11,7 +11,7 @@ PrivilegesRequired=admin
 
 [Files]
 ; 将打包好的整个免安装目录塞进安装包
-Source: "build\windows\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\小说智读\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Tasks]
 Name: "desktopicon"; Description: "创建桌面快捷方式"; GroupDescription: "其他任务:";

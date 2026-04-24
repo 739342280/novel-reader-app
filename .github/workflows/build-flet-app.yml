@@ -13,15 +13,12 @@ permissions:
   contents: write
 
 env:
-  # 修复 Node.js 弃用警告
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true" 
-  # 提前占位，消除 IDE 的静态语法检查黄色警告
   APP_VERSION: "" 
 
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    # 【彻底消除黄线】：在 Job 内部声明局部环境变量
     env:
       APP_VERSION: "0.0.0"
     
@@ -105,9 +102,7 @@ jobs:
             mv "$file" "小说智读_v${{ env.APP_VERSION }}_${abi}.apk"
           fi
         done
-        echo "APKs renamed successfully!"
-    
-    # 使用 v7 并开启 archive: false 实现直链下载
+        
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
@@ -142,12 +137,11 @@ jobs:
 
 
   # =========================================================
-  # Windows 桌面端独立构建任务（便携版 + 安装版）
+  # Windows 桌面端独立构建任务（双 PyInstaller 架构，坚如磐石）
   # =========================================================
   build-windows:
     name: Build Windows EXE
     runs-on: windows-latest
-    # 【彻底消除黄线】：在 Windows Job 内部也同步声明
     env:
       APP_VERSION: "0.0.0"
     
@@ -178,59 +172,42 @@ jobs:
         pip install flet==0.84.0 pyinstaller
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    - name: Setup Flutter
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: '3.41.4'  
-        channel: 'stable'
-        cache: "false" 
-    
-    - name: Verify Flutter
-      shell: bash
-      run: |
-        flutter --version
-        flutter doctor -v
-        
-    - name: Build Flet Windows App (Folder base)
+    # 【核心变动】：放弃 Flutter C++ 启动器，使用绝对稳定的 PyInstaller 生成免安装目录！
+    - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
       env:
         PYTHONUTF8: "1"  
       run: |
-        flet build windows --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --verbose
+        rm -rf dist build
         
-        # 确保主程序改名为 小说智读.exe，匹配安装包路径
-        cd build/windows
-        for f in *.exe; do
-          if [ "$f" != "小说智读.exe" ]; then
-            mv "$f" "小说智读.exe"
-          fi
-        done
-        # 退回到根目录
-        cd ../..
+        # 目录模式打包（--onedir），专供安装包打包使用
+        PACK_CMD="pyinstaller --noconsole --windowed --onedir --name \"小说智读\" main.py"
         
-        # 【终极防闪退修复】：强行把静态资源拷贝到免安装目录中，防止安装版“裸奔”！
-        if [ -d "assets" ]; then cp -R assets build/windows/; fi
-        if [ -d "fonts" ]; then cp -R fonts build/windows/; fi
-        if [ -d "images" ]; then cp -R images build/windows/; fi
+        if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
+        if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
+        if [ -d "images" ]; then PACK_CMD="$PACK_CMD --add-data \"images;images\""; fi
+        
+        eval $PACK_CMD
         
     - name: Build Installer Setup (向导安装版)
       shell: pwsh
       run: |
-        # 这里的脚本已经精简，只做版本号替换，不再重复画蛇添足加 WorkingDir
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
         $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版"
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
+    # 单文件便携版保持不变（本就是 PyInstaller 引擎）
     - name: Build Single Portable EXE (单文件便携版)
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
-        rm -rf build
+        # 备份之前的目录，防止冲突
+        mv dist dist_folder_backup
+        mkdir dist
         
-        # 强制包含资源文件夹，解决便携版字体和纹理丢失问题
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
@@ -239,7 +216,6 @@ jobs:
         
         eval $PACK_CMD
 
-    # 使用 v7 并开启 archive: false 实现直链下载
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
