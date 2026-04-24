@@ -17,7 +17,38 @@ env:
   APP_VERSION: "" 
 
 jobs:
+  # =========================================================
+  # 任务 1：极速占位（只需5秒，提前建好 Release 页面供后续任务上传）
+  # =========================================================
+  prepare-release:
+    name: Prepare Release Page
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Extract Version
+        run: |
+          VERSION=$(grep 'self\.version' main.py | head -n 1 | sed 's/[^"]*"\([^"]*\)".*/\1/')
+          if [ -z "$VERSION" ]; then VERSION="Unknown"; fi
+          echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
+
+      - name: Create Empty Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: 小说智读 v${{ env.APP_VERSION }}
+          body: "小说智读 v${{ env.APP_VERSION }} 自动构建发布。"
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # =========================================================
+  # 任务 2：安卓端独立构建（慢任务，完成后独立上架）
+  # =========================================================
   build-android:
+    name: Build Android APK
+    needs: prepare-release    # 等待空页面建好就起跑
     runs-on: ubuntu-latest
     env:
       APP_VERSION: "0.0.0"
@@ -26,13 +57,10 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Extract Version from main.py
-      id: extract_version
+    - name: Extract Version
       run: |
         VERSION=$(grep 'self\.version' main.py | head -n 1 | sed 's/[^"]*"\([^"]*\)".*/\1/')
-        if [ -z "$VERSION" ]; then
-          VERSION="Unknown"
-        fi
+        if [ -z "$VERSION" ]; then VERSION="Unknown"; fi
         echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
     
     - name: Setup Python
@@ -95,43 +123,29 @@ jobs:
           fi
         done
         
-    - name: Upload arm64-v8a APK
-      uses: actions/upload-artifact@v7
+    - name: Upload APK to Artifacts
+      uses: actions/upload-artifact@v4
       with:
-        path: 小说智读_v*arm64-v8a.apk                 
-        archive: false
+        name: android-apks
+        path: 小说智读_v*.apk
         if-no-files-found: warn
 
-    - name: Upload armeabi-v7a APK
-      uses: actions/upload-artifact@v7
-      with:
-        path: 小说智读_v*armeabi-v7a.apk                 
-        archive: false
-        if-no-files-found: warn
-
-    - name: Upload x86_64 APK
-      uses: actions/upload-artifact@v7
-      with:
-        path: 小说智读_v*x86_64.apk                 
-        archive: false
-        if-no-files-found: warn
-    
-    - name: Release APK
+    # 【独立发版】：只要安卓打完了，就直接追加入建好的 Release 里
+    - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
         files: 小说智读_v*.apk
-        name: 小说智读 v${{ env.APP_VERSION }}
-        body: "小说智读 v${{ env.APP_VERSION }} 自动构建发布。"
-        generate_release_notes: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+
   # =========================================================
-  # Windows 桌面端任务（体积优化版 PyInstaller 架构）
+  # 任务 3：Windows 独立构建（快任务，完成后率先上架！）
   # =========================================================
   build-windows:
     name: Build Windows EXE
+    needs: prepare-release    # 同样只等待空页面建好就起跑
     runs-on: windows-latest
     env:
       APP_VERSION: "0.0.0"
@@ -140,14 +154,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
       
-    - name: Extract Version from main.py
-      id: extract_version
+    - name: Extract Version
       shell: bash 
       run: |
         VERSION=$(grep 'self\.version' main.py | head -n 1 | sed 's/[^"]*"\([^"]*\)".*/\1/')
-        if [ -z "$VERSION" ]; then
-          VERSION="Unknown"
-        fi
+        if [ -z "$VERSION" ]; then VERSION="Unknown"; fi
         echo "APP_VERSION=$VERSION" >> $GITHUB_ENV
     
     - name: Setup Python
@@ -168,16 +179,13 @@ jobs:
         PYTHONUTF8: "1"  
       run: |
         rm -rf dist build
-        
-        # 1. 纯净提取，防止 Flet 组件丢失
         pyinstaller --noconsole --windowed --onedir --name "小说智读" --collect-all flet --collect-all flet_desktop main.py
         
-        # 2. 【核心优化】：得益于 main.py 里的绝对路径推导，只需拷贝一份资源到根目录！
         if [ -d "assets" ]; then cp -R assets dist/小说智读/; fi
         if [ -d "fonts" ]; then cp -R fonts dist/小说智读/; fi
         if [ -d "images" ]; then cp -R images dist/小说智读/; fi
         
-    - name: Build Installer Setup (向导安装版)
+    - name: Build Installer Setup
       shell: pwsh
       run: |
         $iss = Get-Content installer_script.iss
@@ -186,15 +194,13 @@ jobs:
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
-    - name: Build Single Portable EXE (单文件便携版)
+    - name: Build Portable EXE
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
         mv dist dist_folder_backup
         mkdir dist
-        
-        # 斩草除根，消灭互动提问 EOFError
         rm -rf build
         
         PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
@@ -205,21 +211,17 @@ jobs:
         
         eval $PACK_CMD
 
-    - name: Upload Portable EXE
-      uses: actions/upload-artifact@v7
+    - name: Upload EXE to Artifacts
+      uses: actions/upload-artifact@v4
       with:
-        path: dist/小说智读_v*_便携版.exe
-        archive: false
+        name: windows-exes
+        path: |
+          dist/小说智读_v*_便携版.exe
+          dist_installer/小说智读_v*_安装版.exe
         if-no-files-found: warn
 
-    - name: Upload Installer EXE
-      uses: actions/upload-artifact@v7
-      with:
-        path: dist_installer/小说智读_v*_安装版.exe
-        archive: false
-        if-no-files-found: warn
-    
-    - name: Release Windows Files
+    # 【独立发版】：Windows 跑得快，打完包直接秒发，绝对不惯着安卓！
+    - name: Publish EXEs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
