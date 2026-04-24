@@ -12,6 +12,19 @@ import time
 import hashlib
 from datetime import datetime
 
+# --- 【闪退捕兽夹】代码开始 ---
+def global_crash_catcher(exctype, value, tb):
+    """拦截所有未处理的致命报错，并强制写到桌面"""
+    error_msg = "".join(traceback.format_exception(exctype, value, tb))
+    desktop_path = os.path.join(os.path.expanduser("~"), "Desktop", "小说智读_绝密报错日志.txt")
+    with open(desktop_path, "w", encoding="utf-8") as f:
+        f.write("=== 软件启动崩溃现场 ===\n")
+        f.write(error_msg)
+
+# 替换系统默认的异常处理
+sys.excepthook = global_crash_catcher
+# --- 【闪退捕兽夹】代码结束 ---
+
 # ==========================================
 # 核心引擎 (NovelEngine) - 100% 完美复用
 # ==========================================
