@@ -123,7 +123,6 @@ jobs:
           fi
         done
         
-    # 【严格还原】：严格拆分为独立任务、强制使用 v7、且 archive: false 拒绝压缩包
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
@@ -148,13 +147,17 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【外科手术修改】：弃用 bug 插件，换为原生 gh cli 进行中文发版覆写
+    # 【核心修改点】：弃用会吞掉中文名字的 softprops 插件，换用官方 gh cli 进行推流
     - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
       run: |
-        gh release upload "${{ github.ref_name }}" 小说智读_v*.apk --clobber
+        shopt -s nullglob
+        for file in 小说智读_v*.apk; do
+          gh release upload "${{ github.ref_name }}" "$file" --clobber
+        done
 
 
   # =========================================================
@@ -228,7 +231,6 @@ jobs:
         
         eval $PACK_CMD
 
-    # 【严格还原】：独立的上传任务与 v7，archive: false
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
@@ -245,19 +247,25 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【外科手术修改】：弃用 bug 插件，换为原生 gh cli。此处使用 shell: bash 确保通配符能被稳健解析
+    # 【核心修改点】：放弃软弱且吞中文的 softprops 插件，借助 powershell (pwsh) 原生 UTF-8 能力推流
     - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
+      shell: pwsh
       run: |
-        gh release upload "${{ github.ref_name }}" dist/小说智读_v*_便携版.exe --clobber
+        $portable = Get-ChildItem -Path dist -Filter "小说智读_v*_便携版.exe" | Select-Object -First 1
+        if ($portable) {
+            gh release upload "${env:GITHUB_REF_NAME}" $portable.FullName --clobber
+        }
 
     - name: Publish Installer EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
+      shell: pwsh
       run: |
-        gh release upload "${{ github.ref_name }}" dist_installer/小说智读_v*_安装版.exe --clobber
+        $installer = Get-ChildItem -Path dist_installer -Filter "小说智读_v*_安装版.exe" | Select-Object -First 1
+        if ($installer) {
+            gh release upload "${env:GITHUB_REF_NAME}" $installer.FullName --clobber
+        }
