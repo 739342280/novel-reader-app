@@ -246,13 +246,19 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【独立发版】：Windows 跑得快，打完包直接秒发，绝对不惯着安卓！
-    - name: Publish EXEs to Release
+    # 【核心修改点】：将并发上传拆分为串行上传，彻底规避 Github API 并发竞争和中文命名冲突
+    - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
-        files: |
-          dist/小说智读_v*_便携版.exe
-          dist_installer/小说智读_v*_安装版.exe
+        files: dist/小说智读_v*_便携版.exe
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: Publish Installer EXE to Release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist_installer/小说智读_v*_安装版.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
