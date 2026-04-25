@@ -108,11 +108,11 @@ jobs:
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
     
-    # 【核心修改点 1】：追加 --icon "assets/icon.png"
+    # 【核心修复 1】：删除了导致 Flet 0.84.0 崩溃的 --icon 参数。Flet 会自动扫描 assets/icon.png！
     - name: Build Flet APK
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        flet build apk --product "小说智读" --icon "assets/icon.png" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
+        flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
     
     - name: Rename APKs
       run: |
@@ -187,13 +187,13 @@ jobs:
         python-version: '3.12' 
         cache: 'pip' 
     
+    # 【核心修复 2】：追加了 Pillow 图像处理库，确保 PyInstaller 能够正确读取并转化 ico 图标格式！
     - name: Install dependencies
       shell: bash
       run: |
-        pip install flet==0.84.0 flet-desktop==0.84.0 pyinstaller
+        pip install flet==0.84.0 flet-desktop==0.84.0 pyinstaller Pillow
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 【核心修改点 2】：pyinstaller 增加 --icon "assets/icon.ico"
     - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
       env:
@@ -215,7 +215,6 @@ jobs:
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
-    # 【核心修改点 3】：flet pack 增加 --icon "assets/icon.ico"
     - name: Build Portable EXE
       shell: bash
       env:
