@@ -44,11 +44,11 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # =========================================================
-  # 任务 2：安卓端独立构建（慢任务，完成后独立上架）
+  # 任务 2：安卓端独立构建
   # =========================================================
   build-android:
     name: Build Android APK
-    needs: prepare-release    # 等待空页面建好就起跑
+    needs: prepare-release    
     runs-on: ubuntu-latest
     env:
       APP_VERSION: "0.0.0"
@@ -113,59 +113,56 @@ jobs:
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
         flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
     
+    # 【核心修改点】：重命名输出为纯英文 NovelReader，避开 GitHub 吞字 Bug
     - name: Rename APKs
       run: |
         shopt -s nullglob
         for file in build/apk/*.apk build/app/outputs/flutter-apk/*-release.apk; do
           abi=$(echo "$file" | grep -oE '(arm64-v8a|armeabi-v7a|x86_64)')
           if [ -n "$abi" ]; then
-            mv "$file" "小说智读_v${{ env.APP_VERSION }}_${abi}.apk"
+            mv "$file" "NovelReader_v${{ env.APP_VERSION }}_${abi}.apk"
           fi
         done
         
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
-        name: 小说智读_v${{ env.APP_VERSION }}_arm64-v8a.apk
-        path: 小说智读_v*arm64-v8a.apk
+        name: NovelReader_v${{ env.APP_VERSION }}_arm64-v8a.apk
+        path: NovelReader_v*arm64-v8a.apk
         if-no-files-found: warn
         archive: false
 
     - name: Upload armeabi-v7a APK
       uses: actions/upload-artifact@v7
       with:
-        name: 小说智读_v${{ env.APP_VERSION }}_armeabi-v7a.apk
-        path: 小说智读_v*armeabi-v7a.apk
+        name: NovelReader_v${{ env.APP_VERSION }}_armeabi-v7a.apk
+        path: NovelReader_v*armeabi-v7a.apk
         if-no-files-found: warn
         archive: false
 
     - name: Upload x86_64 APK
       uses: actions/upload-artifact@v7
       with:
-        name: 小说智读_v${{ env.APP_VERSION }}_x86_64.apk
-        path: 小说智读_v*x86_64.apk
+        name: NovelReader_v${{ env.APP_VERSION }}_x86_64.apk
+        path: NovelReader_v*x86_64.apk
         if-no-files-found: warn
         archive: false
 
-    # 【核心修改点】：弃用会吞掉中文名字的 softprops 插件，换用官方 gh cli 进行推流
     - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: NovelReader_v*.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: bash
-      run: |
-        shopt -s nullglob
-        for file in 小说智读_v*.apk; do
-          gh release upload "${{ github.ref_name }}" "$file" --clobber
-        done
 
 
   # =========================================================
-  # 任务 3：Windows 独立构建（快任务，完成后率先上架！）
+  # 任务 3：Windows 独立构建
   # =========================================================
   build-windows:
     name: Build Windows EXE
-    needs: prepare-release    # 同样只等待空页面建好就起跑
+    needs: prepare-release    
     runs-on: windows-latest
     env:
       APP_VERSION: "0.0.0"
@@ -205,15 +202,17 @@ jobs:
         if [ -d "fonts" ]; then cp -R fonts dist/小说智读/; fi
         if [ -d "images" ]; then cp -R images dist/小说智读/; fi
         
+    # 【核心修改点】：Inno Setup 产出改为纯英文 NovelReader_..._Installer.exe
     - name: Build Installer Setup
       shell: pwsh
       run: |
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
-        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=小说智读_v${env:APP_VERSION}_安装版"
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Installer"
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
+    # 【核心修改点】：Flet pack 产出改为纯英文 NovelReader_..._Portable.exe
     - name: Build Portable EXE
       shell: bash
       env:
@@ -223,7 +222,7 @@ jobs:
         mkdir dist
         rm -rf build
         
-        PACK_CMD="flet pack main.py --name \"小说智读_v${{ env.APP_VERSION }}_便携版\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
+        PACK_CMD="flet pack main.py --name \"NovelReader_v${{ env.APP_VERSION }}_Portable\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
         if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
@@ -234,38 +233,31 @@ jobs:
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
-        name: 小说智读_v${{ env.APP_VERSION }}_便携版.exe
-        path: dist/小说智读_v*_便携版.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Portable.exe
+        path: dist/NovelReader_v*_Portable.exe
         if-no-files-found: warn
         archive: false
 
     - name: Upload Installer EXE
       uses: actions/upload-artifact@v7
       with:
-        name: 小说智读_v${{ env.APP_VERSION }}_安装版.exe
-        path: dist_installer/小说智读_v*_安装版.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Installer.exe
+        path: dist_installer/NovelReader_v*_Installer.exe
         if-no-files-found: warn
         archive: false
 
-    # 【核心修改点】：放弃软弱且吞中文的 softprops 插件，借助 powershell (pwsh) 原生 UTF-8 能力推流
     - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist/NovelReader_v*_Portable.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: pwsh
-      run: |
-        $portable = Get-ChildItem -Path dist -Filter "小说智读_v*_便携版.exe" | Select-Object -First 1
-        if ($portable) {
-            gh release upload "${env:GITHUB_REF_NAME}" $portable.FullName --clobber
-        }
 
     - name: Publish Installer EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v2
+      with:
+        files: dist_installer/NovelReader_v*_Installer.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: pwsh
-      run: |
-        $installer = Get-ChildItem -Path dist_installer -Filter "小说智读_v*_安装版.exe" | Select-Object -First 1
-        if ($installer) {
-            gh release upload "${env:GITHUB_REF_NAME}" $installer.FullName --clobber
-        }
