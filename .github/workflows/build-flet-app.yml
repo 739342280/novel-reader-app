@@ -123,7 +123,6 @@ jobs:
           fi
         done
         
-    # 【核心修改点】：升级到 v7，增加 archive: false 实现免压缩下载
     - name: Upload arm64-v8a APK
       uses: actions/upload-artifact@v7
       with:
@@ -148,13 +147,13 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【独立发版】：只要安卓打完了，就直接追加入建好的 Release 里
+    # 【核心修改点】：将 overwrite 修正为官方合法的 overwrite_files 参数
     - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
         files: 小说智读_v*.apk
-        overwrite: true
+        overwrite_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -230,7 +229,6 @@ jobs:
         
         eval $PACK_CMD
 
-    # 【核心修改点】：升级到 v7，增加 archive: false 实现免压缩下载
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
@@ -247,13 +245,13 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【核心修改点】：将并发上传拆分为串行上传，并增加 overwrite: true 彻底规避 race condition 报错
+    # 【核心修改点】：将 overwrite 修正为官方合法的 overwrite_files 参数
     - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
         files: dist/小说智读_v*_便携版.exe
-        overwrite: true
+        overwrite_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -262,6 +260,6 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: dist_installer/小说智读_v*_安装版.exe
-        overwrite: true
+        overwrite_files: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
