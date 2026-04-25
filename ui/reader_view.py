@@ -1,6 +1,6 @@
 import flet as ft
 from datetime import datetime
-import asyncio  # 【新增】引入异步核心库，用于实现骨架屏懒加载
+import asyncio  
 
 def get_reader_view(app):
     app.last_search_query = None
@@ -63,43 +63,44 @@ def get_reader_view(app):
         app.font_btn_default, app.font_btn_qihei, app.font_btn_zhongsong, app.font_btn_zhengyuan
     ], alignment=ft.MainAxisAlignment.START, scroll=ft.ScrollMode.AUTO)
 
+    # 【修改点 1】：强行压缩所有调整排版按钮的宽高(width=32, height=32)，并将顶层 Row 改为 SPACE_AROUND 均分布局
     typography_row = ft.Row([
         ft.Column([
             ft.Row([
-                ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: app.change_font(-1), icon_size=20),
+                ft.IconButton(icon=ft.Icons.REMOVE, on_click=lambda _: app.change_font(-1), icon_size=18, width=32, height=32),
                 app.font_size_text,
-                ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: app.change_font(1), icon_size=20),
+                ft.IconButton(icon=ft.Icons.ADD, on_click=lambda _: app.change_font(1), icon_size=18, width=32, height=32),
             ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
             ft.Text("字号", size=12, color=ft.Colors.GREY_500)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
 
         ft.Column([
             ft.Row([
-                ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: app.change_letter_spacing(-0.5), icon_size=20, tooltip="字距-"),
+                ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: app.change_letter_spacing(-0.5), icon_size=18, width=32, height=32, tooltip="字距-"),
                 app.letter_spacing_text,
-                ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: app.change_letter_spacing(0.5), icon_size=20, tooltip="字距+"),
+                ft.IconButton(icon=ft.Icons.LINEAR_SCALE, on_click=lambda _: app.change_letter_spacing(0.5), icon_size=18, width=32, height=32, tooltip="字距+"),
             ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
             ft.Text("字距", size=12, color=ft.Colors.GREY_500)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
         
         ft.Column([
             ft.Row([
-                ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: app.change_line_height(-0.1), icon_size=20, tooltip="行距-"),
+                ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: app.change_line_height(-0.1), icon_size=18, width=32, height=32, tooltip="行距-"),
                 app.line_height_text,
-                ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: app.change_line_height(0.1), icon_size=20, tooltip="行距+"),
+                ft.IconButton(icon=ft.Icons.FORMAT_LINE_SPACING, on_click=lambda _: app.change_line_height(0.1), icon_size=18, width=32, height=32, tooltip="行距+"),
             ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
             ft.Text("行距", size=12, color=ft.Colors.GREY_500)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
 
         ft.Column([
             ft.Row([
-                ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: app.change_paragraph_spacing(-5), icon_size=20, tooltip="段距-"),
+                ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: app.change_paragraph_spacing(-5), icon_size=18, width=32, height=32, tooltip="段距-"),
                 app.para_spacing_text,
-                ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: app.change_paragraph_spacing(5), icon_size=20, tooltip="段距+"),
+                ft.IconButton(icon=ft.Icons.VERTICAL_ALIGN_CENTER, on_click=lambda _: app.change_paragraph_spacing(5), icon_size=18, width=32, height=32, tooltip="段距+"),
             ], spacing=0, alignment=ft.MainAxisAlignment.CENTER),
             ft.Text("段距", size=12, color=ft.Colors.GREY_500)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=0),
-    ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+    ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
 
     def on_system_theme_switch_change(e):
         app.follow_system_theme = e.control.value
@@ -132,6 +133,11 @@ def get_reader_view(app):
         app.system_theme_switch
     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
+    app.btn_copy_current = ft.Button(
+        content=ft.Row([ft.Icon(ft.Icons.COPY, size=18), ft.Text("复制本章", size=13)], alignment=ft.MainAxisAlignment.CENTER),
+        on_click=app.copy_current,
+    )
+
     app.settings_sheet = ft.BottomSheet(
         content=ft.Container(
             padding=12, 
@@ -151,11 +157,7 @@ def get_reader_view(app):
                 font_options,
 
                 ft.Divider(height=6, thickness=0.5),
-                ft.Button(
-                    content=ft.Row([ft.Icon(ft.Icons.COPY, size=18), ft.Text("复制本章", size=13)], alignment=ft.MainAxisAlignment.CENTER),
-                    on_click=app.copy_current,
-                    style=ft.ButtonStyle(bgcolor="surface", color=ft.Colors.ON_SURFACE, padding=10)
-                )
+                app.btn_copy_current
             ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=4) 
         )
     )
@@ -165,11 +167,15 @@ def get_reader_view(app):
 
     app.btn_more = ft.PopupMenuButton(
         icon=ft.Icons.MORE_VERT,
-        tooltip="设置",
+        tooltip="菜单",
         items=[
             ft.PopupMenuItem(
                 content=ft.Row([ft.Icon(ft.Icons.BAR_CHART), ft.Text("阅读统计")], spacing=10),
                 on_click=app.show_statistics_dialog
+            ),
+            ft.PopupMenuItem(
+                content=ft.Row([ft.Icon(ft.Icons.AUTO_AWESOME), ft.Text("AI 设置")], spacing=10),
+                on_click=app.show_settings_dialog
             ),
         ]
     )
@@ -325,9 +331,6 @@ def get_reader_view(app):
     app._sync_bg_highlight()
     app._sync_font_highlight()
 
-    # 【核心优化：先亮骨架，后填灵魂】
-    # 利用异步协程让出主线程控制权，让 Flet 引擎先行绘制(Paint)页面的骨架(背景、菜单、按钮等)。
-    # 短暂休眠 0.05 秒后，再在后台静默加载沉重的文字节点，从而实现“秒进页面”的极致体验。
     async def lazy_load_chapter():
         await asyncio.sleep(0.05)
         if app.engine.chapters_info:

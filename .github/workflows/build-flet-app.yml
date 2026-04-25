@@ -154,6 +154,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: 小说智读_v*.apk
+        overwrite: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -246,12 +247,13 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    # 【核心修改点】：将并发上传拆分为串行上传，彻底规避 Github API 并发竞争和中文命名冲突
+    # 【核心修改点】：将并发上传拆分为串行上传，并增加 overwrite: true 彻底规避 race condition 报错
     - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
       uses: softprops/action-gh-release@v2
       with:
         files: dist/小说智读_v*_便携版.exe
+        overwrite: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -260,5 +262,6 @@ jobs:
       uses: softprops/action-gh-release@v2
       with:
         files: dist_installer/小说智读_v*_安装版.exe
+        overwrite: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

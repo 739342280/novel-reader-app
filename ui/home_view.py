@@ -5,7 +5,7 @@ def get_home_view(app):
         content=ft.Row([
             ft.Text("📚 我的书架", size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE),
             ft.Container(expand=True),
-            ft.IconButton(icon=ft.Icons.SETTINGS, tooltip="AI设置", on_click=app.show_settings_dialog),
+            # 【移除点】这里不再显示 AI 设置
             ft.IconButton(icon=ft.Icons.HISTORY, tooltip="更新日志", on_click=app.show_changelog_dialog),
         ]),
         padding=ft.Padding(left=30, top=50, right=30, bottom=10)

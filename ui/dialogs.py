@@ -103,25 +103,24 @@ class DialogManager:
         app.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=20, vertical=24)
         app.global_dialog.content_padding = ft.Padding(20, 20, 20, 10)
 
-        app.global_dialog.title = ft.Text("阅读统计", size=18, weight=ft.FontWeight.BOLD)
+        app.global_dialog.title = ft.Text("阅读统计", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
 
         stat_content = ft.Column([
-            ft.Text(f"卷数：{total_vols}", size=14),
-            ft.Text(f"章节数：{total_chaps}", size=14),
-            ft.Text(f"总字数：{total_words:,}", size=14),
-            ft.Text(f"本卷字数：{vol_total_words:,}", size=14),
-            ft.Text(f"本章字数：{curr_chap_words:,}", size=14),
+            ft.Text(f"卷数：{total_vols}", size=14, color="onSurface"),
+            ft.Text(f"章节数：{total_chaps}", size=14, color="onSurface"),
+            ft.Text(f"总字数：{total_words:,}", size=14, color="onSurface"),
+            ft.Text(f"本卷字数：{vol_total_words:,}", size=14, color="onSurface"),
+            ft.Text(f"本章字数：{curr_chap_words:,}", size=14, color="onSurface"),
             ft.Divider(height=10, thickness=0.5),
-            ft.Text(f"已读：{total_read_words:,}", size=14),
-            ft.Text(f"未读：{total_unread_words:,}", size=14),
-            ft.Text(f"本卷已读：{vol_read_words:,}", size=14),
-            ft.Text(f"本卷未读：{vol_unread_words:,}", size=14),
+            ft.Text(f"已读：{total_read_words:,}", size=14, color="onSurface"),
+            ft.Text(f"未读：{total_unread_words:,}", size=14, color="onSurface"),
+            ft.Text(f"本卷已读：{vol_read_words:,}", size=14, color="onSurface"),
+            ft.Text(f"本卷未读：{vol_unread_words:,}", size=14, color="onSurface"),
         ], tight=True, spacing=8)
 
         app.global_dialog.content = stat_content
-        app.global_dialog.actions = [
-            ft.Button(content=ft.Text("关闭"), on_click=lambda _: app._close_dialog())
-        ]
+        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+        app.global_dialog.actions = [btn_close]
 
         app._open_dialog()
 
@@ -147,9 +146,10 @@ class DialogManager:
 
         app.global_dialog.title = ft.Text("⚙️ AI 接口配置")
         app.global_dialog.content = ft.Column([url_tf, key_tf, model_tf, prompt_tf], tight=True)
+        
         app.global_dialog.actions = [
-            ft.Button(content=ft.Text("保存并关闭"), on_click=save),
-            ft.Button(content=ft.Text("取消"), on_click=lambda _: app._close_dialog())
+            ft.Button(content=ft.Text("保存并关闭", color="onSurface"), on_click=save, style=app.get_action_button_style()),
+            ft.Button(content=ft.Text("取消", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
         ]
         app._open_dialog()
 
@@ -159,7 +159,12 @@ class DialogManager:
         app.global_dialog.inset_padding = None
         app.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.4.4】上帝类代码结构重塑
+        log_text = """【v0.4.5】UI深度沉浸与交互重构
+- (优化) 彻底修复阅读背景切换时，设置抽屉底色未能即时同步刷新（产生残影）的视觉割裂感。
+- (优化) 右上角“更多”菜单（阅读统计、AI设置）现已全面接入主题色彩引擎，弹出菜单将自动跟随正文背景变色。
+- (调整) 将主页的“AI设置”入口统一收拢至阅读界面的右上角菜单中，使主页更为简洁。
+
+【v0.4.4】上帝类代码结构重塑
 - (优化) 对高达 1200 行的主控制器进行视觉层架构大扫除。划定六大专属业务防区 (Region)，彻底根治“找函数如大海捞针”的开发痛点，提升代码长效可维护性。
 - (优化) 重塑生命周期承重墙 `load_chapter` 物理结构，划分布局生成、数据抽取与滚动触发三层物理隔离，防御潜在的时序竞态问题。
 
@@ -170,9 +175,6 @@ class DialogManager:
 【v0.4.2】阅读统计与界面完善
 - (新增) 章节名独立排版：正文内第一行章节名自动识别并独立进行加大加粗处理，左对齐排列，底部增加微小留白，拉开阅读层次感。
 - (新增) 右上角“设置”菜单，加入基于文本去水（剔除空白符）的精确“阅读统计”功能，包含卷/章/全局与卷内维度的详尽已读未读数据。
-
-【v0.4.0】沉浸式阅读交互大升级
-- (新增) 正文尾部追加“下一章”无缝跳转按钮：当阅读到章节最末尾时，无需再唤出底侧菜单即可直接点击进入下一章，彻底打破跨章割裂感，保持心流沉浸。
 """
         app.global_dialog.title = ft.Text("历史更新记录")
         
@@ -201,21 +203,18 @@ class DialogManager:
         target_idx = app.current_chapter_idx
         ch_info = app.engine.chapters_info[target_idx]
         
-        # --- 数据格式向后兼容升级 ---
         target_idx_str = str(target_idx)
         saved_data = app.current_book_summaries.get(target_idx_str, {})
         if isinstance(saved_data, str):
             saved_data = {"main": saved_data}
             app.current_book_summaries[target_idx_str] = saved_data
 
-        # --- 对话与模式状态机 ---
         state = {
             "mode": "main",         
             "chat": [],             
             "is_streaming": False
         }
 
-        # --- UI 控件声明 ---
         chat_list_col = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=15, expand=True)
         
         chat_input = ft.TextField(
@@ -234,8 +233,8 @@ class DialogManager:
 
         btn_regen = ft.Button(content=ft.Text(""), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
         
-        btn_copy = ft.Button(content=ft.Text("复制", color="onSurface"))
-        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog())
+        btn_copy = ft.Button(content=ft.Text("复制", color="onSurface"), style=app.get_action_button_style())
+        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
 
         def update_mode_btns_ui():
             is_dark = app._get_is_dark_mode()
@@ -253,18 +252,9 @@ class DialogManager:
                 )
                 try: btn.update()
                 except Exception: pass
-
-            # 【核心修改点】：增加 radius=30 的圆角边框，让复制和关闭按钮变得圆圆的
-            action_bg = "#2C2C2C" if is_dark else "#F8F8F8"
-            action_style = ft.ButtonStyle(
-                bgcolor=action_bg,
-                color="onSurface",
-                elevation=0,
-                shape=ft.RoundedRectangleBorder(radius=30),
-                padding=ft.Padding.symmetric(horizontal=16, vertical=8)
-            )
-            btn_copy.style = action_style
-            btn_close.style = action_style
+            
+            btn_copy.style = app.get_action_button_style()
+            btn_close.style = app.get_action_button_style()
             try: btn_copy.update()
             except Exception: pass
             try: btn_close.update()
@@ -283,8 +273,8 @@ class DialogManager:
             
             base_content = saved_data.get(state["mode"], "")
             if not base_content:
-                base_content = "暂无内容，请点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
-                btn_regen.content.value = "总结本章"
+                base_content = "请点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
+                btn_regen.content.value = "总结"
             else:
                 btn_regen.content.value = "重新总结"
                 
@@ -302,13 +292,20 @@ class DialogManager:
 
             for msg in state["chat"]:
                 if msg["role"] == "user":
+                    # 【核心修复】：删除 ft.Row 中非法的 padding 参数，将其以 margin 的形式正确转移至包裹内容的 Container 上
                     chat_list_col.controls.append(
-                        ft.Container(
-                            content=ft.Text(msg["content"], color=ft.Colors.WHITE),
-                            bgcolor=ft.Colors.BLUE_600,
-                            padding=10, border_radius=8,
-                            alignment=ft.Alignment.CENTER_RIGHT, 
-                            margin=ft.margin.only(left=40)
+                        ft.Row(
+                            controls=[
+                                ft.Container(
+                                    content=ft.Text(msg["content"], color="onSurface"),
+                                    bgcolor="surface",
+                                    padding=10, 
+                                    border_radius=8,
+                                    shadow=ft.BoxShadow(blur_radius=4, color="#1A000000", offset=ft.Offset(0, 1)),
+                                    margin=ft.margin.only(left=40, right=10) 
+                                )
+                            ],
+                            alignment=ft.MainAxisAlignment.END
                         )
                     )
                 else:
@@ -508,7 +505,7 @@ class DialogManager:
         app.global_dialog.inset_padding = ft.Padding.symmetric(horizontal=12, vertical=24)
         app.global_dialog.content_padding = ft.Padding(left=20, top=15, right=4, bottom=15)
         
-        app.global_dialog.title = ft.Text(f"✨ AI 助手 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD)
+        app.global_dialog.title = ft.Text(f"✨ AI 助手 - {ch_info['title']}", size=16, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Container(
             content=chat_list_col,
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
@@ -517,8 +514,11 @@ class DialogManager:
         app.global_dialog.actions = [
             ft.Container(
                 content=ft.Column([
-                    ft.Row([mode_btn_main, mode_btn_char, mode_btn_clue], alignment=ft.MainAxisAlignment.CENTER),
-                    ft.Row([btn_regen, btn_copy, btn_close], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([
+                        ft.Column([mode_btn_main, btn_regen], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
+                        ft.Column([mode_btn_char, btn_copy], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
+                        ft.Column([mode_btn_clue, btn_close], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
+                    ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
                     ft.Row([chat_input, send_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
                 ], tight=True, spacing=10),
                 width=600

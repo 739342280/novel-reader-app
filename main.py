@@ -31,7 +31,7 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.4"  
+        self.version = "0.4.5"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
 
@@ -726,6 +726,22 @@ class NovelReaderApp:
 
     # region 4. 主题排版与 UI 渲染刷子
     # =========================================================================
+    
+    def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface"):
+        is_dark = self._get_is_dark_mode()
+        if is_dark:
+            btn_bg_c = "#2C2C2C" 
+        else:
+            bg_c = self.bg_color
+            if bg_c == "#FFFFFF": btn_bg_c = "#F8F8F8"       
+            elif bg_c == "#D4A373": btn_bg_c = "#E8B787"       
+            elif bg_c == "#CBB28C": btn_bg_c = "#DFC6A0"       
+            elif bg_c == "#E8DCC8": btn_bg_c = "#F7EBD7"       
+            elif bg_c == "#F5F5DC": btn_bg_c = "#FFFFE6"       
+            elif bg_c == "#CCE8CF": btn_bg_c = "#E0FCE3"       
+            else: btn_bg_c = "#F0F0F0"
+        return ft.ButtonStyle(bgcolor=btn_bg_c, color=text_color, elevation=0, shape=ft.RoundedRectangleBorder(radius=30), padding=padding)
+
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
         if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
@@ -933,7 +949,6 @@ class NovelReaderApp:
             text_c = "#B0B0B0"             
             top_book_c = ft.Colors.GREY_500
             top_chap_c = ft.Colors.WHITE   
-            btn_bg_c = "#2C2C2C" 
         else:
             bg_c = self.bg_color
             bg_i = self.bg_image
@@ -942,26 +957,26 @@ class NovelReaderApp:
             top_book_c = ft.Colors.GREY_600
             top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
             
-            if bg_c == "#FFFFFF":
-                btn_bg_c = "#F8F8F8"       
-            elif bg_c == "#D4A373":
-                btn_bg_c = "#E8B787"       
-            elif bg_c == "#CBB28C":
-                btn_bg_c = "#DFC6A0"       
-            elif bg_c == "#E8DCC8":
-                btn_bg_c = "#F7EBD7"       
-            elif bg_c == "#F5F5DC":
-                btn_bg_c = "#FFFFE6"       
-            elif bg_c == "#CCE8CF":
-                btn_bg_c = "#E0FCE3"       
-            else:
-                btn_bg_c = "#F0F0F0"       
-            
         if hasattr(self, "reading_base_layer"):
             self.reading_base_layer.bgcolor = bg_c
             self.reading_base_layer.image = ft.DecorationImage(src=bg_i, repeat="repeat") if bg_i else None
             try: self.reading_base_layer.update()
             except Exception: pass
+
+        for sheet in [getattr(self, "global_dialog", None), getattr(self, "settings_sheet", None), getattr(self, "toc_sheet", None)]:
+            if sheet:
+                sheet.bgcolor = menu_c
+                if getattr(sheet, "content", None) and isinstance(sheet.content, ft.Container):
+                    sheet.content.bgcolor = menu_c
+                    if isinstance(sheet, ft.BottomSheet):
+                        # 【核心修复】：修复 DeprecationWarning，使用新版 BorderRadius.only()
+                        sheet.content.border_radius = ft.BorderRadius.only(top_left=28, top_right=28)
+                    else:
+                        sheet.content.border_radius = 28
+                    try: sheet.content.update()
+                    except Exception: pass
+                try: sheet.update()
+                except Exception: pass
 
         if hasattr(self, "chapter_title_control") and self.chapter_title_control:
             if isinstance(self.chapter_title_control.content, ft.Text):
@@ -1026,7 +1041,8 @@ class NovelReaderApp:
             (getattr(self, "btn_next", None), pad_12),
             (getattr(self, "btn_toc", None), pad_8),
             (getattr(self, "theme_btn", None), pad_8),
-            (getattr(self, "btn_settings", None), pad_8)
+            (getattr(self, "btn_settings", None), pad_8),
+            (getattr(self, "btn_copy_current", None), pad_8) 
         ]:
             if btn:
                 if getattr(btn, "content", None) and isinstance(btn.content, ft.Text):
@@ -1035,12 +1051,7 @@ class NovelReaderApp:
                     except Exception: pass
                 
                 btn.icon_color = top_chap_c
-                btn.style = ft.ButtonStyle(
-                    color=top_chap_c, 
-                    bgcolor=btn_bg_c,  
-                    elevation=0,       
-                    padding=pad
-                )
+                btn.style = self.get_action_button_style(pad, text_color=top_chap_c)
                 try: btn.update()
                 except Exception: pass
     # endregion
