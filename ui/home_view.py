@@ -5,7 +5,8 @@ def get_home_view(app):
         content=ft.Row([
             ft.Text("📚 我的书架", size=28, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE),
             ft.Container(expand=True),
-            # 【移除点】这里不再显示 AI 设置
+            # 【核心注入点】：在右上角新增全局设置入口，调用独立的备份恢复面板
+            ft.IconButton(icon=ft.Icons.SETTINGS, tooltip="全局设置", on_click=app.show_global_settings_dialog),
             ft.IconButton(icon=ft.Icons.HISTORY, tooltip="更新日志", on_click=app.show_changelog_dialog),
         ]),
         padding=ft.Padding(left=30, top=50, right=30, bottom=10)

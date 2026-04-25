@@ -108,12 +108,12 @@ jobs:
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
     
+    # 【核心修改点 1】：追加 --icon "assets/icon.png"
     - name: Build Flet APK
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
+        flet build apk --product "小说智读" --icon "assets/icon.png" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store $GITHUB_WORKSPACE/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
     
-    # 【核心修改点】：重命名输出为纯英文 NovelReader，避开 GitHub 吞字 Bug
     - name: Rename APKs
       run: |
         shopt -s nullglob
@@ -150,11 +150,14 @@ jobs:
 
     - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: NovelReader_v*.apk
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: bash
+      run: |
+        shopt -s nullglob
+        for file in NovelReader_v*.apk; do
+          gh release upload "${{ github.ref_name }}" "$file" --clobber
+        done
 
 
   # =========================================================
@@ -190,19 +193,19 @@ jobs:
         pip install flet==0.84.0 flet-desktop==0.84.0 pyinstaller
         pip install -r requirements.txt || echo "No requirements.txt"
 
+    # 【核心修改点 2】：pyinstaller 增加 --icon "assets/icon.ico"
     - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
       env:
         PYTHONUTF8: "1"  
       run: |
         rm -rf dist build
-        pyinstaller --noconsole --windowed --onedir --name "小说智读" --collect-all flet --collect-all flet_desktop main.py
+        pyinstaller --noconsole --windowed --onedir --name "小说智读" --icon "assets/icon.ico" --collect-all flet --collect-all flet_desktop main.py
         
         if [ -d "assets" ]; then cp -R assets dist/小说智读/; fi
         if [ -d "fonts" ]; then cp -R fonts dist/小说智读/; fi
         if [ -d "images" ]; then cp -R images dist/小说智读/; fi
         
-    # 【核心修改点】：Inno Setup 产出改为纯英文 NovelReader_..._Installer.exe
     - name: Build Installer Setup
       shell: pwsh
       run: |
@@ -212,7 +215,7 @@ jobs:
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
-    # 【核心修改点】：Flet pack 产出改为纯英文 NovelReader_..._Portable.exe
+    # 【核心修改点 3】：flet pack 增加 --icon "assets/icon.ico"
     - name: Build Portable EXE
       shell: bash
       env:
@@ -222,7 +225,7 @@ jobs:
         mkdir dist
         rm -rf build
         
-        PACK_CMD="flet pack main.py --name \"NovelReader_v${{ env.APP_VERSION }}_Portable\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
+        PACK_CMD="flet pack main.py --name \"NovelReader_v${{ env.APP_VERSION }}_Portable\" --icon \"assets/icon.ico\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
         
         if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
         if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
@@ -248,16 +251,22 @@ jobs:
 
     - name: Publish Portable EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: dist/NovelReader_v*_Portable.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: pwsh
+      run: |
+        $portable = Get-ChildItem -Path dist -Filter "NovelReader_v*_Portable.exe" | Select-Object -First 1
+        if ($portable) {
+            gh release upload "${env:GITHUB_REF_NAME}" $portable.FullName --clobber
+        }
 
     - name: Publish Installer EXE to Release
       if: startsWith(github.ref, 'refs/tags/v')
-      uses: softprops/action-gh-release@v2
-      with:
-        files: dist_installer/NovelReader_v*_Installer.exe
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      shell: pwsh
+      run: |
+        $installer = Get-ChildItem -Path dist_installer -Filter "NovelReader_v*_Installer.exe" | Select-Object -First 1
+        if ($installer) {
+            gh release upload "${env:GITHUB_REF_NAME}" $installer.FullName --clobber
+        }

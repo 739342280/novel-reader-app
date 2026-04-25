@@ -38,7 +38,7 @@ class DialogManager:
             style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_50, color=ft.Colors.BLUE_900)
         )
 
-        app.global_dialog.title = ft.Text("书籍管理")
+        app.global_dialog.title = ft.Text("书籍管理", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Column([
             rename_tf,
             ft.Container(height=5),
@@ -144,7 +144,7 @@ class DialogManager:
             app._close_dialog()
             app.show_snack_bar("✅ AI 配置已持久化保存")
 
-        app.global_dialog.title = ft.Text("⚙️ AI 接口配置")
+        app.global_dialog.title = ft.Text("⚙️ AI 接口配置", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Column([url_tf, key_tf, model_tf, prompt_tf], tight=True)
         
         app.global_dialog.actions = [
@@ -154,29 +154,49 @@ class DialogManager:
         app._open_dialog()
 
     @staticmethod
+    def show_global_settings_dialog(app, e):
+        app.global_dialog.modal = False
+        app.global_dialog.inset_padding = None
+        app.global_dialog.content_padding = ft.Padding(left=20, top=15, right=20, bottom=15)
+
+        backup_row = ft.Row([
+            ft.Button(content=ft.Text("导出备份", color="onSurface"), icon=ft.Icons.UPLOAD, on_click=app.export_app_data, style=app.get_action_button_style()),
+            ft.Button(content=ft.Text("恢复备份", color="onSurface"), icon=ft.Icons.DOWNLOAD, on_click=app.import_app_data, style=app.get_action_button_style())
+        ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
+
+        app.global_dialog.title = ft.Text("⚙️ 全局设置", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
+        app.global_dialog.content = ft.Column([
+            ft.Text("数据安全", weight=ft.FontWeight.BOLD, size=14, color="onSurface"),
+            ft.Text("本地备份包含所有书籍、阅读进度及 AI 总结数据", size=12, color=ft.Colors.GREY_500),
+            ft.Container(height=5),
+            backup_row
+        ], tight=True)
+        
+        app.global_dialog.actions = [
+            ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+        ]
+        app._open_dialog()
+
+    @staticmethod
     def show_changelog_dialog(app, e):
         app.global_dialog.modal = False
         app.global_dialog.inset_padding = None
         app.global_dialog.content_padding = ft.Padding(left=20, top=24, right=4, bottom=24)
 
-        log_text = """【v0.4.5】UI深度沉浸与交互重构
-- (优化) 彻底修复阅读背景切换时，设置抽屉底色未能即时同步刷新（产生残影）的视觉割裂感。
-- (优化) 右上角“更多”菜单（阅读统计、AI设置）现已全面接入主题色彩引擎，弹出菜单将自动跟随正文背景变色。
-- (调整) 将主页的“AI设置”入口统一收拢至阅读界面的右上角菜单中，使主页更为简洁。
+        log_text = """【v0.4.5】功能扩展与交互优化
+- (新增) 键盘快捷键控制：PC端支持左右键切换章节，上下键与空格键控制正文平滑滚动，大幅提升桌面端手感。
+- (新增) 应用数据全局备份与恢复：支持一键导出所有 JSON 配置、书籍文件及 AI 总结记录，换机无忧。
+- (优化) 图标推进：完成 Android 与 Windows 端的软件图标适配。
 
 【v0.4.4】上帝类代码结构重塑
 - (优化) 对高达 1200 行的主控制器进行视觉层架构大扫除。划定六大专属业务防区 (Region)，彻底根治“找函数如大海捞针”的开发痛点，提升代码长效可维护性。
-- (优化) 重塑生命周期承重墙 `load_chapter` 物理结构，划分布局生成、数据抽取与滚动触发三层物理隔离，防御潜在的时序竞态问题。
+- (优化) 重塑生命周期承重墙 `load_chapter` 物理结构，防御潜在的时序竞态问题。
 
 【v0.4.3】解析提速与架构打通
 - (新增) TXT 目录结构缓存：首次解析书籍后将自动在本地生成目录索引。下次阅读同一本书时，将彻底跳过耗时的正则扫描流程，实现秒开阅读。
 - (优化) 核心引擎解耦：支持从外部注入预解析数据，大幅降低 CPU 开销。
-
-【v0.4.2】阅读统计与界面完善
-- (新增) 章节名独立排版：正文内第一行章节名自动识别并独立进行加大加粗处理，左对齐排列，底部增加微小留白，拉开阅读层次感。
-- (新增) 右上角“设置”菜单，加入基于文本去水（剔除空白符）的精确“阅读统计”功能，包含卷/章/全局与卷内维度的详尽已读未读数据。
 """
-        app.global_dialog.title = ft.Text("历史更新记录")
+        app.global_dialog.title = ft.Text("历史更新记录", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         
         app.global_dialog.content = ft.Container(
             content=ft.Column(
@@ -191,8 +211,14 @@ class DialogManager:
             padding=0,
             height=400, width=500
         )
+        
+        # 【核心修复点】：挂载 style=app.get_action_button_style() 并对齐文本颜色
         app.global_dialog.actions = [
-            ft.Button(content=ft.Text("关闭"), on_click=lambda _: app._close_dialog())
+            ft.Button(
+                content=ft.Text("关闭", color="onSurface"), 
+                on_click=lambda _: app._close_dialog(), 
+                style=app.get_action_button_style()
+            )
         ]
         app._open_dialog()
 
@@ -292,7 +318,6 @@ class DialogManager:
 
             for msg in state["chat"]:
                 if msg["role"] == "user":
-                    # 【核心修复】：删除 ft.Row 中非法的 padding 参数，将其以 margin 的形式正确转移至包裹内容的 Container 上
                     chat_list_col.controls.append(
                         ft.Row(
                             controls=[

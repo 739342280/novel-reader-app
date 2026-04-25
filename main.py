@@ -5,6 +5,7 @@ import threading
 import asyncio
 import shutil
 import time  
+import zipfile
 from datetime import datetime
 import traceback
 
@@ -34,6 +35,10 @@ class NovelReaderApp:
         self.version = "0.4.5"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
+        
+        try:
+            self.page.window.icon = "icon.png"
+        except Exception: pass
 
         # --- 1. 全局引擎与 UI 底盘配置 ---
         self.engine = NovelEngine()
@@ -78,9 +83,10 @@ class NovelReaderApp:
         self.follow_system_theme = True
         self.manual_theme_mode = "light" 
 
-        # --- 4. 弹窗管控与 AI 配置 ---
+        # --- 4. 弹窗管控 ---
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0  
+        
         self.ai_config = {
             "url": "https://api.deepseek.com/v1/chat/completions",
             "key": "",
@@ -108,6 +114,8 @@ class NovelReaderApp:
         self._load_config_from_appdata()
         self._load_bookshelf()
         
+        self.page.on_keyboard_event = self._on_keyboard_control
+        
         self.page.on_platform_brightness_change = self._on_os_theme_change
         self.page.on_app_lifecycle_state_change = self._on_app_lifecycle
         self.page.on_route_change = self.route_change
@@ -119,7 +127,6 @@ class NovelReaderApp:
         self.route_change(None)
 
     # region 1. 生命周期与原生路由管理
-    # =========================================================================
     def route_change(self, e):
         current_route = self.page.route
         self.page.views.clear()
@@ -128,7 +135,8 @@ class NovelReaderApp:
         
         if current_route == "/reader":
             self.page.views.append(get_reader_view(self))
-            
+        
+        self._apply_theme_colors()
         self.page.update()
 
     def view_pop(self, view):
@@ -154,10 +162,24 @@ class NovelReaderApp:
     def _on_app_lifecycle(self, e):
         if "RESUME" not in str(e.state).upper():
             self.save_current_progress()
+
+    def _on_keyboard_control(self, e: ft.KeyboardEvent):
+        if self.page.route != "/reader": return
+        
+        if e.key == "Arrow Right":
+            self.load_next()
+        elif e.key == "Arrow Left":
+            self.load_prev()
+            
+        elif e.key in ["Arrow Down", " "]:
+            if hasattr(self, "text_scroll_col"):
+                self.page.run_task(self.text_scroll_col.scroll_to, delta=200, duration=100)
+        elif e.key == "Arrow Up":
+            if hasattr(self, "text_scroll_col"):
+                self.page.run_task(self.text_scroll_col.scroll_to, delta=-200, duration=100)
     # endregion
 
     # region 2. 数据持久化与存储总线
-    # =========================================================================
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
@@ -214,6 +236,51 @@ class NovelReaderApp:
 
     def _save_book_summaries(self):
         StorageManager.save_book_summaries(self.current_book_path, self.current_book_summaries)
+
+    async def export_app_data(self, e):
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            suggested_name = f"小说智读备份_{timestamp}.zip"
+            
+            save_path = await ft.FilePicker().save_file(
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["zip"],
+                file_name=suggested_name
+            )
+            
+            if save_path:
+                base_dir = StorageManager.get_base_dir()
+                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for root, dirs, files in os.walk(base_dir):
+                        for file in files:
+                            abs_path = os.path.join(root, file)
+                            if abs_path == save_path: continue
+                            rel_path = os.path.relpath(abs_path, base_dir)
+                            zipf.write(abs_path, rel_path)
+                self.show_snack_bar("✅ 应用数据已完整导出备份")
+                self._close_dialog()
+        except Exception as ex:
+            self.show_snack_bar(f"❌ 导出失败: {str(ex)}")
+
+    async def import_app_data(self, e):
+        try:
+            files = await ft.FilePicker().pick_files(
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["zip"]
+            )
+            if files and len(files) > 0:
+                zip_path = files[0].path
+                if zip_path:
+                    base_dir = StorageManager.get_base_dir()
+                    with zipfile.ZipFile(zip_path, 'r') as zipf:
+                        zipf.extractall(base_dir)
+                    self.show_snack_bar("✅ 数据已恢复，请重启应用生效")
+                    self._load_config_from_appdata()
+                    self._load_bookshelf()
+                    self.refresh_bookshelf_ui()
+                    self._close_dialog()
+        except Exception as ex:
+            self.show_snack_bar(f"❌ 恢复失败: {str(ex)}")
 
     def save_current_progress(self):
         if getattr(self, "current_book_path", "") == "":
@@ -729,17 +796,26 @@ class NovelReaderApp:
     
     def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface"):
         is_dark = self._get_is_dark_mode()
+        
+        # 【核心修复点】：判定当前是否处于阅读页，隔离污染
+        in_reader = getattr(self.page, "route", "/") == "/reader"
+        
         if is_dark:
             btn_bg_c = "#2C2C2C" 
         else:
-            bg_c = self.bg_color
-            if bg_c == "#FFFFFF": btn_bg_c = "#F8F8F8"       
-            elif bg_c == "#D4A373": btn_bg_c = "#E8B787"       
-            elif bg_c == "#CBB28C": btn_bg_c = "#DFC6A0"       
-            elif bg_c == "#E8DCC8": btn_bg_c = "#F7EBD7"       
-            elif bg_c == "#F5F5DC": btn_bg_c = "#FFFFE6"       
-            elif bg_c == "#CCE8CF": btn_bg_c = "#E0FCE3"       
-            else: btn_bg_c = "#F0F0F0"
+            if not in_reader:
+                # 首页强制使用标准浅灰，杜绝“护眼绿”污染
+                btn_bg_c = "#F0F0F0"
+            else:
+                bg_c = self.bg_color
+                if bg_c == "#FFFFFF": btn_bg_c = "#F8F8F8"       
+                elif bg_c == "#D4A373": btn_bg_c = "#E8B787"       
+                elif bg_c == "#CBB28C": btn_bg_c = "#DFC6A0"       
+                elif bg_c == "#E8DCC8": btn_bg_c = "#F7EBD7"       
+                elif bg_c == "#F5F5DC": btn_bg_c = "#FFFFE6"       
+                elif bg_c == "#CCE8CF": btn_bg_c = "#E0FCE3"       
+                else: btn_bg_c = "#F0F0F0"
+                
         return ft.ButtonStyle(bgcolor=btn_bg_c, color=text_color, elevation=0, shape=ft.RoundedRectangleBorder(radius=30), padding=padding)
 
     def update_reader_appearance(self, **kwargs):
@@ -963,13 +1039,16 @@ class NovelReaderApp:
             try: self.reading_base_layer.update()
             except Exception: pass
 
+        in_reader = getattr(self.page, "route", "/") == "/reader"
+        dialog_bg_c = menu_c if in_reader else "surface"
+
         for sheet in [getattr(self, "global_dialog", None), getattr(self, "settings_sheet", None), getattr(self, "toc_sheet", None)]:
             if sheet:
-                sheet.bgcolor = menu_c
+                target_c = dialog_bg_c if sheet == getattr(self, "global_dialog", None) else menu_c
+                sheet.bgcolor = target_c
                 if getattr(sheet, "content", None) and isinstance(sheet.content, ft.Container):
-                    sheet.content.bgcolor = menu_c
+                    sheet.content.bgcolor = target_c
                     if isinstance(sheet, ft.BottomSheet):
-                        # 【核心修复】：修复 DeprecationWarning，使用新版 BorderRadius.only()
                         sheet.content.border_radius = ft.BorderRadius.only(top_left=28, top_right=28)
                     else:
                         sheet.content.border_radius = 28
@@ -977,6 +1056,13 @@ class NovelReaderApp:
                     except Exception: pass
                 try: sheet.update()
                 except Exception: pass
+                
+        if hasattr(self, "page") and self.page.theme:
+            self.page.theme.popup_menu_theme = ft.PopupMenuTheme(
+                color=menu_c
+            )
+            try: self.page.update()
+            except Exception: pass
 
         if hasattr(self, "chapter_title_control") and self.chapter_title_control:
             if isinstance(self.chapter_title_control.content, ft.Text):
@@ -1133,6 +1219,9 @@ class NovelReaderApp:
 
     def show_settings_dialog(self, e):
         DialogManager.show_settings_dialog(self, e)
+
+    def show_global_settings_dialog(self, e):
+        DialogManager.show_global_settings_dialog(self, e)
 
     def show_changelog_dialog(self, e):
         DialogManager.show_changelog_dialog(self, e)
