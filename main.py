@@ -32,7 +32,7 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.5"  
+        self.version = "0.4.6"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
         
@@ -107,7 +107,12 @@ class NovelReaderApp:
                 "# 输出限制\n"
                 "- 字数控制在300字以内。\n"
                 "- 严禁评价剧情“好不好看”，只做客观梳理。"
-            )
+            ),
+            "embed_mode": "云端 API",
+            "embed_url": "https://api.deepseek.com/v1/embeddings",
+            "embed_key": "",
+            "embed_model": "text-embedding-3-small",
+            "local_embed_path": ""
         }
 
         # --- 5. 生命周期拉起与路由挂载 ---
@@ -145,7 +150,6 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
-        # 【还原】：切除异步防抖，回归最干净的瞬时判断逻辑
         dialogs_to_check = [
             getattr(self, "global_dialog", None),
             getattr(self, "toc_sheet", None),
@@ -185,7 +189,6 @@ class NovelReaderApp:
             self.save_current_progress()
 
     def _on_keyboard_control(self, e: ft.KeyboardEvent):
-        # 【还原】：切除异步防抖，回归纯粹的同步判断拦截
         if e.key == "Escape":
             dialogs_to_check = [
                 getattr(self, "global_dialog", None),
@@ -220,7 +223,7 @@ class NovelReaderApp:
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
-            for k in ["url", "key", "model", "prompt"]:
+            for k in ["url", "key", "model", "prompt", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path"]:
                 if k in data: self.ai_config[k] = data[k]
             bg_c = data.get("bg_color")
             self.bg_color = bg_c if bg_c else "#FFFFFF"
@@ -366,6 +369,61 @@ class NovelReaderApp:
         self.bookshelf = [b for b in self.bookshelf if b['path'] != path]
         self._save_bookshelf()
         self.route_change(None)
+
+    # --- 【新增】：探测本地 models 文件夹并提取可用模型 ---
+    def get_local_models(self):
+        models_dir = os.path.join(StorageManager.get_base_dir(), "models")
+        if not os.path.exists(models_dir):
+            return []
+        try:
+            return [f for f in os.listdir(models_dir) if os.path.isfile(os.path.join(models_dir, f))]
+        except Exception:
+            return []
+
+    # --- 【新增】：安全持久化导入本地大模型 ---
+    async def trigger_model_picker(self, dropdown_control):
+        try:
+            files = await ft.FilePicker().pick_files(
+                file_type=ft.FilePickerFileType.CUSTOM, 
+                allowed_extensions=["onnx", "gguf", "bin", "pt", "safetensors"]
+            )
+            
+            if files and len(files) > 0:
+                picked_path = files[0].path
+                original_name = files[0].name
+                
+                if not picked_path:
+                    self.show_snack_bar("获取文件路径失败，请尝试更换目录。")
+                    return
+
+                models_dir = os.path.join(StorageManager.get_base_dir(), "models")
+                if not os.path.exists(models_dir):
+                    try: 
+                        os.makedirs(models_dir, exist_ok=True)
+                    except Exception as create_ex:
+                        self.show_snack_bar(f"建立模型存放目录失败: {str(create_ex)}")
+                        return
+
+                persistent_path = os.path.join(models_dir, original_name)
+
+                try:
+                    shutil.copy2(picked_path, persistent_path)
+                except Exception as copy_ex:
+                    self.show_snack_bar(f"模型文件转存失败: {str(copy_ex)}")
+                    return
+
+                self.show_snack_bar(f"✅ 模型 {original_name} 导入成功")
+                
+                # 动态刷新 UI 下拉框内容并自动选中
+                if dropdown_control:
+                    opts = [ft.dropdown.Option(f) for f in self.get_local_models()]
+                    dropdown_control.options = opts
+                    dropdown_control.value = original_name
+                    try: dropdown_control.update()
+                    except Exception: pass
+                    
+        except Exception as ex:
+            self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
 
     async def trigger_file_picker(self, e):
         try:
@@ -1149,7 +1207,6 @@ class NovelReaderApp:
             try: self.reader_bottom_bar.update()
             except Exception: pass
 
-        # 【还原】：移除 on_cancelled 原生拦截污染
         if hasattr(self, "btn_more") and self.btn_more:
             self.btn_more.icon_color = top_chap_c
             try: self.btn_more.update()
@@ -1181,7 +1238,6 @@ class NovelReaderApp:
     # region 5. 弹窗抽屉与浮层调度
     # =========================================================================
     def _universal_open(self, control):
-        # 【还原】：移除 on_dismiss 原生拦截污染，纯正地使用 page.open
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
             self.page.open(control)
         else:
