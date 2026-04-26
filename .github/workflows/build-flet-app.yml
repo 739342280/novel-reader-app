@@ -18,7 +18,7 @@ env:
 
 jobs:
   # =========================================================
-  # 任务 1：极速占位（只需5秒，提前建好 Release 页面供后续任务上传）
+  # 任务 1：极速占位
   # =========================================================
   prepare-release:
     name: Prepare Release Page
@@ -44,7 +44,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
   # =========================================================
-  # 任务 2：安卓端独立构建
+  # 任务 2：安卓端独立构建 (官方 .so 优雅偷渡版)
   # =========================================================
   build-android:
     name: Build Android APK
@@ -68,11 +68,41 @@ jobs:
       with:
         python-version: '3.12'
         cache: 'pip' 
+
+    # 💥 战术剥离：因为 PyPI 上依然没有安卓版的 pip 安装包，
+    # 我们必须在此步骤把 sqlite-vec 从 requirements.txt 删掉，防止 pip 报错崩溃。
+    - name: Patch requirements for Android
+      run: |
+        if [ -f "requirements.txt" ]; then
+          sed -i '/sqlite-vec/d' requirements.txt
+        fi
     
     - name: Install dependencies
       run: |
         pip install flet==0.84.0
         pip install -r requirements.txt || echo "No requirements.txt"
+
+    # 💥 核心替换：直接从官方下载预编译的 Android aarch64 动态库！
+    - name: Download Official sqlite-vec Android Binary
+      run: |
+        echo "Downloading official pre-compiled sqlite-vec for Android..."
+        
+        # 尝试动态获取最新版的 aarch64 包，若失败则回退到稳定的 v0.1.9 版
+        ASSET_URL=$(curl -s https://api.github.com/repos/asg017/sqlite-vec/releases/latest | grep "browser_download_url" | grep "android" | grep -E "aarch64|arm64" | cut -d '"' -f 4)
+        if [ -z "$ASSET_URL" ]; then
+          echo "Fallback to stable release v0.1.9..."
+          ASSET_URL="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-v0.1.9-loadable-android-aarch64.tar.gz"
+        fi
+        
+        echo "Downloading from $ASSET_URL"
+        wget -qO sqlite-vec-android.tar.gz $ASSET_URL
+        
+        mkdir -p assets
+        tar -xzf sqlite-vec-android.tar.gz
+        
+        # 官方压缩包里通常是 vec0.so，我们把它改名并放入 assets 供 Flet 打包
+        find . -name "*.so" -exec mv {} assets/libsqlite_vec.so \;
+        echo "✅ 官方 Android 动态库已准备就绪！"
 
     - name: Cache Flet templates
       uses: actions/cache@v4
@@ -86,17 +116,6 @@ jobs:
         distribution: 'temurin'
         java-version: '21'
         
-    - name: Setup Gradle
-      uses: gradle/actions/setup-gradle@v4
-    
-    - name: Setup Android SDK
-      uses: android-actions/setup-android@v3
-    
-    - name: Install Android NDK
-      run: |
-        sdkmanager --install "ndk;27.0.12077973" --channel=0
-        echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/27.0.12077973" >> $GITHUB_ENV
-    
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
@@ -108,7 +127,6 @@ jobs:
       run: |
         echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > $GITHUB_WORKSPACE/release.keystore
     
-    # 【核心修复 1】：删除了导致 Flet 0.84.0 崩溃的 --icon 参数。Flet 会自动扫描 assets/icon.png！
     - name: Build Flet APK
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
@@ -140,14 +158,6 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    - name: Upload x86_64 APK
-      uses: actions/upload-artifact@v7
-      with:
-        name: NovelReader_v${{ env.APP_VERSION }}_x86_64.apk
-        path: NovelReader_v*x86_64.apk
-        if-no-files-found: warn
-        archive: false
-
     - name: Publish APKs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       env:
@@ -158,7 +168,6 @@ jobs:
         for file in NovelReader_v*.apk; do
           gh release upload "${{ github.ref_name }}" "$file" --clobber
         done
-
 
   # =========================================================
   # 任务 3：Windows 独立构建
@@ -187,7 +196,6 @@ jobs:
         python-version: '3.12' 
         cache: 'pip' 
     
-    # 【核心修复 2】：追加了 Pillow 图像处理库，确保 PyInstaller 能够正确读取并转化 ico 图标格式！
     - name: Install dependencies
       shell: bash
       run: |

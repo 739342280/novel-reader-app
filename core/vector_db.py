@@ -1,6 +1,6 @@
 import sqlite3
-import sqlite_vec
 import os
+import struct
 
 class VectorDB:
     def __init__(self, db_path: str):
@@ -8,8 +8,27 @@ class VectorDB:
         os.makedirs(os.path.dirname(os.path.abspath(self.db_path)), exist_ok=True)
         self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self.conn.enable_load_extension(True)
-        sqlite_vec.load(self.conn)
+        
+        # 💥 双端探针加载机制：优先探查 assets 目录下是否有官方预编译包
+        so_path = os.path.abspath(os.path.join("assets", "libsqlite_vec.so"))
+        
+        if os.path.exists(so_path):
+            # 这是在 Android 环境下，强行加载 assets 里下载好的官方 .so
+            try:
+                self.conn.load_extension(so_path)
+            except Exception as e:
+                raise Exception(f"底层预编译 .so 挂载失败: {e}")
+        else:
+            # 这是在 Windows 环境下，正常使用 pip install 的扩展
+            import sqlite_vec
+            sqlite_vec.load(self.conn)
+            
         self.conn.enable_load_extension(False)
+
+    # 💥 手动实现序列化：在安卓上脱离了 sqlite_vec 的 Python 包层，需纯原生写入二进制
+    @staticmethod
+    def _serialize_float32(vector: list[float]) -> bytes:
+        return struct.pack(f"{len(vector)}f", *vector)
 
     def init_tables(self, dimension: int):
         with self.conn:
@@ -39,7 +58,7 @@ class VectorDB:
                 
                 self.conn.execute(
                     "INSERT INTO vec_chunks (rowid, embedding) VALUES (?, ?)",
-                    (row_id, sqlite_vec.serialize_float32(embedding))
+                    (row_id, self._serialize_float32(embedding))
                 )
 
     def search(self, query_embedding: list[float], top_k: int = 5, max_chapter_idx: int = None) -> list[dict]:
@@ -47,12 +66,10 @@ class VectorDB:
         余弦相似度检索
         :param max_chapter_idx: 时间线防剧透隔离。如果设置了该值，则绝对不返回未来的章节切块。
         """
-        query_vec = sqlite_vec.serialize_float32(query_embedding)
+        query_vec = self._serialize_float32(query_embedding)
         
         if max_chapter_idx is not None:
-            # 💥 终极修复：绝对精准的“过滤前置” (Pre-filtering)
-            # 逻辑：先在普通的元数据表里锁死 <= 目标章节，然后再对合法的切块计算向量距离。
-            # 彻底根治了超长篇小说中，早期伏笔被后期海量出场挤压导致“找不出来”的致命缺陷。
+            # 绝对精准的“过滤前置” (Pre-filtering)
             cursor = self.conn.execute(
                 """
                 SELECT 
