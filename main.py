@@ -115,7 +115,6 @@ class NovelReaderApp:
         self._load_bookshelf()
         
         self.page.on_keyboard_event = self._on_keyboard_control
-        
         self.page.on_platform_brightness_change = self._on_os_theme_change
         self.page.on_app_lifecycle_state_change = self._on_app_lifecycle
         self.page.on_route_change = self.route_change
@@ -129,19 +128,41 @@ class NovelReaderApp:
     # region 1. 生命周期与原生路由管理
     def route_change(self, e):
         current_route = self.page.route
+        
+        if current_route == "/":
+            self.save_current_progress()
+            if getattr(self, "is_immersive", False):
+                self.toggle_immersive(None)
+                
         self.page.views.clear()
         
         self.page.views.append(get_home_view(self))
         
         if current_route == "/reader":
             self.page.views.append(get_reader_view(self))
-        
+            
         self._apply_theme_colors()
         self.page.update()
 
-    def view_pop(self, view):
-        self.page.views.pop()
-        if self.page.views:
+    def view_pop(self, e):
+        # 【还原】：切除异步防抖，回归最干净的瞬时判断逻辑
+        dialogs_to_check = [
+            getattr(self, "global_dialog", None),
+            getattr(self, "toc_sheet", None),
+            getattr(self, "settings_sheet", None)
+        ]
+        for dlg in dialogs_to_check:
+            if dlg and getattr(dlg, "open", False):
+                self._universal_close(dlg)
+                return
+
+        if getattr(self.page, "route", "/") == "/reader":
+            self.save_current_progress()
+            if getattr(self, "is_immersive", False):
+                self.toggle_immersive(None)
+
+        if len(self.page.views) > 1:
+            self.page.views.pop()
             top_view = self.page.views[-1]
             self.page.run_task(self.page.push_route, top_view.route)
 
@@ -164,6 +185,22 @@ class NovelReaderApp:
             self.save_current_progress()
 
     def _on_keyboard_control(self, e: ft.KeyboardEvent):
+        # 【还原】：切除异步防抖，回归纯粹的同步判断拦截
+        if e.key == "Escape":
+            dialogs_to_check = [
+                getattr(self, "global_dialog", None),
+                getattr(self, "toc_sheet", None),
+                getattr(self, "settings_sheet", None)
+            ]
+            for dlg in dialogs_to_check:
+                if dlg and getattr(dlg, "open", False):
+                    self._universal_close(dlg)
+                    return
+
+            if self.page.route == "/reader":
+                self.go_back_home(None)
+            return
+
         if self.page.route != "/reader": return
         
         if e.key == "Arrow Right":
@@ -797,14 +834,12 @@ class NovelReaderApp:
     def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface"):
         is_dark = self._get_is_dark_mode()
         
-        # 【核心修复点】：判定当前是否处于阅读页，隔离污染
         in_reader = getattr(self.page, "route", "/") == "/reader"
         
         if is_dark:
             btn_bg_c = "#2C2C2C" 
         else:
             if not in_reader:
-                # 首页强制使用标准浅灰，杜绝“护眼绿”污染
                 btn_bg_c = "#F0F0F0"
             else:
                 bg_c = self.bg_color
@@ -1114,6 +1149,7 @@ class NovelReaderApp:
             try: self.reader_bottom_bar.update()
             except Exception: pass
 
+        # 【还原】：移除 on_cancelled 原生拦截污染
         if hasattr(self, "btn_more") and self.btn_more:
             self.btn_more.icon_color = top_chap_c
             try: self.btn_more.update()
@@ -1145,31 +1181,21 @@ class NovelReaderApp:
     # region 5. 弹窗抽屉与浮层调度
     # =========================================================================
     def _universal_open(self, control):
-        if hasattr(self.page, "overlay") and control not in self.page.overlay:
-            self.page.overlay.append(control)
-
-        try: control.open = True
-        except Exception: pass
-
+        # 【还原】：移除 on_dismiss 原生拦截污染，纯正地使用 page.open
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
-            try: self.page.open(control)
-            except Exception: pass
-
-        try: control.update()
-        except Exception: pass
-        self.page.update()
+            self.page.open(control)
+        else:
+            if hasattr(self.page, "overlay") and control not in self.page.overlay:
+                self.page.overlay.append(control)
+            control.open = True
+            self.page.update()
 
     def _universal_close(self, control):
-        try: control.open = False
-        except Exception: pass
-
         if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
-            try: self.page.close(control)
-            except Exception: pass
-
-        try: control.update()
-        except Exception: pass
-        self.page.update()
+            self.page.close(control)
+        else:
+            control.open = False
+            self.page.update()
 
     def show_snack_bar(self, msg):
         self.snack_counter += 1
