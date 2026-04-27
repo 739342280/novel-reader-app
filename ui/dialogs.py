@@ -1125,7 +1125,7 @@ class DialogManager:
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
-        char_row = ft.Row([mode_btn_char, mode_btn_char_pro], spacing=5, alignment=ft.MainAxisAlignment.CENTER)
+        # char_row = ft.Row([mode_btn_char, mode_btn_char_pro], spacing=5, alignment=ft.MainAxisAlignment.CENTER)
         app.global_dialog.actions = [
             ft.Container(
                 content=ft.Column([

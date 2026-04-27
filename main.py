@@ -181,6 +181,11 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
+        # 💥 安卓端修复点 2：拦截安卓原生返回造成的“双击”余震
+        import time
+        if hasattr(self, "_last_dismiss_time") and time.time() - self._last_dismiss_time < 0.5:
+            return  # 如果半秒内刚关掉过一个弹窗，说明这是安卓底层发来的虚假 view_pop，直接忽略！
+
         dialogs_to_check = [
             getattr(self, "global_dialog", None),
             getattr(self, "toc_sheet", None),
@@ -199,7 +204,10 @@ class NovelReaderApp:
         if len(self.page.views) > 1:
             self.page.views.pop()
             top_view = self.page.views[-1]
-            self.page.run_task(self.page.push_route, top_view.route)
+            
+            # 💥 Flet 官方规范修复点：绝不能在这里使用 run_task(push_route)！
+            # 必须使用 page.go，彻底解决返回书架后界面假死、无法点击的 Bug！
+            self.page.go(top_view.route)
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -316,6 +324,10 @@ class NovelReaderApp:
 
             all_files = []
             for root, dirs, files in os.walk(base_dir):
+                # 💥 核心修复 1：剥离大模型！将 models 文件夹从遍历名单中踢出！
+                if 'models' in dirs:
+                    dirs.remove('models')
+                    
                 for file in files:
                     all_files.append(os.path.join(root, file))
             
@@ -323,6 +335,8 @@ class NovelReaderApp:
             if total_files == 0:
                 self.show_snack_bar("⚠️ 没有可导出的数据")
                 return
+            
+            # ... 下面的 轨道A 和 轨道B 代码保持完全不变 ...
 
             # ========================================================
             # 🚀 轨道 A：电脑端 (Windows/Mac/Linux) —— 沿用原逻辑，拒绝内存爆炸
@@ -484,6 +498,10 @@ class NovelReaderApp:
                     self._load_config_from_appdata()
                     self._load_bookshelf()
                     self.refresh_bookshelf_ui()
+                    # 💥 修复 500 报错 Bug 的终极补丁：一枪崩掉旧引擎，强迫它下次热启动
+                    if sys.platform == "win32":
+                        os.system("taskkill /F /IM llama-server.exe >nul 2>&1")
+
                 else:
                     self.show_snack_bar("❌ 无法获取文件路径")
             else:
@@ -1423,6 +1441,16 @@ class NovelReaderApp:
                 except Exception: pass
 
     def _universal_open(self, control):
+        # 💥 安卓端修复点 1：给所有弹窗绑定底层关闭事件，记录“死亡时间”
+        import time
+        if not getattr(control, "_has_dismiss_binding", False):
+            original_dismiss = getattr(control, "on_dismiss", None)
+            def wrapped_dismiss(e):
+                self._last_dismiss_time = time.time()  # 记录弹窗被原生关闭的瞬间
+                if original_dismiss: original_dismiss(e)
+            control.on_dismiss = wrapped_dismiss
+            control._has_dismiss_binding = True
+
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
             self.page.open(control)
         else:
