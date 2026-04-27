@@ -15,8 +15,8 @@ from data.storage import StorageManager
 from ui.dialogs import DialogManager
 from ui.home_view import get_home_view
 from ui.reader_view import get_reader_view
-# 💥 修复 1：将统计视图的导入移到文件顶部全局作用域
 from ui.stats_view import get_statistics_view 
+from ui.ai_settings_view import get_ai_settings_view
 
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
@@ -167,34 +167,37 @@ class NovelReaderApp:
 
     # region 1. 生命周期与原生路由管理
     def route_change(self, e):
-        # 获取当前目标的路由字符串
         target_route = self.page.route or "/"
 
-        # --- 策略 A：回到首页 ---
+        # 策略 A：返回首页 (完全清空)
         if target_route == "/":
             self.page.views.clear()
             self.page.views.append(get_home_view(self))
 
-        # --- 策略 B：阅读页相关 ---
+        # 策略 B：阅读页及其子层 (增量同步)
         elif target_route.startswith("/reader"):
-            # 1. 基础检查：如果栈里连首页都没有，先补首页（防止深层链接进入）
+            # 1. 补全基层
             if not self.page.views:
                 self.page.views.append(get_home_view(self))
             
-            # 2. 正文层检查：如果当前栈顶不是阅读页且没有阅读页，才创建它
-            # 这样做可以保证从统计页返回时，阅读页是“活”的，不需要重新解析书籍
+            # 2. 检查正文层：若正文不存在，则创建。若已存在，绝不销毁！
             reader_exists = any(v.route == "/reader" for v in self.page.views)
             if not reader_exists:
                 self.page.views.append(get_reader_view(self))
             
-            # 3. 统计层处理
+            # 3. 统计页处理
             if target_route == "/reader/statistics":
-                # 如果当前还没盖上统计页，就盖上去
                 if self.page.views[-1].route != "/reader/statistics":
                     self.page.views.append(get_statistics_view(self))
-            else:
-                # 如果目标只是 "/reader"（即从统计页回退），确保把顶部的统计页清理掉
-                while len(self.page.views) > 2: # [Home, Reader, Stats...]
+            
+            # 4. AI 设置页处理 (💥 新增)
+            elif target_route == "/reader/ai_settings":
+                if self.page.views[-1].route != "/reader/ai_settings":
+                    self.page.views.append(get_ai_settings_view(self))
+            
+            # 5. 如果只是回退到正文
+            elif target_route == "/reader":
+                while len(self.page.views) > 2: # [Home, Reader, ...]
                     self.page.views.pop()
 
         self._apply_theme_colors()
@@ -1543,7 +1546,8 @@ class NovelReaderApp:
         self.page.run_task(self.page.push_route, "/reader/statistics")
 
     def show_settings_dialog(self, e):
-        DialogManager.show_settings_dialog(self, e)
+        # 💥 拦截旧的弹窗请求，改为最新的异步路由跳转
+        self.page.run_task(self.page.push_route, "/reader/ai_settings")
 
     def show_global_settings_dialog(self, e):
         DialogManager.show_global_settings_dialog(self, e)
