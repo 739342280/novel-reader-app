@@ -17,6 +17,37 @@ if sys.platform == "win32":
     # 使用官方自带的 llama-server.exe 物理隔离内存，通过 HTTP 高速获取向量
     # ---------------------------------------------------------
     class LocalEmbeddingEngine:
+        def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+            """【终极降维打击】批量请求接口，榨干 4070 Super 并发算力"""
+            if not self.process or self.process.poll() is not None:
+                raise Exception("底层推理引擎已意外退出")
+
+            # 将单个字符串改为字符串数组，一次性砸给大模型
+            payload = json.dumps({
+                "input": texts,
+                "model": "qwen3-embedding" 
+            }).encode('utf-8')
+            
+            req = urllib.request.Request(
+                self.server_url, 
+                data=payload, 
+                headers={'Content-Type': 'application/json'}
+            )
+
+            try:
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    res_body = json.loads(response.read().decode('utf-8'))
+                    # 提取返回的多个向量，并严格按照原数组的索引顺序排列
+                    embeddings = [item["embedding"] for item in sorted(res_body["data"], key=lambda x: x["index"])]
+                    return embeddings
+                    
+            except urllib.error.HTTPError as e:
+                err_msg = e.read().decode('utf-8')
+                raise Exception(f"批量建库失败，引擎拒绝了格式 (HTTP {e.code}): {err_msg}")
+                
+            except urllib.error.URLError as e:
+                raise Exception(f"请求本地引擎发生网络错误: {e}")
+        
         def __init__(self, model_path: str):
             self.model_path = model_path
             self.port = 18080  # 专属微服务端口
@@ -50,6 +81,7 @@ if sys.platform == "win32":
                 "-c", "512",
                 "-b", "512",
                 "-t", optimal_threads,
+                "-ngl", "99",
                 # 💥 终极修复：强制指定为 mean (平均池化)，填补 Qwen3 模型漏写的元数据
                 "--pooling", "mean",
                 "--log-disable"  # 关闭底层日志输出，保持控制台清爽

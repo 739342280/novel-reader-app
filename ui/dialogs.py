@@ -366,16 +366,23 @@ class DialogManager:
                         vdb = VectorDB(db_path)
                         vdb.init_tables(dim)
                         
-                        batch_size = 5
+                        batch_size = 50
                         for i in range(0, total, batch_size):
                             batch = all_chunks[i:i+batch_size]
                             
                             safe_update_ui(i / total, f"🚀 正在调用 Embedding 接口... ( {i} / {total} )")
                             
+                            # 提取这一批次的所有文本
+                            batch_texts = [c[1] for c in batch]
+                            
+                            # 💥 核心修改：调用批量接口（需配合更新 AIService 和 local_inference）
+                            # 注意：此处我们需要在 AIService 中新增 get_embeddings 方法（带 s）
+                            batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
+
                             db_data = []
-                            for idx, chunk_text in batch:
-                                emb = AIService.get_embedding(app.ai_config, chunk_text)
-                                db_data.append((idx, chunk_text, emb))
+                            for idx_in_batch, (chapter_idx, chunk_text) in enumerate(batch):
+                                emb = batch_embs[idx_in_batch]
+                                db_data.append((chapter_idx, chunk_text, emb))
                                 
                             vdb.insert_chunks(db_data)
                             
@@ -677,10 +684,10 @@ class DialogManager:
         
         send_btn = ft.IconButton(icon=ft.Icons.SEND, icon_color="onSurface", on_click=lambda _: send_message(None))
 
-        mode_btn_main = ft.TextButton(content=ft.Text("主线总结"), style=ft.ButtonStyle(color="onSurface"))
-        mode_btn_char = ft.TextButton(content=ft.Text("人物梳理"), style=ft.ButtonStyle(color="onSurface"))
-        mode_btn_char_pro = ft.TextButton(content=ft.Text("人物梳理Pro"), style=ft.ButtonStyle(color="onSurface"))
-        mode_btn_clue = ft.TextButton(content=ft.Text("伏笔剖析"), style=ft.ButtonStyle(color="onSurface"))
+        mode_btn_main = ft.TextButton(content=ft.Text("主线"), style=ft.ButtonStyle(color="onSurface"))
+        mode_btn_char = ft.TextButton(content=ft.Text("人物"), style=ft.ButtonStyle(color="onSurface"))
+        mode_btn_char_pro = ft.TextButton(content=ft.Text("人物+"), style=ft.ButtonStyle(color="onSurface"))
+        mode_btn_clue = ft.TextButton(content=ft.Text("伏笔"), style=ft.ButtonStyle(color="onSurface"))
 
         btn_regen = ft.Button(content=ft.Text("总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
         
@@ -1122,14 +1129,21 @@ class DialogManager:
         app.global_dialog.actions = [
             ft.Container(
                 content=ft.Column([
-                    ft.Row([
-                        ft.Column([mode_btn_main, btn_regen], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-                        ft.Column([char_row, btn_copy], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-                        ft.Column([mode_btn_clue, btn_close], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10)
-                    ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
-                    ft.Row([chat_input, send_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
+                    # 💥 彻底拆掉 char_row，让 4 个按钮平起平坐，全部享受自由间距！
+                    ft.Row(
+                        [mode_btn_main, mode_btn_char, mode_btn_char_pro, mode_btn_clue], 
+                        alignment=ft.MainAxisAlignment.SPACE_AROUND
+                    ),
+                    ft.Row(
+                        [btn_regen, btn_copy, btn_close], 
+                        alignment=ft.MainAxisAlignment.SPACE_AROUND
+                    ),
+                    ft.Row(
+                        [chat_input, send_btn], 
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+                    )
                 ], tight=True, spacing=10),
-                width=600
+                padding=ft.padding.symmetric(horizontal=10)
             )
         ]
         

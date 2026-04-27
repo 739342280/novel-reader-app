@@ -217,3 +217,34 @@ class AIService:
             if "找不到向量字段" in str(e) or "API报错" in str(e):
                 raise e
             raise Exception(f"解析 JSON 返回结构失败 ({type(e).__name__}: {str(e)}) | 服务器原文: {json.dumps(data, ensure_ascii=False)[:300]}")
+
+    # =========================================================
+    # 💡 唯一新增区域：供降维打击路线 (大批量文本建库) 调用的专属接口
+    # =========================================================
+    @classmethod
+    def get_embeddings(cls, config: dict, texts: list[str]) -> list[list[float]]:
+        """
+        获取多段文本的 Embedding 向量矩阵。
+        主要用于建库时的并发冲锋，榨干显卡算力。
+        """
+        if config.get("embed_mode") == "本地模型":
+            model_path = config.get("local_model_path", "")
+            
+            if not model_path or not os.path.exists(model_path):
+                raise Exception(f"【本地模式失败】未找到模型文件，请检查设置中的路径：\n{model_path}")
+                
+            try:
+                from .local_inference import LocalEmbeddingEngine
+                if cls._local_engine is None:
+                    cls._local_engine = LocalEmbeddingEngine(model_path)
+                # 💥 核心：调用底层的并发数组处理接口
+                return cls._local_engine.get_embeddings(texts)
+            except Exception as e:
+                raise Exception(f"【本地推理崩溃】批量计算向量失败: {str(e)}")
+        
+        # ⚠️ 云端兜底策略：目前各大厂的 Batch Embedding 格式极其碎片化，
+        # 为了保证现有云端通道的绝对稳定（防回归），这里采用最稳妥的单次循环方案。
+        results = []
+        for t in texts:
+            results.append(cls.get_embedding(config, t))
+        return results
