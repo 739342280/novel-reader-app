@@ -115,7 +115,8 @@ class NovelReaderApp:
 
         # --- 4. 弹窗管控 ---
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
-        self.snack_counter = 0  
+        self.snack_counter = 0
+        self._last_dismiss_time = 0 # 💥 修复点 4：初始化安卓返回拦截时间戳  
         
         self.ai_config = {
             "url": "https://api.deepseek.com/v1/chat/completions",
@@ -188,35 +189,33 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
-        # 💥 修复点 2：优先级拦截逻辑
-        # 1. 优先检查并关闭所有可能的弹窗
+        # 💥 修复点 2：安卓物理返回键“余震”拦截
+        # 如果 0.2 秒内刚刚发生过弹窗关闭（不管是点击还是侧滑），则拦截此次 View 弹出请求
+        if hasattr(self, "_last_dismiss_time") and (time.time() - self._last_dismiss_time < 0.2):
+            return
+
+        # 优先级 1：检查是否有逻辑上仍处于打开状态的弹窗
         dialogs_to_check = [
             getattr(self, "global_dialog", None),
             getattr(self, "toc_sheet", None),
             getattr(self, "settings_sheet", None)
         ]
-        
-        active_dialog = None
         for dlg in dialogs_to_check:
             if dlg and getattr(dlg, "open", False):
-                active_dialog = dlg
-                break
-        
-        # 如果发现有打开的弹窗，仅关闭弹窗并直接截断返回，不准退出阅读页
-        if active_dialog:
-            self._universal_close(active_dialog)
-            return 
+                self._universal_close(dlg)
+                return 
 
-        # 2. 如果没有任何弹窗，才处理真实的页面回退
+        # 优先级 2：处理真实的页面回退
         if len(self.page.views) > 1:
             if getattr(self.page, "route", "/") == "/reader":
                 self.save_current_progress()
                 if getattr(self, "is_immersive", False):
                     self.toggle_immersive(None)
 
-            # 手动弹出顶层视图并更新路由状态
+            # 💥 修复点 3：手动管理 Views 栈，不再调用 push_route，彻底终结“空气墙”
             self.page.views.pop()
-            self.page.route = self.page.views[-1].route
+            top_view = self.page.views[-1]
+            self.page.route = top_view.route
             self.page.update()
 
     def _on_os_theme_change(self, e):
@@ -1453,17 +1452,23 @@ class NovelReaderApp:
                 except Exception: pass
 
     def _universal_open(self, control):
-        # 💥 修复点 3：强制重置状态，确保弹窗能够被重新唤醒
-        control.open = False 
-        self.page.update() 
+        # 💥 修复点 1：确保控件在 Overlay 中且状态刷新
+        if control not in self.page.overlay:
+            self.page.overlay.append(control)
         
-        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
-            self.page.open(control)
-        else:
-            if hasattr(self.page, "overlay") and control not in self.page.overlay:
-                self.page.overlay.append(control)
-            control.open = True
-            self.page.update()
+        # 针对安卓端的 BottomSheet/Dialog 状态同步修复
+        control.open = True
+        
+        # 增加一个微小的延迟绑定，确保安卓原生层能捕捉到 dismiss 事件
+        if not hasattr(control, "_hooked"):
+            orig_dismiss = control.on_dismiss
+            def wrapped_dismiss(e):
+                self._last_dismiss_time = time.time() # 记录物理关闭时间戳
+                if orig_dismiss: orig_dismiss(e)
+            control.on_dismiss = wrapped_dismiss
+            control._hooked = True
+
+        self.page.update()
 
     def _universal_close(self, control):
         if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
