@@ -1,3 +1,18 @@
+# 排除 Python 缓存
 __pycache__/
 *.pyc
 *.pyo
+
+# 排除所有本地模型文件（防止几百MB的大文件撑爆 GitHub 仓库）
+Qwen3-Embedding-0.6B-q4_k_m.gguf
+
+# 排除 Flet 构建产物
+build/
+dist/
+
+# 排除虚拟环境
+venv/
+.env
+
+
+*.dll

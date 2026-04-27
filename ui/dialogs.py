@@ -149,7 +149,8 @@ class DialogManager:
         cloud_view = ft.Column([embed_url_tf, embed_key_tf, embed_model_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         local_models = app.get_local_models()
-        saved_local_model = app.ai_config.get("local_embed_path", "")
+        # 💥 修正点：将回显绑定的键严格对齐为 ai_service.py 所识别的 local_model_path
+        saved_local_model = app.ai_config.get("local_model_path", "")
         local_model_dd = ft.Dropdown(
             label="已导入的本地模型",
             options=[ft.dropdown.Option(m) for m in local_models],
@@ -509,31 +510,39 @@ class DialogManager:
             top_k_container
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
 
+        # =========================================================
+        # 💥 Flet 0.84.0 破坏性更新真正跟进 (Tabs 组件重构)
+        # 彻底采用 Flutter 分离架构：TabBar 负责顶栏按钮，TabBarView 负责页面装载
+        tab_bar = ft.TabBar(
+            tabs=[
+                ft.Tab(label="对话模型"),
+                ft.Tab(label="向量引擎"),
+                ft.Tab(label="本书知识库")
+            ]
+        )
+        
+        tab_view = ft.TabBarView(
+            controls=[
+                tab1_container,
+                tab2_container,
+                ft.Container(
+                    content=tab3_col, 
+                    padding=ft.padding.all(15)
+                )
+            ],
+            expand=True
+        )
+
         tabs = ft.Tabs(
-            length=3,
             selected_index=0,
+            length=3,
             expand=True,
             content=ft.Column(
-                expand=True,
-                controls=[
-                    ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="对话模型"),
-                            ft.Tab(label="向量引擎"),
-                            ft.Tab(label="本书知识库"),
-                        ]
-                    ),
-                    ft.TabBarView(
-                        expand=True,
-                        controls=[
-                            tab1_container,
-                            tab2_container,
-                            ft.Container(content=tab3_col, padding=ft.padding.all(15)),
-                        ]
-                    )
-                ]
+                controls=[tab_bar, tab_view], 
+                expand=True
             )
         )
+        # =========================================================
 
         def save(e):
             app.ai_config["url"] = url_tf.value.strip()
@@ -545,7 +554,8 @@ class DialogManager:
             app.ai_config["embed_url"] = embed_url_tf.value.strip()
             app.ai_config["embed_key"] = embed_key_tf.value.strip()
             app.ai_config["embed_model"] = embed_model_tf.value.strip()
-            app.ai_config["local_embed_path"] = local_model_dd.value if local_model_dd.value else ""
+            # 💥 修正点：保存时严格对齐为 local_model_path，以驱动本地计算
+            app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
             app.ai_config["top_k"] = int(top_k_slider.value) 
             
             app._save_config_to_appdata()

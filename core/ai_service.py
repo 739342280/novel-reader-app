@@ -1,9 +1,13 @@
 import urllib.request
 import urllib.error
 import json
+import os
+# 💥 删除了这里的顶部导入，防止底层 C 库报错“火烧连营”
 
 class AIService:
     _session = None
+    # 单例模式存放本地引擎，防止多次加载撑爆手机内存
+    _local_engine = None
 
     @classmethod
     def get_session(cls):
@@ -17,8 +21,6 @@ class AIService:
             from urllib3.util.retry import Retry
             
             cls._session = requests.Session()
-            # 💥 工业级重试机制：应对 10054 强迫关闭和 429 大厂限流
-            # 如果请求失败，自动等待 0.5s, 1s, 2s... 并最多重试 5 次
             retries = Retry(
                 total=5,
                 backoff_factor=0.5,
@@ -106,8 +108,27 @@ class AIService:
         """
         获取单段文本的 Embedding 向量。
         """
+        # =========================================================
+        # 本地建库分支逻辑
+        # =========================================================
         if config.get("embed_mode") == "本地模型":
-            raise NotImplementedError("本地算力引擎暂未指定，请先在云端 API 模式下进行联调测试！")
+            model_path = config.get("local_model_path", "")
+            
+            if not model_path or not os.path.exists(model_path):
+                raise Exception(f"【本地模式失败】未找到模型文件，请检查设置中的路径：\n{model_path}")
+                
+            try:
+                # 💥 防御性延迟导入：只有用户真正触发本地计算时，才去加载危险的底层 C 库
+                # 这样即使底层库报错，也不会影响其他云端功能的使用
+                from .local_inference import LocalEmbeddingEngine
+                
+                # 单例延迟加载
+                if cls._local_engine is None:
+                    cls._local_engine = LocalEmbeddingEngine(model_path)
+                return cls._local_engine.get_embedding(text)
+            except Exception as e:
+                # 失败即阻断，不再向后尝试云端
+                raise Exception(f"【本地推理崩溃】无法计算向量: {str(e)}")
             
         import requests
         
@@ -134,13 +155,11 @@ class AIService:
         response = None
         data = None
         
-        # 💥 使用自带重试策略的长连接池发起请求
         session = cls.get_session()
         
         for payload in payloads_to_try:
             data_bytes = json.dumps(payload, ensure_ascii=False).encode('utf-8')
             try:
-                # 注意：这里改用 session.post，而不是 requests.post
                 response = session.post(url, headers=headers, data=data_bytes, timeout=15)
                 
                 if response.status_code == 400:
@@ -170,7 +189,6 @@ class AIService:
                 if last_status != 400:
                     raise Exception(f"服务器拒绝请求 (HTTP {last_status}): {error_details}")
             except Exception as e:
-                # urllib3 的重试机制会在底层尝试 5 次，如果 5 次都失败（或者严重网络断开），才会抛出到这里
                 raise Exception(f"网络或底层请求抛出异常: {str(e)}")
                 
         if data is None:

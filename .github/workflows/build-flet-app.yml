@@ -18,7 +18,7 @@ env:
 
 jobs:
   # =========================================================
-  # 任务 1：极速占位
+  # 任务 1：极速占位（只需5秒，提前建好 Release 页面供后续任务上传）
   # =========================================================
   prepare-release:
     name: Prepare Release Page
@@ -69,8 +69,7 @@ jobs:
         python-version: '3.12'
         cache: 'pip' 
 
-    # 💥 战术剥离：因为 PyPI 上依然没有安卓版的 pip 安装包，
-    # 我们必须在此步骤把 sqlite-vec 从 requirements.txt 删掉，防止 pip 报错崩溃。
+    # 💥 战术剥离：防止 pip 尝试在安卓环境下编译 C++
     - name: Patch requirements for Android
       run: |
         if [ -f "requirements.txt" ]; then
@@ -82,27 +81,41 @@ jobs:
         pip install flet==0.84.0
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 💥 核心替换：直接从官方下载预编译的 Android aarch64 动态库！
+    # 💥 步骤 A：下载官方 sqlite-vec Android 动态库
     - name: Download Official sqlite-vec Android Binary
       run: |
-        echo "Downloading official pre-compiled sqlite-vec for Android..."
-        
-        # 尝试动态获取最新版的 aarch64 包，若失败则回退到稳定的 v0.1.9 版
+        echo "Downloading official sqlite-vec for Android..."
         ASSET_URL=$(curl -s https://api.github.com/repos/asg017/sqlite-vec/releases/latest | grep "browser_download_url" | grep "android" | grep -E "aarch64|arm64" | cut -d '"' -f 4)
         if [ -z "$ASSET_URL" ]; then
-          echo "Fallback to stable release v0.1.9..."
           ASSET_URL="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-v0.1.9-loadable-android-aarch64.tar.gz"
         fi
-        
-        echo "Downloading from $ASSET_URL"
         wget -qO sqlite-vec-android.tar.gz $ASSET_URL
-        
         mkdir -p assets
         tar -xzf sqlite-vec-android.tar.gz
-        
-        # 官方压缩包里通常是 vec0.so，我们把它改名并放入 assets 供 Flet 打包
         find . -name "*.so" -exec mv {} assets/libsqlite_vec.so \;
-        echo "✅ 官方 Android 动态库已准备就绪！"
+        echo "✅ sqlite-vec 已就绪"
+
+    # 💥 步骤 B：下载官方 llama.cpp Android 动态库 (用于本地模型方案一)
+    - name: Download Official llama.cpp Android Library
+      run: |
+        echo "Fetching latest llama.cpp android-arm64 release..."
+        LATEST_TAG=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+        URL="https://github.com/ggml-org/llama.cpp/releases/download/${LATEST_TAG}/llama-${LATEST_TAG}-bin-android-arm64.tar.gz"
+        
+        wget -qO llama-android.tar.gz $URL
+        mkdir -p temp_llama
+        tar -xzf llama-android.tar.gz -C temp_llama
+        
+        # 💥 修复点：确保在当前工作目录存在 assets 文件夹
+        mkdir -p assets
+        
+        # 💥 修复点：更精准、更安全地拷贝主干库，避免垃圾测试文件撑爆 APK
+        find temp_llama -type f \( -name "libllama.so" -o -name "libggml*.so" \) -exec cp {} assets/ \;
+        
+        # 可选：打印一下 assets 目录，以便在 Github Actions 日志中确认文件是否就位
+        ls -la assets/
+        
+        echo "✅ llama 核心动态库已注入 assets 目录！"
 
     - name: Cache Flet templates
       uses: actions/cache@v4

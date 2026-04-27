@@ -8,12 +8,42 @@ import time
 import zipfile
 from datetime import datetime
 import traceback
+import ctypes  # 【新增】必须导入 ctypes 以调用 Windows 底层 API
 
 from core.engine import NovelEngine
 from data.storage import StorageManager
 from ui.dialogs import DialogManager
 from ui.home_view import get_home_view
 from ui.reader_view import get_reader_view
+
+# ==========================================
+# 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
+# ==========================================
+if getattr(sys, 'frozen', False):
+    application_path = os.path.dirname(sys.executable)
+else:
+    application_path = os.path.dirname(os.path.abspath(__file__))
+
+ASSETS_DIR = os.path.join(application_path, "assets")
+
+if sys.platform == "win32":
+    # 1. 解决 Python 引擎寻找主 DLL 的路径限制
+    if hasattr(os, "add_dll_directory") and os.path.exists(ASSETS_DIR):
+        try:
+            os.add_dll_directory(ASSETS_DIR)
+        except Exception:
+            pass
+            
+    # 2. 【终极绝杀】利用 llama.cpp 官方预留的环境变量，强行重定向 C++ 底层的搜索路径
+    os.environ["GGML_BACKEND_PATH"] = ASSETS_DIR
+    
+    # 3. 环境变量兜底 (调用 Windows 底层穿透)
+    try:
+        import ctypes
+        ctypes.windll.kernel32.SetDllDirectoryW(ASSETS_DIR)
+    except Exception:
+        pass
+    os.environ["PATH"] = ASSETS_DIR + os.pathsep + os.environ.get("PATH", "")
 
 # --- 【闪退捕兽夹】代码开始 ---
 def global_crash_catcher(exctype, value, tb):
@@ -112,7 +142,8 @@ class NovelReaderApp:
             "embed_url": "https://api.deepseek.com/v1/embeddings",
             "embed_key": "",
             "embed_model": "text-embedding-3-small",
-            "local_embed_path": ""
+            "local_embed_path": "",
+            "top_k": 5
         }
 
         # --- 5. 生命周期拉起与路由挂载 ---
@@ -223,7 +254,7 @@ class NovelReaderApp:
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
-            for k in ["url", "key", "model", "prompt", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path"]:
+            for k in ["url", "key", "model", "prompt", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k"]:
                 if k in data: self.ai_config[k] = data[k]
             bg_c = data.get("bg_color")
             self.bg_color = bg_c if bg_c else "#FFFFFF"
@@ -370,60 +401,70 @@ class NovelReaderApp:
         self._save_bookshelf()
         self.route_change(None)
 
-    # --- 【新增】：探测本地 models 文件夹并提取可用模型 ---
-    def get_local_models(self):
+    # ==========================================
+    # --- 新增 Flet 0.84.0 适配代码：本地模型文件管理与导入 ---
+    # ==========================================
+    def get_models_dir(self):
+        """获取/创建模型专属的私有存放目录"""
+        import os
+        from data.storage import StorageManager
         models_dir = os.path.join(StorageManager.get_base_dir(), "models")
+        os.makedirs(models_dir, exist_ok=True)
+        return models_dir
+
+    def get_local_models(self):
+        """扫描目录，返回所有可用模型文件的绝对路径"""
+        import os
+        models_dir = self.get_models_dir()
         if not os.path.exists(models_dir):
             return []
         try:
-            return [f for f in os.listdir(models_dir) if os.path.isfile(os.path.join(models_dir, f))]
+            return [os.path.join(models_dir, f) for f in os.listdir(models_dir) if f.endswith(('.gguf', '.onnx', '.bin'))]
         except Exception:
             return []
 
-    # --- 【新增】：安全持久化导入本地大模型 ---
     async def trigger_model_picker(self, dropdown_control):
+        """拉起系统文件管理器并导入模型（纯异步调用）"""
         try:
+            # 最新版的 FilePicker 作为全局独立方法直接 await
             files = await ft.FilePicker().pick_files(
+                dialog_title="请选择本地大模型",
                 file_type=ft.FilePickerFileType.CUSTOM, 
                 allowed_extensions=["onnx", "gguf", "bin", "pt", "safetensors"]
             )
             
             if files and len(files) > 0:
-                picked_path = files[0].path
+                import shutil
+                import asyncio
+                
+                src_path = files[0].path
                 original_name = files[0].name
                 
-                if not picked_path:
+                if not src_path:
                     self.show_snack_bar("获取文件路径失败，请尝试更换目录。")
                     return
 
-                models_dir = os.path.join(StorageManager.get_base_dir(), "models")
-                if not os.path.exists(models_dir):
-                    try: 
-                        os.makedirs(models_dir, exist_ok=True)
-                    except Exception as create_ex:
-                        self.show_snack_bar(f"建立模型存放目录失败: {str(create_ex)}")
-                        return
-
-                persistent_path = os.path.join(models_dir, original_name)
+                dest_path = os.path.join(self.get_models_dir(), original_name)
 
                 try:
-                    shutil.copy2(picked_path, persistent_path)
+                    # 关键权衡：将大文件拷贝抛入子线程，避免阻塞主 UI 导致掉帧卡死
+                    await asyncio.to_thread(shutil.copy2, src_path, dest_path)
+                    self.show_snack_bar(f"✅ 模型 {original_name} 导入成功")
+                    
+                    # 动态刷新 UI 选项卡
+                    if dropdown_control:
+                        opts = [ft.dropdown.Option(f) for f in self.get_local_models()]
+                        dropdown_control.options = opts
+                        dropdown_control.value = dest_path
+                        try: dropdown_control.update()
+                        except Exception: pass
+                        
                 except Exception as copy_ex:
                     self.show_snack_bar(f"模型文件转存失败: {str(copy_ex)}")
-                    return
-
-                self.show_snack_bar(f"✅ 模型 {original_name} 导入成功")
-                
-                # 动态刷新 UI 下拉框内容并自动选中
-                if dropdown_control:
-                    opts = [ft.dropdown.Option(f) for f in self.get_local_models()]
-                    dropdown_control.options = opts
-                    dropdown_control.value = original_name
-                    try: dropdown_control.update()
-                    except Exception: pass
                     
         except Exception as ex:
             self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
+    # ==========================================
 
     async def trigger_file_picker(self, e):
         try:
@@ -543,7 +584,6 @@ class NovelReaderApp:
             )
             self.bookshelf_grid.controls.append(card)
         self.page.update()
-    # endregion
 
     # region 3. 阅读核心引擎与交互
     # =========================================================================
@@ -1233,10 +1273,7 @@ class NovelReaderApp:
                 btn.style = self.get_action_button_style(pad, text_color=top_chap_c)
                 try: btn.update()
                 except Exception: pass
-    # endregion
 
-    # region 5. 弹窗抽屉与浮层调度
-    # =========================================================================
     def _universal_open(self, control):
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
             self.page.open(control)
@@ -1310,10 +1347,7 @@ class NovelReaderApp:
 
     def show_ai_dialog(self, e):
         DialogManager.show_ai_dialog(self, e)
-    # endregion
 
-    # region 6. 底层纯工具函数
-    # =========================================================================
     def _execute_copy(self, text):
         try:
             if hasattr(self.page, "set_clipboard"):
@@ -1354,7 +1388,6 @@ class NovelReaderApp:
             except Exception:
                 pass
             await asyncio.sleep(5)
-    # endregion
 
 def main(page: ft.Page):
     app = NovelReaderApp(page)
