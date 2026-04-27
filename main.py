@@ -17,6 +17,7 @@ from ui.home_view import get_home_view
 from ui.reader_view import get_reader_view
 from ui.stats_view import get_statistics_view 
 from ui.ai_settings_view import get_ai_settings_view
+from ui.ai_chat_view import get_ai_chat_view
 
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
@@ -64,7 +65,7 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.6"  
+        self.version = "0.4.7"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
         
@@ -195,6 +196,11 @@ class NovelReaderApp:
                 if self.page.views[-1].route != "/reader/ai_settings":
                     self.page.views.append(get_ai_settings_view(self))
             
+            # 💥 新增的 AI 聊天面板路由拦截：
+            elif target_route == "/reader/ai_chat":
+                if self.page.views[-1].route != "/reader/ai_chat":
+                    self.page.views.append(get_ai_chat_view(self))
+            
             # 5. 如果只是回退到正文
             elif target_route == "/reader":
                 while len(self.page.views) > 2: # [Home, Reader, ...]
@@ -257,7 +263,11 @@ class NovelReaderApp:
             if getattr(self, "global_dialog", None) and getattr(self.global_dialog, "open", False):
                 self._universal_close(self.global_dialog)
                 return
-
+            
+            if getattr(self.page, "route", "").startswith("/reader/"):
+                self.page.run_task(self.page.push_route, "/reader")
+                return
+            
             if self.page.route == "/reader":
                 self.go_back_home(None)
             return
@@ -1556,7 +1566,8 @@ class NovelReaderApp:
         DialogManager.show_changelog_dialog(self, e)
 
     def show_ai_dialog(self, e):
-        DialogManager.show_ai_dialog(self, e)
+        # 💥 彻底修改为路由跳转
+        self.page.run_task(self.page.push_route, "/reader/ai_chat")
 
     def _execute_copy(self, text):
         try:
