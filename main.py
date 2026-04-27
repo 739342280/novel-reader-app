@@ -310,25 +310,10 @@ class NovelReaderApp:
 
     async def export_app_data(self, e):
         try:
-            # 1. 改变 UI 状态为“导出进度条”
-            prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
-            prog_text = ft.Text("正在准备打包数据...", size=13, color="onSurface")
-            
-            self.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
-            self.global_dialog.content = ft.Column([
-                ft.Container(height=10),
-                prog_bar,
-                prog_text,
-                ft.Container(height=10)
-            ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-            self.global_dialog.actions = [] # 隐藏底部按钮防误触
-            self.page.update()
-
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             suggested_name = f"小说智读备份_{timestamp}.zip"
             base_dir = StorageManager.get_base_dir()
 
-            # 2. 搜集所有文件，用于计算进度条比例
             all_files = []
             for root, dirs, files in os.walk(base_dir):
                 for file in files:
@@ -337,63 +322,97 @@ class NovelReaderApp:
             total_files = len(all_files)
             if total_files == 0:
                 self.show_snack_bar("⚠️ 没有可导出的数据")
-                self._close_dialog()
                 return
-            
-            # 3. 💥 核心修改：在内存中构建 ZIP 包，规避安卓沙盒磁盘写入拦截
-            import io
-            import zipfile
-            zip_buffer = io.BytesIO()
 
-            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                for i, abs_path in enumerate(all_files):
-                    rel_path = os.path.relpath(abs_path, base_dir)
-                    zipf.write(abs_path, rel_path)
-                    
-                    # 动态刷新 UI 进度（合并刷新批次，避免 UI 卡顿假死）
-                    if i % max(1, total_files // 20) == 0 or i == total_files - 1:
-                        prog_bar.value = (i + 1) / total_files
-                        prog_text.value = f"正在打包文件... {i+1} / {total_files}"
-                        self.page.update()
-                        await asyncio.sleep(0.01) # 让出主线程，保证进度条动画丝滑
-
-            # 提取最终打好的包的二进制字节流
-            zip_bytes = zip_buffer.getvalue()
-
-            prog_bar.value = 1.0
-            prog_text.value = "打包完成！请在弹出的系统对话框中选择保存位置..."
-            self.page.update()
-
-            # 注册文件选择器（保证生命周期不丢失）
-            picker = ft.FilePicker()
-            self.page.overlay.append(picker)
-            self.page.update()
-
-            # 4. 跨平台保存调用（传入 src_bytes，彻底修复手机端报错）
-            save_path = await picker.save_file(
-                file_type=ft.FilePickerFileType.CUSTOM,
-                allowed_extensions=["zip"],
-                file_name=suggested_name,
-                src_bytes=zip_bytes   # 💥 就是这个关键参数救了安卓端的命！
-            )
-            
-            self.page.overlay.remove(picker)
-
-            # 5. 跨平台兼容兜底：
-            # PC 端 Flet 可能只返回了 save_path 而没有帮我们把 src_bytes 写进去，我们需要补一刀手动写入。
-            # 而在安卓端，Flet 拿到了 src_bytes 后，已经自动让系统写好了。
-            if save_path:
-                with open(save_path, 'wb') as f:
-                    f.write(zip_bytes)
-                self.show_snack_bar("✅ 应用数据已完整导出备份")
-            else:
-                if sys.platform not in ["win32", "darwin", "linux"]:
-                    self.show_snack_bar("✅ 操作结束 (若未取消，备份已保存至系统目录)")
-                else:
+            # ========================================================
+            # 🚀 轨道 A：电脑端 (Windows/Mac/Linux) —— 沿用原逻辑，拒绝内存爆炸
+            # ========================================================
+            if sys.platform in ["win32", "darwin", "linux"]:
+                # 1. 电脑端先选路径（不带 src_bytes，秒弹系统窗口）
+                save_path = await ft.FilePicker().save_file(
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["zip"],
+                    file_name=suggested_name
+                )
+                
+                if not save_path:
                     self.show_snack_bar("⚠️ 已取消导出")
-                    
-            self._close_dialog()
-            
+                    return
+
+                # 2. 选好路径后再弹进度条，直接边读边往硬盘里写
+                prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+                prog_text = ft.Text("正在打包写入硬盘...", size=13, color="onSurface")
+                
+                self.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
+                self.global_dialog.content = ft.Column([
+                    ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
+                ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                self.global_dialog.actions = []
+                self.page.update()
+
+                import zipfile
+                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for i, abs_path in enumerate(all_files):
+                        rel_path = os.path.relpath(abs_path, base_dir)
+                        zipf.write(abs_path, rel_path)
+                        
+                        # 动态刷新 UI 进度
+                        if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                            prog_bar.value = (i + 1) / total_files
+                            prog_text.value = f"正在写入硬盘... {i+1} / {total_files}"
+                            self.page.update()
+                            await asyncio.sleep(0.01)
+
+                self.show_snack_bar("✅ 应用数据已完整导出到本地")
+                self._close_dialog()
+
+            # ========================================================
+            # 📱 轨道 B：移动端 (Android/iOS) —— 内存打包 + 沙盒穿透
+            # ========================================================
+            else:
+                # 1. 移动端先弹进度条
+                prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+                prog_text = ft.Text("正在内存中构建数据包...", size=13, color="onSurface")
+                
+                self.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
+                self.global_dialog.content = ft.Column([
+                    ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
+                ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                self.global_dialog.actions = []
+                self.page.update()
+
+                import io
+                import zipfile
+                zip_buffer = io.BytesIO()
+
+                # 2. 强制在内存中打包，规避安卓沙盒磁盘写入拦截
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for i, abs_path in enumerate(all_files):
+                        rel_path = os.path.relpath(abs_path, base_dir)
+                        zipf.write(abs_path, rel_path)
+                        
+                        if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                            prog_bar.value = (i + 1) / total_files
+                            prog_text.value = f"正在构建数据包... {i+1} / {total_files}"
+                            self.page.update()
+                            await asyncio.sleep(0.01)
+
+                zip_bytes = zip_buffer.getvalue()
+                prog_bar.value = 1.0
+                prog_text.value = "构建完成！请在系统弹窗中选择保存..."
+                self.page.update()
+
+                # 3. 把构建好的内存包直接喂给安卓底层分享接口
+                await ft.FilePicker().save_file(
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["zip"],
+                    file_name=suggested_name,
+                    src_bytes=zip_bytes
+                )
+                
+                self.show_snack_bar("✅ 操作结束 (若未取消，备份已保存)")
+                self._close_dialog()
+
         except Exception as ex:
             self.show_snack_bar(f"❌ 导出失败: {str(ex)}")
             self._close_dialog()
@@ -401,36 +420,32 @@ class NovelReaderApp:
 
     async def import_app_data(self, e):
         try:
-            # 1. 改变 UI 状态为“唤起选择器”
+            # 1. UI 状态切换
             prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
-            prog_text = ft.Text("正在唤起系统文件管理器...", size=13, color="onSurface")
+            prog_text = ft.Text("正在准备恢复环境...", size=13, color="onSurface")
             
             self.global_dialog.title = ft.Text("正在恢复备份", size=18, weight=ft.FontWeight.BOLD)
             self.global_dialog.content = ft.Column([
-                ft.Container(height=10),
-                prog_bar,
-                prog_text,
-                ft.Container(height=10)
+                ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
             ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             self.global_dialog.actions = []
             self.page.update()
 
-            picker = ft.FilePicker()
-            self.page.overlay.append(picker)
-            self.page.update()
-
-            # 唤起选取弹窗
-            files = await picker.pick_files(
+            # 2. 唤起文件选择器
+            files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["zip"]
             )
-            
-            self.page.overlay.remove(picker)
 
             if files and len(files) > 0:
                 zip_path = files[0].path
                 if zip_path:
-                    prog_text.value = "正在准备解压恢复数据..."
+                    # 💥 关键点 1：清理引擎状态，确保不再占用任何书籍文件
+                    # 如果你的 NovelEngine 有 close() 方法请在此调用
+                    self.current_book_path = "" 
+                    self.engine.chapters_info = []
+                    
+                    prog_text.value = "正在验证备份文件..."
                     self.page.update()
 
                     base_dir = StorageManager.get_base_dir()
@@ -442,7 +457,22 @@ class NovelReaderApp:
                         
                         # 2. 开始解压并动态刷新进度
                         for i, zip_info in enumerate(zip_infos):
-                            zipf.extract(zip_info, base_dir)
+                            try:
+                                # 💥 治标之法：在解压覆盖前，先探测旧文件是否存在。若存在，强行解除只读封印！
+                                target_path = os.path.join(base_dir, zip_info.filename)
+                                if os.path.exists(target_path):
+                                    import stat
+                                    try:
+                                        os.chmod(target_path, stat.S_IWRITE) 
+                                    except Exception:
+                                        pass # 如果连改权限的权限都没有，就交给下面的 except 去捕获
+
+                                # 安全执行解压覆盖
+                                zipf.extract(zip_info, base_dir)
+                                
+                            except PermissionError:
+                                filename = zip_info.filename
+                                raise Exception(f"文件正在被占用：{filename}\n请确保已关闭所有正在阅读的界面，并重试。")
                             
                             if i % max(1, total_files // 20) == 0 or i == total_files - 1:
                                 prog_bar.value = (i + 1) / total_files
@@ -456,11 +486,13 @@ class NovelReaderApp:
                     self.refresh_bookshelf_ui()
                 else:
                     self.show_snack_bar("❌ 无法获取文件路径")
+            else:
+                self.show_snack_bar("⚠️ 已取消恢复")
             
-            # 无论成功或用户取消选择，最后都关闭弹窗
             self._close_dialog()
             
         except Exception as ex:
+            # 将错误信息反馈给 UI
             self.show_snack_bar(f"❌ 恢复失败: {str(ex)}")
             self._close_dialog()
         
@@ -607,6 +639,10 @@ class NovelReaderApp:
 
                     try:
                         shutil.copy2(picked_path, persistent_path)
+                        # 💥 治本之法：无论是不是微信来的文件，落地瞬间强行洗掉“只读”属性！
+                        import stat
+                        os.chmod(persistent_path, stat.S_IWRITE | stat.S_IREAD)
+                        
                     except Exception as copy_ex:
                         self.show_snack_bar(f"文件转存失败: {str(copy_ex)}")
                         return
