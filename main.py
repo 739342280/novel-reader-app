@@ -15,6 +15,8 @@ from data.storage import StorageManager
 from ui.dialogs import DialogManager
 from ui.home_view import get_home_view
 from ui.reader_view import get_reader_view
+# 💥 修复 1：将统计视图的导入移到文件顶部全局作用域
+from ui.stats_view import get_statistics_view 
 
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
@@ -117,7 +119,7 @@ class NovelReaderApp:
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0
         self._last_dismiss_time = 0
-        self.active_dialogs = []  # 💥 新增：自己维护一个弹窗生死簿，不依赖 Flet 延迟的状态  
+        self.active_dialogs = []
         
         self.ai_config = {
             "url": "https://api.deepseek.com/v1/chat/completions",
@@ -165,30 +167,62 @@ class NovelReaderApp:
 
     # region 1. 生命周期与原生路由管理
     def route_change(self, e):
-        # 💥 终极回归：采用 Flet 官方标准的“全量重建视图”法
-        # 每次路由变化，彻底清空并重新生成干净的视图，100% 根绝空气墙和点击失效！
-        self.page.views.clear()
-        self.page.views.append(get_home_view(self))
-        
-        if self.page.route == "/reader":
-            self.page.views.append(get_reader_view(self))
+        # 获取当前目标的路由字符串
+        target_route = self.page.route or "/"
+
+        # --- 策略 A：回到首页 ---
+        if target_route == "/":
+            self.page.views.clear()
+            self.page.views.append(get_home_view(self))
+
+        # --- 策略 B：阅读页相关 ---
+        elif target_route.startswith("/reader"):
+            # 1. 基础检查：如果栈里连首页都没有，先补首页（防止深层链接进入）
+            if not self.page.views:
+                self.page.views.append(get_home_view(self))
             
+            # 2. 正文层检查：如果当前栈顶不是阅读页且没有阅读页，才创建它
+            # 这样做可以保证从统计页返回时，阅读页是“活”的，不需要重新解析书籍
+            reader_exists = any(v.route == "/reader" for v in self.page.views)
+            if not reader_exists:
+                self.page.views.append(get_reader_view(self))
+            
+            # 3. 统计层处理
+            if target_route == "/reader/statistics":
+                # 如果当前还没盖上统计页，就盖上去
+                if self.page.views[-1].route != "/reader/statistics":
+                    self.page.views.append(get_statistics_view(self))
+            else:
+                # 如果目标只是 "/reader"（即从统计页回退），确保把顶部的统计页清理掉
+                while len(self.page.views) > 2: # [Home, Reader, Stats...]
+                    self.page.views.pop()
+
         self._apply_theme_colors()
         self.page.update()
 
+    # 💥 修改点 2：修复物理返回键/Esc 键的同步逻辑
     def view_pop(self, e):
-        # 1. 物理侧滑余震拦截（0.5秒内刚因为侧滑关过弹窗，则绝不回退页面，留在这看书）
-        if hasattr(self, "_last_dismiss_time") and (time.time() - self._last_dismiss_time < 0.5):
+        # 增加防连击保护
+        if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
+        self._last_pop_time = time.time()
 
-        # 2. 检查是否有业务弹窗开着，有的话优先关弹窗
-        if hasattr(self, "active_dialogs") and self.active_dialogs:
-            dlg = self.active_dialogs.pop()
-            self._universal_close(dlg)
-            return
+        # 拦截面板逻辑（保持不变）
+        if getattr(self, "toc_panel", None) and self.toc_panel.visible:
+            self.page.run_task(self.close_reader_overlays); return
+        if getattr(self, "settings_panel", None) and self.settings_panel.visible:
+            self.page.run_task(self.close_reader_overlays); return
+        if getattr(self, "global_dialog", False):
+            self._universal_close(self.global_dialog); return 
 
-        # 3. 没有任何弹窗阻挡，执行正常的退回书架逻辑
-        self.go_back_home(None)
+        # 核心：使用 push_route 触发同步，而不是手动设置 page.route
+        if len(self.page.views) > 1:
+            if self.page.views[-1].route == "/reader":
+                self.save_current_progress()
+                self.page.run_task(self.page.push_route, "/")
+            else:
+                # 从统计页回退
+                self.page.run_task(self.page.push_route, "/reader")
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -210,15 +244,16 @@ class NovelReaderApp:
 
     def _on_keyboard_control(self, e: ft.KeyboardEvent):
         if e.key == "Escape":
-            dialogs_to_check = [
-                getattr(self, "global_dialog", None),
-                getattr(self, "toc_sheet", None),
-                getattr(self, "settings_sheet", None)
-            ]
-            for dlg in dialogs_to_check:
-                if dlg and getattr(dlg, "open", False):
-                    self._universal_close(dlg)
-                    return
+            if getattr(self, "toc_panel", None) and self.toc_panel.visible:
+                self.page.run_task(self.close_reader_overlays)
+                return
+            if getattr(self, "settings_panel", None) and self.settings_panel.visible:
+                self.page.run_task(self.close_reader_overlays)
+                return
+                
+            if getattr(self, "global_dialog", None) and getattr(self.global_dialog, "open", False):
+                self._universal_close(self.global_dialog)
+                return
 
             if self.page.route == "/reader":
                 self.go_back_home(None)
@@ -305,7 +340,6 @@ class NovelReaderApp:
 
             all_files = []
             for root, dirs, files in os.walk(base_dir):
-                # 💥 核心修复 1：剥离大模型！将 models 文件夹从遍历名单中踢出！
                 if 'models' in dirs:
                     dirs.remove('models')
                     
@@ -317,13 +351,7 @@ class NovelReaderApp:
                 self.show_snack_bar("⚠️ 没有可导出的数据")
                 return
             
-            # ... 下面的 轨道A 和 轨道B 代码保持完全不变 ...
-
-            # ========================================================
-            # 🚀 轨道 A：电脑端 (Windows/Mac/Linux) —— 沿用原逻辑，拒绝内存爆炸
-            # ========================================================
             if sys.platform in ["win32", "darwin", "linux"]:
-                # 1. 电脑端先选路径（不带 src_bytes，秒弹系统窗口）
                 save_path = await ft.FilePicker().save_file(
                     file_type=ft.FilePickerFileType.CUSTOM,
                     allowed_extensions=["zip"],
@@ -334,7 +362,6 @@ class NovelReaderApp:
                     self.show_snack_bar("⚠️ 已取消导出")
                     return
 
-                # 2. 选好路径后再弹进度条，直接边读边往硬盘里写
                 prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
                 prog_text = ft.Text("正在打包写入硬盘...", size=13, color="onSurface")
                 
@@ -351,7 +378,6 @@ class NovelReaderApp:
                         rel_path = os.path.relpath(abs_path, base_dir)
                         zipf.write(abs_path, rel_path)
                         
-                        # 动态刷新 UI 进度
                         if i % max(1, total_files // 20) == 0 or i == total_files - 1:
                             prog_bar.value = (i + 1) / total_files
                             prog_text.value = f"正在写入硬盘... {i+1} / {total_files}"
@@ -361,11 +387,7 @@ class NovelReaderApp:
                 self.show_snack_bar("✅ 应用数据已完整导出到本地")
                 self._close_dialog()
 
-            # ========================================================
-            # 📱 轨道 B：移动端 (Android/iOS) —— 内存打包 + 沙盒穿透
-            # ========================================================
             else:
-                # 1. 移动端先弹进度条
                 prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
                 prog_text = ft.Text("正在内存中构建数据包...", size=13, color="onSurface")
                 
@@ -380,7 +402,6 @@ class NovelReaderApp:
                 import zipfile
                 zip_buffer = io.BytesIO()
 
-                # 2. 强制在内存中打包，规避安卓沙盒磁盘写入拦截
                 with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for i, abs_path in enumerate(all_files):
                         rel_path = os.path.relpath(abs_path, base_dir)
@@ -397,7 +418,6 @@ class NovelReaderApp:
                 prog_text.value = "构建完成！请在系统弹窗中选择保存..."
                 self.page.update()
 
-                # 3. 把构建好的内存包直接喂给安卓底层分享接口
                 await ft.FilePicker().save_file(
                     file_type=ft.FilePickerFileType.CUSTOM,
                     allowed_extensions=["zip"],
@@ -415,7 +435,6 @@ class NovelReaderApp:
 
     async def import_app_data(self, e):
         try:
-            # 1. UI 状态切换
             prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
             prog_text = ft.Text("正在准备恢复环境...", size=13, color="onSurface")
             
@@ -426,7 +445,6 @@ class NovelReaderApp:
             self.global_dialog.actions = []
             self.page.update()
 
-            # 2. 唤起文件选择器
             files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["zip"]
@@ -435,8 +453,6 @@ class NovelReaderApp:
             if files and len(files) > 0:
                 zip_path = files[0].path
                 if zip_path:
-                    # 💥 关键点 1：清理引擎状态，确保不再占用任何书籍文件
-                    # 如果你的 NovelEngine 有 close() 方法请在此调用
                     self.current_book_path = "" 
                     self.engine.chapters_info = []
                     
@@ -450,19 +466,16 @@ class NovelReaderApp:
                         zip_infos = zipf.infolist()
                         total_files = len(zip_infos)
                         
-                        # 2. 开始解压并动态刷新进度
                         for i, zip_info in enumerate(zip_infos):
                             try:
-                                # 💥 治标之法：在解压覆盖前，先探测旧文件是否存在。若存在，强行解除只读封印！
                                 target_path = os.path.join(base_dir, zip_info.filename)
                                 if os.path.exists(target_path):
                                     import stat
                                     try:
                                         os.chmod(target_path, stat.S_IWRITE) 
                                     except Exception:
-                                        pass # 如果连改权限的权限都没有，就交给下面的 except 去捕获
+                                        pass 
 
-                                # 安全执行解压覆盖
                                 zipf.extract(zip_info, base_dir)
                                 
                             except PermissionError:
@@ -479,7 +492,7 @@ class NovelReaderApp:
                     self._load_config_from_appdata()
                     self._load_bookshelf()
                     self.refresh_bookshelf_ui()
-                    # 💥 修复 500 报错 Bug 的终极补丁：一枪崩掉旧引擎，强迫它下次热启动
+                    
                     if sys.platform == "win32":
                         os.system("taskkill /F /IM llama-server.exe >nul 2>&1")
 
@@ -491,7 +504,6 @@ class NovelReaderApp:
             self._close_dialog()
             
         except Exception as ex:
-            # 将错误信息反馈给 UI
             self.show_snack_bar(f"❌ 恢复失败: {str(ex)}")
             self._close_dialog()
         
@@ -548,7 +560,6 @@ class NovelReaderApp:
     # --- 新增 Flet 0.84.0 适配代码：本地模型文件管理与导入 ---
     # ==========================================
     def get_models_dir(self):
-        """获取/创建模型专属的私有存放目录"""
         import os
         from data.storage import StorageManager
         models_dir = os.path.join(StorageManager.get_base_dir(), "models")
@@ -556,7 +567,6 @@ class NovelReaderApp:
         return models_dir
 
     def get_local_models(self):
-        """扫描目录，返回所有可用模型文件的绝对路径"""
         import os
         models_dir = self.get_models_dir()
         if not os.path.exists(models_dir):
@@ -567,9 +577,7 @@ class NovelReaderApp:
             return []
 
     async def trigger_model_picker(self, dropdown_control):
-        """拉起系统文件管理器并导入模型（纯异步调用）"""
         try:
-            # 最新版的 FilePicker 作为全局独立方法直接 await
             files = await ft.FilePicker().pick_files(
                 dialog_title="请选择本地大模型",
                 file_type=ft.FilePickerFileType.CUSTOM, 
@@ -590,11 +598,9 @@ class NovelReaderApp:
                 dest_path = os.path.join(self.get_models_dir(), original_name)
 
                 try:
-                    # 关键权衡：将大文件拷贝抛入子线程，避免阻塞主 UI 导致掉帧卡死
                     await asyncio.to_thread(shutil.copy2, src_path, dest_path)
                     self.show_snack_bar(f"✅ 模型 {original_name} 导入成功")
                     
-                    # 动态刷新 UI 选项卡
                     if dropdown_control:
                         opts = [ft.dropdown.Option(f) for f in self.get_local_models()]
                         dropdown_control.options = opts
@@ -638,7 +644,6 @@ class NovelReaderApp:
 
                     try:
                         shutil.copy2(picked_path, persistent_path)
-                        # 💥 治本之法：无论是不是微信来的文件，落地瞬间强行洗掉“只读”属性！
                         import stat
                         os.chmod(persistent_path, stat.S_IWRITE | stat.S_IREAD)
                         
@@ -716,7 +721,6 @@ class NovelReaderApp:
                 info_col.controls.append(ft.Text(vol_title, size=11, color=ft.Colors.GREY_700, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
             info_col.controls.append(ft.Text(chap_title, size=11, color=ft.Colors.GREY_500, max_lines=2 if not vol_title else 1, overflow=ft.TextOverflow.ELLIPSIS))
 
-            # 💥 彻底弃用 GestureDetector，改用原生 Container，配合全新的纯净路由，手感拉满！
             card = ft.Container(
                 alignment=ft.Alignment(0, 0),
                 content=ft.Container(
@@ -826,7 +830,6 @@ class NovelReaderApp:
         self.current_scroll_offset = target_offset
         self.current_max_scroll_extent = 0.0 
 
-        # --- 1. 更新顶部菜单与状态进度 ---
         if hasattr(self, "top_bar_book_name"):
             display_vol = volume if volume and volume != title else ""
             self.top_bar_book_name.value = f"{self.current_book_name} | {display_vol}" if display_vol else self.current_book_name
@@ -846,7 +849,6 @@ class NovelReaderApp:
         
         current_text_color = "#B0B0B0" if self._get_is_dark_mode() else self.reader_text_color
         
-        # --- 2. 切分文本并生成 UI 正文节点 ---
         paragraphs = [p.rstrip() for p in text.replace('\r', '').split('\n') if p.strip()]
         
         self.reader_text_controls = []
@@ -940,7 +942,6 @@ class NovelReaderApp:
             
         self.page.update()
         
-        # --- 3. 触发滚动与透明度淡入动画 ---
         self.page.run_task(self._delayed_scroll_to_chapter, idx)
         self.page.run_task(self._finalize_chapter_load, self.text_scroll_col, target_offset)
 
@@ -995,7 +996,7 @@ class NovelReaderApp:
             if query in ch['title'].lower():
                 def make_click(idx):
                     def click_handler(e):
-                        self._close_toc_sheet()
+                        self.page.run_task(self.close_reader_overlays)
                         self.load_chapter(idx)
                     return click_handler
                 
@@ -1032,6 +1033,11 @@ class NovelReaderApp:
 
     async def _delayed_scroll_to_chapter(self, idx, delay=0.1):
         if not hasattr(self, "toc_listview"): return
+        
+        # 💥 关键防御：如果目录面板当前根本不可见，绝对不要去触发 scroll_to，否则必卡 4 秒超时！
+        if not getattr(self, "toc_panel", None) or not self.toc_panel.visible: 
+            return
+            
         display_idx = -1
         try:
             display_idx = self.filtered_toc_mapping.index(idx)
@@ -1049,13 +1055,20 @@ class NovelReaderApp:
     async def _finalize_chapter_load(self, col, offset):
         await asyncio.sleep(0.1) 
         try:
-            if offset > 0:
-                await col.scroll_to(offset=offset, duration=0)
-                await asyncio.sleep(0.05) 
+            # 只有当路由真的是阅读页时，才执行滚动
+            if offset > 0 and getattr(self.page, "route", "/") == "/reader":
+                try:
+                    await col.scroll_to(offset=offset, duration=0)
+                    await asyncio.sleep(0.05) 
+                except Exception:
+                    pass # 忽略所有滚动引起的超时错误
+        finally:
+            # 💥 终极保障：无论滚动是否成功、是否被中断，这里使用 finally 绝对保证透明度被设为 1，让文字显现！
             col.opacity = 1
-            col.update()
-        except Exception:
-            pass
+            try:
+                col.update()
+            except Exception:
+                pass
 
     def go_back_home(self, e):
         if self.page.route == "/reader":
@@ -1063,7 +1076,7 @@ class NovelReaderApp:
             if getattr(self, "is_immersive", False):
                 self.toggle_immersive(None)
                 
-        # 通过 push_route 触发上面的 route_change，实现全局干净回退
+        
         self.page.run_task(self.page.push_route, "/")
     
     async def copy_current(self, e):
@@ -1071,11 +1084,8 @@ class NovelReaderApp:
         text = self.engine.get_chapter_text(self.current_chapter_idx)
         self._execute_copy(text)
         self.show_snack_bar("✅ 本章内容已复制到剪贴板")
-        try:
-            self._close_toc_sheet() 
-            self.page.close(self.settings_sheet)
-        except Exception:
-            pass
+        await self.close_reader_overlays()
+
     # endregion
 
     # region 4. 主题排版与 UI 渲染刷子
@@ -1327,7 +1337,7 @@ class NovelReaderApp:
         in_reader = getattr(self.page, "route", "/") == "/reader"
         dialog_bg_c = menu_c if in_reader else "surface"
 
-        for sheet in [getattr(self, "global_dialog", None), getattr(self, "settings_sheet", None), getattr(self, "toc_sheet", None)]:
+        for sheet in [getattr(self, "global_dialog", None), getattr(self, "settings_panel", None), getattr(self, "toc_panel", None)]:
             if sheet:
                 target_c = dialog_bg_c if sheet == getattr(self, "global_dialog", None) else menu_c
                 sheet.bgcolor = target_c
@@ -1431,7 +1441,6 @@ class NovelReaderApp:
         if control not in self.active_dialogs:
             self.active_dialogs.append(control)
 
-        # 挂载关闭钩子：只要弹窗关闭（哪怕是安卓物理侧滑关闭），立刻从生死簿除名并记录时间
         if not getattr(control, "_hooked", False):
             orig_dismiss = control.on_dismiss
             def wrapped_dismiss(e):
@@ -1442,7 +1451,6 @@ class NovelReaderApp:
             control.on_dismiss = wrapped_dismiss
             control._hooked = True
 
-        # 标准 Flet API 唤起
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
             self.page.open(control)
         else:
@@ -1489,24 +1497,50 @@ class NovelReaderApp:
     def _close_dialog(self):
         self._universal_close(self.global_dialog)
 
-    def _open_toc_sheet(self, e=None):
-        self._universal_open(self.toc_sheet)
-        self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
+    def _open_toc_panel(self, e=None):
+        if hasattr(self, "toc_panel"):
+            self.reader_mask.visible = True 
+            self.toc_panel.visible = True
+            self.toc_panel.offset = ft.Offset(0, 0)
+            self.page.update()
+            self.page.run_task(self._delayed_scroll_to_chapter, self.current_chapter_idx, 0.3)
 
-    def _close_toc_sheet(self, e=None):
-        self._universal_close(self.toc_sheet)
+    def _open_settings_panel(self, e=None):
+        if hasattr(self, "settings_panel"):
+            self.reader_mask.visible = True 
+            self.settings_panel.visible = True
+            self.settings_panel.offset = ft.Offset(0, 0)
+            self.page.update()
 
-    def _open_settings_sheet(self, e=None):
-        self._universal_open(self.settings_sheet)
-
-    def _close_settings_sheet(self, e=None):
-        self._universal_close(self.settings_sheet)
+    async def close_reader_overlays(self, e=None):
+        if getattr(self, "_is_closing_overlay", False):
+            return
+        self._is_closing_overlay = True
+        
+        try:
+            if hasattr(self, "toc_panel"):
+                self.toc_panel.offset = ft.Offset(0, 1)
+            if hasattr(self, "settings_panel"):
+                self.settings_panel.offset = ft.Offset(0, 1)
+            
+            if hasattr(self, "reader_mask"):
+                self.reader_mask.visible = False
+                
+            self.page.update()
+            await asyncio.sleep(0.3) 
+            
+            if hasattr(self, "toc_panel"): self.toc_panel.visible = False
+            if hasattr(self, "settings_panel"): self.settings_panel.visible = False
+            self.page.update()
+        finally:
+            self._is_closing_overlay = False
 
     def show_book_options_dialog(self, path, current_name):
         DialogManager.show_book_options_dialog(self, path, current_name)
 
     def show_statistics_dialog(self, e):
-        DialogManager.show_statistics_dialog(self, e)
+        # 换用最新的 push_route
+        self.page.run_task(self.page.push_route, "/reader/statistics")
 
     def show_settings_dialog(self, e):
         DialogManager.show_settings_dialog(self, e)

@@ -30,7 +30,8 @@ class DialogManager:
             app._close_dialog()
             await app.trigger_export_picker(path, current_name)
 
-        export_btn = ft.Button(
+        # 💥 修正：ft.Button 替换为 ft.ElevatedButton
+        export_btn = ft.ElevatedButton(
             content=ft.Row(
                 [ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], 
                 alignment=ft.MainAxisAlignment.CENTER
@@ -48,82 +49,15 @@ class DialogManager:
             ft.Text("注：移出书架不会删除原文件，导出则会另存一份副本", size=12, color=ft.Colors.GREY)
         ], tight=True) 
         
+        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
-            ft.Button(content=ft.Text("保存名称"), on_click=on_save),
-            ft.Button(content=ft.Text("移出书架"), style=ft.ButtonStyle(color=ft.Colors.RED), on_click=confirm_delete),
-            ft.Button(content=ft.Text("取消"), on_click=lambda _: app._close_dialog())
+            ft.TextButton(content=ft.Text("保存名称"), on_click=on_save),
+            ft.TextButton(content=ft.Text("移出书架"), style=ft.ButtonStyle(color=ft.Colors.RED), on_click=confirm_delete),
+            ft.TextButton(content=ft.Text("取消"), on_click=lambda _: app._close_dialog())
         ]
         app._open_dialog()
 
-    @staticmethod
-    def show_statistics_dialog(app, e):
-        if not app.engine.chapters_info: return
-
-        total_words = len("".join(app.engine.full_text_content.split()))
-        total_chaps = len(app.engine.chapters_info)
-        
-        vols = set(ch['volume'] for ch in app.engine.chapters_info)
-        total_vols = len(vols)
-
-        current_idx = app.current_chapter_idx
-        curr_ch_info = app.engine.chapters_info[current_idx]
-        curr_vol = curr_ch_info.get('volume', '')
-
-        curr_chap_words = len("".join(app.engine.get_chapter_text(current_idx).split()))
-
-        total_read_words = 0
-        vol_total_words = 0
-        vol_read_words = 0
-
-        max_ext = getattr(app, "current_max_scroll_extent", 0.0)
-        pct = 0.0
-        if max_ext > 0:
-            pct = min(1.0, max(0.0, app.current_scroll_offset / max_ext))
-
-        for i, ch in enumerate(app.engine.chapters_info):
-            words = len("".join(app.engine.get_chapter_text(i).split()))
-            
-            is_curr_vol = (ch.get('volume', '') == curr_vol)
-            if is_curr_vol:
-                vol_total_words += words
-
-            if i < current_idx:
-                total_read_words += words
-                if is_curr_vol:
-                    vol_read_words += words
-            elif i == current_idx:
-                read_part = int(words * pct)
-                total_read_words += read_part
-                if is_curr_vol:
-                    vol_read_words += read_part
-
-        total_unread_words = total_words - total_read_words
-        vol_unread_words = vol_total_words - vol_read_words
-
-        app.global_dialog.modal = False
-        app.global_dialog.inset_padding = ft.padding.symmetric(horizontal=20, vertical=24)
-        app.global_dialog.content_padding = ft.padding.only(left=20, top=20, right=20, bottom=10)
-
-        app.global_dialog.title = ft.Text("阅读统计", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
-
-        stat_content = ft.Column([
-            ft.Text(f"卷数：{total_vols}", size=14, color="onSurface"),
-            ft.Text(f"章节数：{total_chaps}", size=14, color="onSurface"),
-            ft.Text(f"总字数：{total_words:,}", size=14, color="onSurface"),
-            ft.Text(f"本卷字数：{vol_total_words:,}", size=14, color="onSurface"),
-            ft.Text(f"本章字数：{curr_chap_words:,}", size=14, color="onSurface"),
-            ft.Divider(height=10, thickness=0.5),
-            ft.Text(f"已读：{total_read_words:,}", size=14, color="onSurface"),
-            ft.Text(f"未读：{total_unread_words:,}", size=14, color="onSurface"),
-            ft.Text(f"本卷已读：{vol_read_words:,}", size=14, color="onSurface"),
-            ft.Text(f"本卷未读：{vol_unread_words:,}", size=14, color="onSurface"),
-        ], tight=True, spacing=8)
-
-        app.global_dialog.content = stat_content
-        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
-        app.global_dialog.actions = [btn_close]
-
-        app._open_dialog()
+    # 💥 已删除：show_statistics_dialog 的所有代码
 
     @staticmethod
     def show_settings_dialog(app, e):
@@ -149,7 +83,6 @@ class DialogManager:
         cloud_view = ft.Column([embed_url_tf, embed_key_tf, embed_model_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
         local_models = app.get_local_models()
-        # 💥 修正点：将回显绑定的键严格对齐为 ai_service.py 所识别的 local_model_path
         saved_local_model = app.ai_config.get("local_model_path", "")
         local_model_dd = ft.Dropdown(
             label="已导入的本地模型",
@@ -182,13 +115,15 @@ class DialogManager:
                 app.page.update()
             except Exception: pass
             
+        # 💥 修复：移除括号内的 on_change 传参
         embed_mode_dd = ft.Dropdown(
             label="工作模式", 
             options=[ft.dropdown.Option("云端 API"), ft.dropdown.Option("本地模型")], 
             value=app.ai_config.get("embed_mode", "云端 API"),
-            text_size=13, dense=True, width=UI_WIDTH,
-            on_select=on_embed_mode_change
+            text_size=13, dense=True, width=UI_WIDTH
         )
+        # 💥 修复：通过属性动态挂载事件，完美绕过 Flet 新版的 init 类型检查
+        embed_mode_dd.on_change = on_embed_mode_change
 
         if embed_mode_dd.value == "本地模型":
             content_slot.content = local_view
@@ -198,11 +133,10 @@ class DialogManager:
         tab2_col = ft.Column([embed_mode_dd, ft.Container(height=5), content_slot], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
         tab2_container = ft.Container(content=tab2_col, padding=ft.padding.only(left=40, top=20, right=40, bottom=10))
 
-        # === Tab 3: 本书知识库 (方案 A 状态解耦重构) ===
+        # === Tab 3: 本书知识库 ===
         book_name = app.current_book_name if getattr(app, 'current_book_name', "") else "未打开任何书籍"
         status_text = ft.Text(f"当前阅读：《{book_name}》\n索引状态：未建立", size=14, color="onSurface", text_align=ft.TextAlign.CENTER)
         
-        # 读取全局进度变量初始化 UI（首次打开为默认值）
         init_prog_val = getattr(app, "build_progress_value", 0)
         init_prog_text = getattr(app, "build_progress_text", "准备切块中...")
         is_building = getattr(app, "is_building_index", False)
@@ -210,8 +144,9 @@ class DialogManager:
         prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color=ft.Colors.BLUE, height=8, width=UI_WIDTH)
         prog_text = ft.Text(init_prog_text, size=12, color=ft.Colors.GREY_500, visible=is_building)
         
-        btn_build = ft.Button(content=ft.Text("🚀 向量建库"), style=app.get_action_button_style(ft.padding.symmetric(horizontal=16, vertical=12)))
-        btn_clear = ft.Button(content=ft.Text("🧹 清除索引", color=ft.Colors.BLACK), style=ft.ButtonStyle(bgcolor=ft.Colors.RED, color=ft.Colors.BLACK))
+        # 💥 修正：ft.Button 替换为 ft.ElevatedButton
+        btn_build = ft.ElevatedButton(content=ft.Text("🚀 向量建库"), style=app.get_action_button_style(ft.padding.symmetric(horizontal=16, vertical=12)))
+        btn_clear = ft.ElevatedButton(content=ft.Text("🧹 清除索引", color=ft.Colors.BLACK), style=ft.ButtonStyle(bgcolor=ft.Colors.RED, color=ft.Colors.BLACK))
         
         action_row = ft.Row([btn_build, btn_clear], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
         
@@ -238,7 +173,6 @@ class DialogManager:
             ft.Text("提示: 数值越大提供的背景知识越多，但也越容易分散大模型注意力或导致 API 超时。", size=11, color=ft.Colors.GREY_500, text_align=ft.TextAlign.LEFT)
         ], spacing=5)
 
-        # 💥 方案 A 核心：将当前新创建的 UI 注册给 App 全局引用，供后台动态寻找
         app._active_ui = {
             'prog_bar': prog_bar,
             'prog_text': prog_text,
@@ -279,7 +213,6 @@ class DialogManager:
             else:
                 btn_build.content.value = "🚀 向量建库"
 
-        # 如果当前不在建库，正常刷新；如果正在建库，则恢复锁定的 UI 状态
         if is_building:
             btn_build.content.value = "⏳ 后台建库中..."
             btn_build.disabled = True
@@ -293,7 +226,6 @@ class DialogManager:
                 return
 
             def do_build():
-                # 💥 并发安全快照：锁死当前正在建库的书籍数据，防止用户切书导致数据错乱污染
                 target_book_path = app.current_book_path
                 target_book_name = app.current_book_name
                 target_chapters = app.engine.chapters_info.copy()
@@ -313,7 +245,6 @@ class DialogManager:
                 except Exception: pass
 
                 def build_task():
-                    # 💥 方案 A 专用帮助函数：安全更新动态 UI
                     def safe_update_ui(val, text):
                         app.build_progress_value = val
                         app.build_progress_text = text
@@ -339,7 +270,6 @@ class DialogManager:
                             app.page.update()
                             return
                         
-                        # 💥 使用快照数据进行物理处理
                         book_hash = hashlib.md5(target_book_path.encode('utf-8')).hexdigest()
                         db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
                         os.makedirs(db_dir, exist_ok=True)
@@ -372,11 +302,7 @@ class DialogManager:
                             
                             safe_update_ui(i / total, f"🚀 正在调用 Embedding 接口... ( {i} / {total} )")
                             
-                            # 提取这一批次的所有文本
                             batch_texts = [c[1] for c in batch]
-                            
-                            # 💥 核心修改：调用批量接口（需配合更新 AIService 和 local_inference）
-                            # 注意：此处我们需要在 AIService 中新增 get_embeddings 方法（带 s）
                             batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
 
                             db_data = []
@@ -386,7 +312,6 @@ class DialogManager:
                                 
                             vdb.insert_chunks(db_data)
                             
-                        # 成功大满贯
                         app.is_building_index = False
                         safe_update_ui(1.0, "✅ 建库大功告成！")
                         
@@ -517,9 +442,6 @@ class DialogManager:
             top_k_container
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
 
-        # =========================================================
-        # 💥 Flet 0.84.0 破坏性更新真正跟进 (Tabs 组件重构)
-        # 彻底采用 Flutter 分离架构：TabBar 负责顶栏按钮，TabBarView 负责页面装载
         tab_bar = ft.TabBar(
             tabs=[
                 ft.Tab(label="对话模型"),
@@ -549,7 +471,6 @@ class DialogManager:
                 expand=True
             )
         )
-        # =========================================================
 
         def save(e):
             app.ai_config["url"] = url_tf.value.strip()
@@ -561,7 +482,6 @@ class DialogManager:
             app.ai_config["embed_url"] = embed_url_tf.value.strip()
             app.ai_config["embed_key"] = embed_key_tf.value.strip()
             app.ai_config["embed_model"] = embed_model_tf.value.strip()
-            # 💥 修正点：保存时严格对齐为 local_model_path，以驱动本地计算
             app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
             app.ai_config["top_k"] = int(top_k_slider.value) 
             
@@ -572,9 +492,10 @@ class DialogManager:
         app.global_dialog.title = ft.Text("设置与知识库中心", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Container(content=tabs, width=500, height=450)
         
+        # 💥 修正：ft.Button 替换为 ft.ElevatedButton / TextButton
         app.global_dialog.actions = [
-            ft.Button(content=ft.Text("保存并关闭"), on_click=save, style=app.get_action_button_style()),
-            ft.Button(content=ft.Text("取消"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+            ft.ElevatedButton(content=ft.Text("保存并关闭"), on_click=save, style=app.get_action_button_style()),
+            ft.TextButton(content=ft.Text("取消"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
         ]
         app._open_dialog()
 
@@ -584,9 +505,10 @@ class DialogManager:
         app.global_dialog.inset_padding = None
         app.global_dialog.content_padding = ft.padding.only(left=20, top=15, right=20, bottom=15)
 
+        # 💥 修正：ft.Button 替换为 ft.ElevatedButton
         backup_row = ft.Row([
-            ft.Button(content=ft.Row([ft.Icon(ft.Icons.UPLOAD), ft.Text("导出备份", color="onSurface")]), on_click=app.export_app_data, style=app.get_action_button_style()),
-            ft.Button(content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("恢复备份", color="onSurface")]), on_click=app.import_app_data, style=app.get_action_button_style())
+            ft.ElevatedButton(content=ft.Row([ft.Icon(ft.Icons.UPLOAD), ft.Text("导出备份", color="onSurface")]), on_click=app.export_app_data, style=app.get_action_button_style()),
+            ft.ElevatedButton(content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("恢复备份", color="onSurface")]), on_click=app.import_app_data, style=app.get_action_button_style())
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
 
         app.global_dialog.title = ft.Text("⚙️ 全局设置", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
@@ -597,8 +519,9 @@ class DialogManager:
             backup_row
         ], tight=True)
         
+        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
-            ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+            ft.TextButton(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
         ]
         app._open_dialog()
 
@@ -641,8 +564,9 @@ class DialogManager:
             height=400, width=500
         )
         
+        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
-            ft.Button(
+            ft.TextButton(
                 content=ft.Text("关闭", color="onSurface"), 
                 on_click=lambda _: app._close_dialog(), 
                 style=app.get_action_button_style()
@@ -650,9 +574,6 @@ class DialogManager:
         ]
         app._open_dialog()
 
-    # =========================================================================
-    # 核心 AI 助手界面 (含 人物梳理 Pro 及防剧透检索)
-    # =========================================================================
     @staticmethod
     def show_ai_dialog(app, e):
         if not app.engine.chapters_info: return
@@ -661,7 +582,8 @@ class DialogManager:
         ch_info = app.engine.chapters_info[target_idx]
         
         target_idx_str = str(target_idx)
-        saved_data = app.current_book_summaries.get(target_idx_str, {})
+        # 💥 优化：使用 setdefault，确保空字典被安全地注入到内存中，避免丢失指针
+        saved_data = app.current_book_summaries.setdefault(target_idx_str, {})
         if isinstance(saved_data, str):
             saved_data = {"main": saved_data}
             app.current_book_summaries[target_idx_str] = saved_data
@@ -689,10 +611,10 @@ class DialogManager:
         mode_btn_char_pro = ft.TextButton(content=ft.Text("人物+"), style=ft.ButtonStyle(color="onSurface"))
         mode_btn_clue = ft.TextButton(content=ft.Text("伏笔"), style=ft.ButtonStyle(color="onSurface"))
 
-        btn_regen = ft.Button(content=ft.Text("总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
-        
-        btn_copy = ft.Button(content=ft.Text("复制", color="onSurface"), style=app.get_action_button_style())
-        btn_close = ft.Button(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+        # 💥 修正：ft.Button 替换为 ft.ElevatedButton / TextButton
+        btn_regen = ft.ElevatedButton(content=ft.Text("总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
+        btn_copy = ft.ElevatedButton(content=ft.Text("复制", color="onSurface"), style=app.get_action_button_style())
+        btn_close = ft.TextButton(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
 
         def update_mode_btns_ui():
             is_dark = app._get_is_dark_mode()
@@ -1125,11 +1047,9 @@ class DialogManager:
             width=600, height=400, bgcolor=ft.Colors.TRANSPARENT  
         )
         
-        # char_row = ft.Row([mode_btn_char, mode_btn_char_pro], spacing=5, alignment=ft.MainAxisAlignment.CENTER)
         app.global_dialog.actions = [
             ft.Container(
                 content=ft.Column([
-                    # 💥 彻底拆掉 char_row，让 4 个按钮平起平坐，全部享受自由间距！
                     ft.Row(
                         [mode_btn_main, mode_btn_char, mode_btn_char_pro, mode_btn_clue], 
                         alignment=ft.MainAxisAlignment.SPACE_AROUND

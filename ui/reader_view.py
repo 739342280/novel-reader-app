@@ -8,16 +8,31 @@ def get_reader_view(app):
     app.search_tf = ft.TextField(label="搜索章节", height=40, on_change=app.filter_toc)
     app.toc_listview = ft.ListView(expand=True, spacing=2, key="toc_listview")
     
-    app.toc_sheet = ft.BottomSheet(
-        content=ft.Container(
-            content=ft.Column([
+    app.reader_mask = ft.Container(
+    expand=True,
+    on_click=app.close_reader_overlays, # 点击即关闭
+    bgcolor=ft.Colors.TRANSPARENT,      # 保持透明，或者可以设为 "#20000000" 来实现调暗效果
+    visible=False                       # 初始隐藏
+    )
+
+    app.toc_panel = ft.Container(
+        content=ft.Column([
+            ft.Row([
                 ft.Text("📚 章节目录", size=20, weight=ft.FontWeight.BOLD),
-                app.search_tf, 
-                app.toc_listview
-            ], expand=True),
-            padding=20,
-            height=app.page.height * 0.7 if app.page.height else 600
-        )
+                ft.IconButton(ft.Icons.CLOSE, on_click=app.close_reader_overlays)
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            app.search_tf, 
+            app.toc_listview
+        ], expand=True),
+        padding=20,
+        bgcolor="surface", # 必须有底色，否则透明
+        border_radius=ft.BorderRadius.only(top_left=28, top_right=28),
+        shadow=ft.BoxShadow(blur_radius=20, color="#80000000"),
+        left=0, right=0, bottom=0,
+        height=app.page.height * 0.7 if app.page.height else 600,
+        offset=ft.Offset(0, 1), # 默认藏在屏幕下方 100% 处
+        animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE),
+        visible=False
     )
 
     app.font_size_text = ft.Text(str(app.font_size), weight=ft.FontWeight.BOLD)
@@ -133,33 +148,37 @@ def get_reader_view(app):
         app.system_theme_switch
     ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN)
 
-    app.btn_copy_current = ft.Button(
+    app.btn_copy_current = ft.ElevatedButton(
         content=ft.Row([ft.Icon(ft.Icons.COPY, size=18), ft.Text("复制本章", size=13)], alignment=ft.MainAxisAlignment.CENTER),
         on_click=app.copy_current,
     )
 
-    app.settings_sheet = ft.BottomSheet(
-        content=ft.Container(
-            padding=12, 
-            content=ft.Column([
-                ft.Text("排版调整", size=14, weight=ft.FontWeight.BOLD), 
-                typography_row,
-                
-                ft.Divider(height=6, thickness=0.5), 
-                theme_switch_row,
-                
-                ft.Divider(height=6, thickness=0.5), 
-                ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
-                bg_options,
-                
-                ft.Divider(height=6, thickness=0.5),
-                ft.Text("字体选择", size=14, weight=ft.FontWeight.BOLD),
-                font_options,
-
-                ft.Divider(height=6, thickness=0.5),
-                app.btn_copy_current
-            ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=4) 
-        )
+    app.settings_panel = ft.Container(
+        padding=12,
+        bgcolor="surface",
+        border_radius=ft.BorderRadius.only(top_left=28, top_right=28),
+        shadow=ft.BoxShadow(blur_radius=20, color="#80000000"),
+        left=0, right=0, bottom=0,
+        offset=ft.Offset(0, 1), # 默认藏在屏幕下方
+        animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE),
+        visible=False,
+        content=ft.Column([
+            ft.Row([
+                ft.Text("排版调整", size=14, weight=ft.FontWeight.BOLD),
+                ft.IconButton(ft.Icons.CLOSE, on_click=app.close_reader_overlays)
+            ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+            typography_row,
+            ft.Divider(height=6, thickness=0.5), 
+            theme_switch_row,
+            ft.Divider(height=6, thickness=0.5), 
+            ft.Text("阅读背景", size=14, weight=ft.FontWeight.BOLD),
+            bg_options,
+            ft.Divider(height=6, thickness=0.5),
+            ft.Text("字体选择", size=14, weight=ft.FontWeight.BOLD),
+            font_options,
+            ft.Divider(height=6, thickness=0.5),
+            app.btn_copy_current
+        ], tight=True, scroll=ft.ScrollMode.AUTO, spacing=4) 
     )
 
     app.top_bar_book_name = ft.Text(app.current_book_name, size=13, color=ft.Colors.GREY_500, overflow=ft.TextOverflow.ELLIPSIS)
@@ -171,7 +190,7 @@ def get_reader_view(app):
         items=[
             ft.PopupMenuItem(
                 content=ft.Row([ft.Icon(ft.Icons.BAR_CHART), ft.Text("阅读统计")], spacing=10),
-                on_click=app.show_statistics_dialog
+                on_click=lambda _: app.page.run_task(app.page.push_route, "/reader/statistics")
             ),
             ft.PopupMenuItem(
                 content=ft.Row([ft.Icon(ft.Icons.AUTO_AWESOME), ft.Text("AI 设置")], spacing=10),
@@ -254,77 +273,58 @@ def get_reader_view(app):
         app._apply_theme_colors() 
         app._save_config_to_appdata()
 
-    app.theme_btn = ft.Button(
-        content=ft.Text("日间"), 
-        icon=ft.Icons.LIGHT_MODE,
-        on_click=toggle_app_theme,
+    # 💥 强制修正：全部替换为真实存在的 TextButton / ElevatedButton，并将点击事件指向新方法
+    app.theme_btn = ft.TextButton(
+        content=ft.Text("日间"), icon=ft.Icons.LIGHT_MODE, on_click=toggle_app_theme,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8)) 
     )
     app.sync_theme_btn_ui()
 
-    app.btn_toc = ft.Button(
-        content=ft.Text("目录"), 
-        icon=ft.Icons.MENU_BOOK, 
-        on_click=app._open_toc_sheet,
+    app.btn_toc = ft.TextButton(
+        content=ft.Text("目录"), icon=ft.Icons.MENU_BOOK, on_click=app._open_toc_panel,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
     )
     
-    app.btn_settings = ft.Button(
-        content=ft.Text("界面"), 
-        icon=ft.Icons.FORMAT_SIZE, 
-        on_click=app._open_settings_sheet,
+    app.btn_settings = ft.TextButton(
+        content=ft.Text("界面"), icon=ft.Icons.FORMAT_SIZE, on_click=app._open_settings_panel,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
     )
 
-    app.btn_prev = ft.Button(
-        content=ft.Text("上一章"), 
-        icon=ft.Icons.NAVIGATE_BEFORE, 
-        on_click=app.load_prev,
+    app.btn_prev = ft.TextButton(
+        content=ft.Text("上一章"), icon=ft.Icons.NAVIGATE_BEFORE, on_click=app.load_prev,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
     )
     
-    app.btn_next = ft.Button(
-        content=ft.Text("下一章"), 
-        icon=ft.Icons.NAVIGATE_NEXT, 
-        on_click=app.load_next,
+    app.btn_next = ft.TextButton(
+        content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=app.load_next,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
     )
 
     app.reader_bottom_bar = ft.Container(
-        bottom=0, left=0, right=0,
-        padding=10, 
-        bgcolor="surface",
+        bottom=0, left=0, right=0, padding=10, bgcolor="surface",
         shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
         content=ft.Column([
-            ft.Row([
-                app.btn_prev,
-                app.btn_next
-            ], alignment=ft.MainAxisAlignment.SPACE_AROUND),
-            
+            ft.Row([app.btn_prev, app.btn_next], alignment=ft.MainAxisAlignment.SPACE_AROUND),
             ft.Row([
                 app.btn_toc,
                 app.theme_btn,
-                ft.Button(
-                    content=ft.Text("AI总结"), 
-                    icon=ft.Icons.AUTO_AWESOME, 
-                    on_click=app.show_ai_dialog, 
-                    style=ft.ButtonStyle(
-                        color=ft.Colors.WHITE, 
-                        bgcolor=ft.Colors.DEEP_PURPLE_400,
-                        padding=ft.Padding.symmetric(horizontal=8) 
-                    )
+                ft.ElevatedButton(
+                    content=ft.Text("AI总结"), icon=ft.Icons.AUTO_AWESOME, on_click=app.show_ai_dialog, 
+                    style=ft.ButtonStyle(color=ft.Colors.WHITE, bgcolor=ft.Colors.DEEP_PURPLE_400, padding=ft.Padding.symmetric(horizontal=8))
                 ),
                 app.btn_settings
             ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
         ], tight=True, spacing=10),
-        offset=ft.Offset(0, 0),
-        animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
+        offset=ft.Offset(0, 0), animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
     )
 
     app.reader_view = ft.Stack([
-        app.reading_base_layer,  
+        app.reading_base_layer,
+        app.reader_mask,  
         app.reader_top_bar,
-        app.reader_bottom_bar
+        app.reader_bottom_bar,
+        app.toc_panel,      # 新增
+        app.settings_panel  # 新增
     ], expand=True, key="reader_view_main_stack")
     
     app._apply_theme_colors() 
