@@ -163,51 +163,61 @@ class NovelReaderApp:
 
     # region 1. 生命周期与原生路由管理
     def route_change(self, e):
-        current_route = self.page.route
-        
-        if current_route == "/":
+        # 💥 修复点 1：初始化首页 (解决启动白屏，并确保主页实例长驻防“空气墙”)
+        if not hasattr(self, "_has_init_home"):
+            self.page.views.clear()  # 踢掉 Flet 默认的空白 View
+            self.page.views.append(get_home_view(self))
+            self._has_init_home = True
+
+        # 💥 修复点 2：处理回退逻辑 (解决 Esc/返回按钮失效)
+        if self.page.route == "/":
+            # 如果从阅读页回来，且栈里有 2 个视图，则弹出顶层的阅读页
+            if len(self.page.views) > 1:
+                self.page.views.pop()
+            
             self.save_current_progress()
             if getattr(self, "is_immersive", False):
                 self.toggle_immersive(None)
+
+        elif self.page.route == "/reader":
+            # 进入阅读页：确保只添加一次
+            if len(self.page.views) < 2:
+                self.page.views.append(get_reader_view(self))
                 
-        self.page.views.clear()
-        
-        self.page.views.append(get_home_view(self))
-        
-        if current_route == "/reader":
-            self.page.views.append(get_reader_view(self))
-            
         self._apply_theme_colors()
         self.page.update()
 
     def view_pop(self, e):
-        # 💥 安卓端修复点 2：拦截安卓原生返回造成的“双击”余震
-        import time
-        if hasattr(self, "_last_dismiss_time") and time.time() - self._last_dismiss_time < 0.5:
-            return  # 如果半秒内刚关掉过一个弹窗，说明这是安卓底层发来的虚假 view_pop，直接忽略！
-
+        # 💥 修复点 2：优先级拦截逻辑
+        # 1. 优先检查并关闭所有可能的弹窗
         dialogs_to_check = [
             getattr(self, "global_dialog", None),
             getattr(self, "toc_sheet", None),
             getattr(self, "settings_sheet", None)
         ]
+        
+        active_dialog = None
         for dlg in dialogs_to_check:
             if dlg and getattr(dlg, "open", False):
-                self._universal_close(dlg)
-                return
+                active_dialog = dlg
+                break
+        
+        # 如果发现有打开的弹窗，仅关闭弹窗并直接截断返回，不准退出阅读页
+        if active_dialog:
+            self._universal_close(active_dialog)
+            return 
 
-        if getattr(self.page, "route", "/") == "/reader":
-            self.save_current_progress()
-            if getattr(self, "is_immersive", False):
-                self.toggle_immersive(None)
-
+        # 2. 如果没有任何弹窗，才处理真实的页面回退
         if len(self.page.views) > 1:
+            if getattr(self.page, "route", "/") == "/reader":
+                self.save_current_progress()
+                if getattr(self, "is_immersive", False):
+                    self.toggle_immersive(None)
+
+            # 手动弹出顶层视图并更新路由状态
             self.page.views.pop()
-            top_view = self.page.views[-1]
-            
-            # 💥 Flet 官方规范修复点：绝不能在这里使用 run_task(push_route)！
-            # 必须使用 page.go，彻底解决返回书架后界面假死、无法点击的 Bug！
-            self.page.go(top_view.route)
+            self.page.route = self.page.views[-1].route
+            self.page.update()
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -1078,6 +1088,8 @@ class NovelReaderApp:
         self.save_current_progress() 
         if getattr(self, "is_immersive", False):
             self.toggle_immersive(None)
+            
+        # 💥 最终修复：使用 run_task 来异步驱动 push_route，彻底解决报错
         self.page.run_task(self.page.push_route, "/")
     
     async def copy_current(self, e):
@@ -1441,16 +1453,10 @@ class NovelReaderApp:
                 except Exception: pass
 
     def _universal_open(self, control):
-        # 💥 安卓端修复点 1：给所有弹窗绑定底层关闭事件，记录“死亡时间”
-        import time
-        if not getattr(control, "_has_dismiss_binding", False):
-            original_dismiss = getattr(control, "on_dismiss", None)
-            def wrapped_dismiss(e):
-                self._last_dismiss_time = time.time()  # 记录弹窗被原生关闭的瞬间
-                if original_dismiss: original_dismiss(e)
-            control.on_dismiss = wrapped_dismiss
-            control._has_dismiss_binding = True
-
+        # 💥 修复点 3：强制重置状态，确保弹窗能够被重新唤醒
+        control.open = False 
+        self.page.update() 
+        
         if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
             self.page.open(control)
         else:
