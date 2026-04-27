@@ -310,48 +310,160 @@ class NovelReaderApp:
 
     async def export_app_data(self, e):
         try:
+            # 1. 改变 UI 状态为“导出进度条”
+            prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+            prog_text = ft.Text("正在准备打包数据...", size=13, color="onSurface")
+            
+            self.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
+            self.global_dialog.content = ft.Column([
+                ft.Container(height=10),
+                prog_bar,
+                prog_text,
+                ft.Container(height=10)
+            ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            self.global_dialog.actions = [] # 隐藏底部按钮防误触
+            self.page.update()
+
             timestamp = datetime.now().strftime("%Y%m%d_%H%M")
             suggested_name = f"小说智读备份_{timestamp}.zip"
+            base_dir = StorageManager.get_base_dir()
+
+            # 2. 搜集所有文件，用于计算进度条比例
+            all_files = []
+            for root, dirs, files in os.walk(base_dir):
+                for file in files:
+                    all_files.append(os.path.join(root, file))
             
-            save_path = await ft.FilePicker().save_file(
+            total_files = len(all_files)
+            if total_files == 0:
+                self.show_snack_bar("⚠️ 没有可导出的数据")
+                self._close_dialog()
+                return
+            
+            # 3. 💥 核心修改：在内存中构建 ZIP 包，规避安卓沙盒磁盘写入拦截
+            import io
+            import zipfile
+            zip_buffer = io.BytesIO()
+
+            with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                for i, abs_path in enumerate(all_files):
+                    rel_path = os.path.relpath(abs_path, base_dir)
+                    zipf.write(abs_path, rel_path)
+                    
+                    # 动态刷新 UI 进度（合并刷新批次，避免 UI 卡顿假死）
+                    if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                        prog_bar.value = (i + 1) / total_files
+                        prog_text.value = f"正在打包文件... {i+1} / {total_files}"
+                        self.page.update()
+                        await asyncio.sleep(0.01) # 让出主线程，保证进度条动画丝滑
+
+            # 提取最终打好的包的二进制字节流
+            zip_bytes = zip_buffer.getvalue()
+
+            prog_bar.value = 1.0
+            prog_text.value = "打包完成！请在弹出的系统对话框中选择保存位置..."
+            self.page.update()
+
+            # 注册文件选择器（保证生命周期不丢失）
+            picker = ft.FilePicker()
+            self.page.overlay.append(picker)
+            self.page.update()
+
+            # 4. 跨平台保存调用（传入 src_bytes，彻底修复手机端报错）
+            save_path = await picker.save_file(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["zip"],
-                file_name=suggested_name
+                file_name=suggested_name,
+                src_bytes=zip_bytes   # 💥 就是这个关键参数救了安卓端的命！
             )
             
+            self.page.overlay.remove(picker)
+
+            # 5. 跨平台兼容兜底：
+            # PC 端 Flet 可能只返回了 save_path 而没有帮我们把 src_bytes 写进去，我们需要补一刀手动写入。
+            # 而在安卓端，Flet 拿到了 src_bytes 后，已经自动让系统写好了。
             if save_path:
-                base_dir = StorageManager.get_base_dir()
-                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for root, dirs, files in os.walk(base_dir):
-                        for file in files:
-                            abs_path = os.path.join(root, file)
-                            if abs_path == save_path: continue
-                            rel_path = os.path.relpath(abs_path, base_dir)
-                            zipf.write(abs_path, rel_path)
+                with open(save_path, 'wb') as f:
+                    f.write(zip_bytes)
                 self.show_snack_bar("✅ 应用数据已完整导出备份")
-                self._close_dialog()
+            else:
+                if sys.platform not in ["win32", "darwin", "linux"]:
+                    self.show_snack_bar("✅ 操作结束 (若未取消，备份已保存至系统目录)")
+                else:
+                    self.show_snack_bar("⚠️ 已取消导出")
+                    
+            self._close_dialog()
+            
         except Exception as ex:
             self.show_snack_bar(f"❌ 导出失败: {str(ex)}")
+            self._close_dialog()
+
 
     async def import_app_data(self, e):
         try:
-            files = await ft.FilePicker().pick_files(
+            # 1. 改变 UI 状态为“唤起选择器”
+            prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+            prog_text = ft.Text("正在唤起系统文件管理器...", size=13, color="onSurface")
+            
+            self.global_dialog.title = ft.Text("正在恢复备份", size=18, weight=ft.FontWeight.BOLD)
+            self.global_dialog.content = ft.Column([
+                ft.Container(height=10),
+                prog_bar,
+                prog_text,
+                ft.Container(height=10)
+            ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            self.global_dialog.actions = []
+            self.page.update()
+
+            picker = ft.FilePicker()
+            self.page.overlay.append(picker)
+            self.page.update()
+
+            # 唤起选取弹窗
+            files = await picker.pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM,
                 allowed_extensions=["zip"]
             )
+            
+            self.page.overlay.remove(picker)
+
             if files and len(files) > 0:
                 zip_path = files[0].path
                 if zip_path:
+                    prog_text.value = "正在准备解压恢复数据..."
+                    self.page.update()
+
                     base_dir = StorageManager.get_base_dir()
+                    import zipfile
+                    
                     with zipfile.ZipFile(zip_path, 'r') as zipf:
-                        zipf.extractall(base_dir)
-                    self.show_snack_bar("✅ 数据已恢复，请重启应用生效")
+                        zip_infos = zipf.infolist()
+                        total_files = len(zip_infos)
+                        
+                        # 2. 开始解压并动态刷新进度
+                        for i, zip_info in enumerate(zip_infos):
+                            zipf.extract(zip_info, base_dir)
+                            
+                            if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                                prog_bar.value = (i + 1) / total_files
+                                prog_text.value = f"正在还原文件... {i+1} / {total_files}"
+                                self.page.update()
+                                await asyncio.sleep(0.01)
+
+                    self.show_snack_bar("✅ 数据已完美恢复，请重启应用生效")
                     self._load_config_from_appdata()
                     self._load_bookshelf()
                     self.refresh_bookshelf_ui()
-                    self._close_dialog()
+                else:
+                    self.show_snack_bar("❌ 无法获取文件路径")
+            
+            # 无论成功或用户取消选择，最后都关闭弹窗
+            self._close_dialog()
+            
         except Exception as ex:
             self.show_snack_bar(f"❌ 恢复失败: {str(ex)}")
+            self._close_dialog()
+        
 
     def save_current_progress(self):
         if getattr(self, "current_book_path", "") == "":
