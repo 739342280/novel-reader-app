@@ -81,7 +81,7 @@ jobs:
         pip install flet==0.84.0
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 💥 步骤 A：下载官方 sqlite-vec Android 动态库
+    # 💥 步骤 A：下载官方 sqlite-vec Android 动态库 (修改版：建立合法的安卓原生库结构)
     - name: Download Official sqlite-vec Android Binary
       run: |
         echo "Downloading official sqlite-vec for Android..."
@@ -90,12 +90,14 @@ jobs:
           ASSET_URL="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-v0.1.9-loadable-android-aarch64.tar.gz"
         fi
         wget -qO sqlite-vec-android.tar.gz $ASSET_URL
-        mkdir -p assets
+        
+        # 💥 关键修改：放入合法的待注入原生目录
+        mkdir -p android_native_libs/lib/arm64-v8a
         tar -xzf sqlite-vec-android.tar.gz
-        find . -name "*.so" -exec mv {} assets/libsqlite_vec.so \;
+        find . -name "*.so" -exec mv {} android_native_libs/lib/arm64-v8a/libsqlite_vec.so \;
         echo "✅ sqlite-vec 已就绪"
 
-    # 💥 步骤 B：下载官方 llama.cpp Android 动态库 (用于本地模型方案一)
+    # 💥 步骤 B：下载官方 llama.cpp Android 动态库 (修改版：建立合法的安卓原生库结构)
     - name: Download Official llama.cpp Android Library
       run: |
         echo "Fetching latest llama.cpp android-arm64 release..."
@@ -106,20 +108,14 @@ jobs:
         mkdir -p temp_llama
         tar -xzf llama-android.tar.gz -C temp_llama
         
-        mkdir -p assets
-        find temp_llama -type f \( -name "libllama.so" -o -name "libggml*.so" \) -exec cp {} assets/ \;
+        # 💥 关键修改：放入合法的待注入原生目录
+        mkdir -p android_native_libs/lib/arm64-v8a
+        find temp_llama -type f \( -name "libllama.so" -o -name "libggml*.so" \) -exec cp {} android_native_libs/lib/arm64-v8a/ \;
         
-        # ========================================================
-        # 💥 瘦身手术 1：过河拆桥，清理所有安装包和解压废料！
-        # ========================================================
+        # 彻底清理战场，确保没有垃圾文件
         rm -rf temp_llama llama-android.tar.gz sqlite-vec-android.tar.gz
-        
-        # ========================================================
-        # 💥 瘦身手术 2：驱逐出境，删掉所有 Windows 专属的可执行文件和动态库！
-        # ========================================================
         rm -f assets/*.exe assets/*.dll
-        
-        echo "✅ 清理完毕，纯净的 Android assets 目录已准备就绪！"
+        echo "✅ llama 核心动态库准备就绪！"
 
     - name: Cache Flet templates
       uses: actions/cache@v4
@@ -148,9 +144,44 @@ jobs:
     - name: Build Flet APK
       run: |
         export SERIOUS_PYTHON_SITE_PACKAGES="$(python -c 'import site; print(site.getsitepackages()[0])')"
-        # 💥 注意这里的路径改成了 /tmp/release.keystore
+        
+        # 💥 瘦身绝杀 1：把 .git 移到上一级目录藏起来，完美躲避 Flet 的打包雷达
+        mv .git ../.git_backup
+        
+        # 💥 瘦身绝杀 2：顺手干掉其他对手机毫无用处的开发文档
+        rm -rf .github README.md installer_script.iss requirements.txt
+        
+        # 正常执行打包命令
         flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store /tmp/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
+        
+        # 💥 打包完成后：把 .git 移回原位，保证后续的 Github Release 上传不报错
+        mv ../.git_backup .git
     
+    # 💥 新增绝杀步骤：强行开壳注入原生库，并重新签名
+    - name: Inject Native Libs and Re-sign APK
+      run: |
+        echo "寻找 Android Build Tools..."
+        BUILD_TOOLS=$(ls -d $ANDROID_HOME/build-tools/* | tail -1)
+        export PATH="$PATH:$BUILD_TOOLS"
+        
+        shopt -s nullglob
+        for apk in build/apk/*arm64-v8a*.apk build/app/outputs/flutter-apk/*arm64-v8a*.apk; do
+          echo "💉 正在注入底层动态库到: $apk"
+          
+          # 1. 将上面准备好的 lib 文件夹，直接塞进 APK 的外壳中
+          cd android_native_libs
+          zip -ur "../$apk" lib/
+          cd ..
+          
+          # 2. 重新 Zipalign 对齐 (安卓安装的硬性规范)
+          zipalign -f -p 4 "$apk" "aligned_app.apk"
+          mv "aligned_app.apk" "$apk"
+          
+          # 3. 使用你的 Keystore 重新盖章签名
+          apksigner sign --ks /tmp/release.keystore --ks-pass pass:novel2026 --key-pass pass:novel2026 --ks-key-alias novelkey "$apk"
+          echo "✅ 注入并重新签名成功！"
+        done
+
     - name: Rename APKs
       run: |
         shopt -s nullglob
