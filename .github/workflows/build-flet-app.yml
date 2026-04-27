@@ -81,34 +81,52 @@ jobs:
         pip install flet==0.84.0
         pip install -r requirements.txt || echo "No requirements.txt"
 
-    # 💥 步骤 A：下载官方 sqlite-vec Android 动态库 (修改版：建立合法的安卓原生库结构)
+    # 💥 步骤 A：下载官方 sqlite-vec Android 动态库 (修复下载与环境错位)
     - name: Download Official sqlite-vec Android Binary
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         echo "Downloading official sqlite-vec for Android..."
-        ASSET_URL=$(curl -s https://api.github.com/repos/asg017/sqlite-vec/releases/latest | grep "browser_download_url" | grep "android" | grep -E "aarch64|arm64" | cut -d '"' -f 4)
-        if [ -z "$ASSET_URL" ]; then
-          ASSET_URL="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-v0.1.9-loadable-android-aarch64.tar.gz"
-        fi
-        wget -qO sqlite-vec-android.tar.gz $ASSET_URL
+        # 1. 注入 GitHub Token，防止 API 被限流导致拿不到地址
+        ASSET_URL=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/asg017/sqlite-vec/releases/latest | grep "browser_download_url" | grep "android" | grep -E "aarch64|arm64" | cut -d '"' -f 4 | head -n 1)
         
-        # 💥 关键修改：放入合法的待注入原生目录
+        # 2. 修复 Fallback 链接中多余的 'v' 字符 (0.1.9 而不是 v0.1.9)
+        if [ -z "$ASSET_URL" ]; then
+          echo "Warning: API fetch failed, using fallback URL."
+          ASSET_URL="https://github.com/asg017/sqlite-vec/releases/download/v0.1.9/sqlite-vec-0.1.9-loadable-android-aarch64.tar.gz"
+        fi
+        
+        echo "Downloading from: $ASSET_URL"
+        wget -qO sqlite-vec-android.tar.gz "$ASSET_URL"
+        
+        # 建立合法的待注入原生目录
         mkdir -p android_native_libs/lib/arm64-v8a
         tar -xzf sqlite-vec-android.tar.gz
         find . -name "*.so" -exec mv {} android_native_libs/lib/arm64-v8a/libsqlite_vec.so \;
         echo "✅ sqlite-vec 已就绪"
 
-    # 💥 步骤 B：下载官方 llama.cpp Android 动态库 (修改版：建立合法的安卓原生库结构)
+    # 💥 步骤 B：下载官方 llama.cpp Android 动态库 (同步修复防限流)
     - name: Download Official llama.cpp Android Library
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         echo "Fetching latest llama.cpp android-arm64 release..."
-        LATEST_TAG=$(curl -s https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | grep "tag_name" | cut -d '"' -f 4)
+        # 同理，加入 Token 防止限流导致 LATEST_TAG 为空
+        LATEST_TAG=$(curl -s -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/repos/ggml-org/llama.cpp/releases/latest | grep "tag_name" | cut -d '"' -f 4 | head -n 1)
+        
+        # 如果依然拿不到，提供一个坚固的 fallback 兜底版本
+        if [ -z "$LATEST_TAG" ]; then
+           echo "Warning: API fetch failed, using fallback tag."
+           LATEST_TAG="b4154" 
+        fi
+        
         URL="https://github.com/ggml-org/llama.cpp/releases/download/${LATEST_TAG}/llama-${LATEST_TAG}-bin-android-arm64.tar.gz"
         
-        wget -qO llama-android.tar.gz $URL
+        echo "Downloading from: $URL"
+        wget -qO llama-android.tar.gz "$URL"
         mkdir -p temp_llama
         tar -xzf llama-android.tar.gz -C temp_llama
         
-        # 💥 关键修改：放入合法的待注入原生目录
         mkdir -p android_native_libs/lib/arm64-v8a
         find temp_llama -type f \( -name "libllama.so" -o -name "libggml*.so" \) -exec cp {} android_native_libs/lib/arm64-v8a/ \;
         
@@ -117,6 +135,7 @@ jobs:
         rm -f assets/*.exe assets/*.dll
         echo "✅ llama 核心动态库准备就绪！"
 
+        
     - name: Cache Flet templates
       uses: actions/cache@v4
       with:
