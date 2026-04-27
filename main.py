@@ -116,7 +116,8 @@ class NovelReaderApp:
         # --- 4. 弹窗管控 ---
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0
-        self._last_dismiss_time = 0 # 💥 修复点 4：初始化安卓返回拦截时间戳  
+        self._last_dismiss_time = 0
+        self.active_dialogs = []  # 💥 新增：自己维护一个弹窗生死簿，不依赖 Flet 延迟的状态  
         
         self.ai_config = {
             "url": "https://api.deepseek.com/v1/chat/completions",
@@ -164,59 +165,30 @@ class NovelReaderApp:
 
     # region 1. 生命周期与原生路由管理
     def route_change(self, e):
-        # 💥 修复点 1：初始化首页 (解决启动白屏，并确保主页实例长驻防“空气墙”)
-        if not hasattr(self, "_has_init_home"):
-            self.page.views.clear()  # 踢掉 Flet 默认的空白 View
-            self.page.views.append(get_home_view(self))
-            self._has_init_home = True
-
-        # 💥 修复点 2：处理回退逻辑 (解决 Esc/返回按钮失效)
-        if self.page.route == "/":
-            # 如果从阅读页回来，且栈里有 2 个视图，则弹出顶层的阅读页
-            if len(self.page.views) > 1:
-                self.page.views.pop()
+        # 💥 终极回归：采用 Flet 官方标准的“全量重建视图”法
+        # 每次路由变化，彻底清空并重新生成干净的视图，100% 根绝空气墙和点击失效！
+        self.page.views.clear()
+        self.page.views.append(get_home_view(self))
+        
+        if self.page.route == "/reader":
+            self.page.views.append(get_reader_view(self))
             
-            self.save_current_progress()
-            if getattr(self, "is_immersive", False):
-                self.toggle_immersive(None)
-
-        elif self.page.route == "/reader":
-            # 进入阅读页：确保只添加一次
-            if len(self.page.views) < 2:
-                self.page.views.append(get_reader_view(self))
-                
         self._apply_theme_colors()
         self.page.update()
 
     def view_pop(self, e):
-        # 💥 修复点 2：安卓物理返回键“余震”拦截
-        # 如果 0.2 秒内刚刚发生过弹窗关闭（不管是点击还是侧滑），则拦截此次 View 弹出请求
-        if hasattr(self, "_last_dismiss_time") and (time.time() - self._last_dismiss_time < 0.2):
+        # 1. 物理侧滑余震拦截（0.5秒内刚因为侧滑关过弹窗，则绝不回退页面，留在这看书）
+        if hasattr(self, "_last_dismiss_time") and (time.time() - self._last_dismiss_time < 0.5):
             return
 
-        # 优先级 1：检查是否有逻辑上仍处于打开状态的弹窗
-        dialogs_to_check = [
-            getattr(self, "global_dialog", None),
-            getattr(self, "toc_sheet", None),
-            getattr(self, "settings_sheet", None)
-        ]
-        for dlg in dialogs_to_check:
-            if dlg and getattr(dlg, "open", False):
-                self._universal_close(dlg)
-                return 
+        # 2. 检查是否有业务弹窗开着，有的话优先关弹窗
+        if hasattr(self, "active_dialogs") and self.active_dialogs:
+            dlg = self.active_dialogs.pop()
+            self._universal_close(dlg)
+            return
 
-        # 优先级 2：处理真实的页面回退
-        if len(self.page.views) > 1:
-            if getattr(self.page, "route", "/") == "/reader":
-                self.save_current_progress()
-                if getattr(self, "is_immersive", False):
-                    self.toggle_immersive(None)
-
-            # 💥 修复点 3：手动管理 Views 栈，不再调用 push_route，彻底终结“空气墙”
-            self.page.views.pop()
-            top_view = self.page.views[-1]
-            self.page.route = top_view.route
-            self.page.update()
+        # 3. 没有任何弹窗阻挡，执行正常的退回书架逻辑
+        self.go_back_home(None)
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
@@ -744,10 +716,12 @@ class NovelReaderApp:
                 info_col.controls.append(ft.Text(vol_title, size=11, color=ft.Colors.GREY_700, max_lines=1, overflow=ft.TextOverflow.ELLIPSIS))
             info_col.controls.append(ft.Text(chap_title, size=11, color=ft.Colors.GREY_500, max_lines=2 if not vol_title else 1, overflow=ft.TextOverflow.ELLIPSIS))
 
+            # 💥 彻底弃用 GestureDetector，改用原生 Container，配合全新的纯净路由，手感拉满！
             card = ft.Container(
                 alignment=ft.Alignment(0, 0),
-                content=ft.GestureDetector(
-                    on_tap=lambda e, p=book['path']: self.check_and_load_book(p),
+                content=ft.Container(
+                    ink=True,
+                    on_click=lambda e, p=book['path']: self.check_and_load_book(p),
                     on_long_press=lambda e, p=book['path'], n=book['name']: self.show_book_options_dialog(p, n),
                     content=ft.Stack([
                         ft.Container(width=160, height=220, border_radius=0, bgcolor="surface", border=card_border), 
@@ -1084,11 +1058,12 @@ class NovelReaderApp:
             pass
 
     def go_back_home(self, e):
-        self.save_current_progress() 
-        if getattr(self, "is_immersive", False):
-            self.toggle_immersive(None)
-            
-        # 💥 最终修复：使用 run_task 来异步驱动 push_route，彻底解决报错
+        if self.page.route == "/reader":
+            self.save_current_progress()
+            if getattr(self, "is_immersive", False):
+                self.toggle_immersive(None)
+                
+        # 通过 push_route 触发上面的 route_change，实现全局干净回退
         self.page.run_task(self.page.push_route, "/")
     
     async def copy_current(self, e):
@@ -1452,25 +1427,35 @@ class NovelReaderApp:
                 except Exception: pass
 
     def _universal_open(self, control):
-        # 💥 修复点 1：确保控件在 Overlay 中且状态刷新
-        if control not in self.page.overlay:
-            self.page.overlay.append(control)
-        
-        # 针对安卓端的 BottomSheet/Dialog 状态同步修复
-        control.open = True
-        
-        # 增加一个微小的延迟绑定，确保安卓原生层能捕捉到 dismiss 事件
-        if not hasattr(control, "_hooked"):
+        if not hasattr(self, "active_dialogs"): self.active_dialogs = []
+        if control not in self.active_dialogs:
+            self.active_dialogs.append(control)
+
+        # 挂载关闭钩子：只要弹窗关闭（哪怕是安卓物理侧滑关闭），立刻从生死簿除名并记录时间
+        if not getattr(control, "_hooked", False):
             orig_dismiss = control.on_dismiss
             def wrapped_dismiss(e):
-                self._last_dismiss_time = time.time() # 记录物理关闭时间戳
+                self._last_dismiss_time = time.time()
+                if hasattr(self, "active_dialogs") and control in self.active_dialogs:
+                    self.active_dialogs.remove(control)
                 if orig_dismiss: orig_dismiss(e)
             control.on_dismiss = wrapped_dismiss
             control._hooked = True
 
-        self.page.update()
+        # 标准 Flet API 唤起
+        if hasattr(self.page, "open") and callable(getattr(self.page, "open")):
+            self.page.open(control)
+        else:
+            if control not in self.page.overlay:
+                self.page.overlay.append(control)
+            control.open = True
+            self.page.update()
 
     def _universal_close(self, control):
+        self._last_dismiss_time = time.time()
+        if hasattr(self, "active_dialogs") and control in self.active_dialogs:
+            self.active_dialogs.remove(control)
+            
         if hasattr(self.page, "close") and callable(getattr(self.page, "close")):
             self.page.close(control)
         else:
