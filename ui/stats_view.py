@@ -46,7 +46,8 @@ def get_statistics_view(app):
     vol_unread_words = vol_total_words - vol_read_words
     
     def go_back(e):
-        
+        # 🚨 【路由纪律：禁止修改】：统一调用主控制器的 view_pop 进行退栈。
+        # 严禁在此处直接使用 app.page.go("/reader") 或 push_route，以避免与安卓原生弹栈动画发生时序撕裂。
         app.view_pop(None)
 
     appbar = ft.AppBar(
