@@ -221,12 +221,12 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
-        # 1. 防重复触发锁
+        # 防抖
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 2. 覆盖层拦截
+        # 关闭覆盖层
         if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
             self.page.run_task(self.close_reader_overlays); return
         if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
@@ -234,20 +234,30 @@ class NovelReaderApp:
         if getattr(self.global_dialog, "open", False):
             self._universal_close(self.global_dialog); return
 
-        # 3. 核心退栈逻辑（绝对不能省略 pop！）
+        # 视图弹出处理
         if len(self.page.views) > 1:
-            if self.page.views[-1].route == "/reader":
+            current_route = self.page.route
+            # 即将暴露的目标路由（栈顶下一个视图的路由）
+            target_route = self.page.views[-2].route if len(self.page.views) >= 2 else "/"
+
+            # 保存阅读进度
+            if current_route == "/reader":
                 self.save_current_progress()
 
-            # 🔥 Flet 官方铁律：必须手动在 Python 侧弹出当前视图
-            self.page.views.pop()
-            
-            # 🔥 获取底层暴露出来的视图路由，同步给 page
-            self.page.route = self.page.views[-1].route
-            
-            # 🔥 极其关键：只 update，绝对不要去调 route_change 重建！
-            # 这样原本健康的书架视图瞬间无损复活，完美避开安卓动画冲突
-            self.page.update()
+            # ----- 核心策略：返回书架时重建，返回正文时增量弹出 -----
+            if target_route == "/":
+                # 返回首页：完全重建书架，确保安卓事件绑定
+                self.page.views.clear()
+                self.page.route = "/"
+                self.route_change(None)
+            else:
+                # 返回正文页（从统计/AI等子页面）：只弹出当前视图，保留底层 reader_view
+                self.page.views.pop()
+                self.page.route = target_route
+                self.page.update()
+        else:
+            # 已经在根页面，不做任何操作
+            pass
             
 
     def _on_os_theme_change(self, e):
