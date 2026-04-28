@@ -1347,6 +1347,14 @@ class NovelReaderApp:
         return str(pb).lower().endswith("dark")
 
     def _apply_theme_colors(self):
+        # 【新增修复】如果是退回首页，专门洗掉全局弹窗的颜色，然后直接终止
+        if self.page.route == "/":
+            if hasattr(self, "global_dialog") and self.global_dialog:
+                self.global_dialog.bgcolor = "surface"
+                if getattr(self.global_dialog, "content", None) and isinstance(self.global_dialog.content, ft.Container):
+                    self.global_dialog.content.bgcolor = "surface"
+            return
+        
         if self.page.route != "/reader":
             return
         
