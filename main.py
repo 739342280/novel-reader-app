@@ -221,12 +221,12 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
-        # 防重复触发
+        # 1. 防重复触发锁
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 关闭所有覆盖层
+        # 2. 覆盖层拦截
         if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
             self.page.run_task(self.close_reader_overlays); return
         if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
@@ -234,18 +234,20 @@ class NovelReaderApp:
         if getattr(self.global_dialog, "open", False):
             self._universal_close(self.global_dialog); return
 
+        # 3. 核心退栈逻辑（绝对不能省略 pop！）
         if len(self.page.views) > 1:
-            # 保存阅读进度
             if self.page.views[-1].route == "/reader":
                 self.save_current_progress()
-            
-            # 手动弹出当前视图
+
+            # 🔥 Flet 官方铁律：必须手动在 Python 侧弹出当前视图
             self.page.views.pop()
             
-            # 获取新栈顶路由，同步前端并触发 route_change
-            new_route = self.page.views[-1].route
-            self.page.route = new_route
-            self.route_change(None)
+            # 🔥 获取底层暴露出来的视图路由，同步给 page
+            self.page.route = self.page.views[-1].route
+            
+            # 🔥 极其关键：只 update，绝对不要去调 route_change 重建！
+            # 这样原本健康的书架视图瞬间无损复活，完美避开安卓动画冲突
+            self.page.update()
             
 
     def _on_os_theme_change(self, e):
@@ -1355,6 +1357,7 @@ class NovelReaderApp:
             bg_c = self.bg_color
             bg_i = self.bg_image
             menu_c = self.bg_color if self.bg_color else "surface"
+            
             text_c = self.reader_text_color 
             top_book_c = ft.Colors.GREY_600
             top_chap_c = ft.Colors.BLACK if self.bg_color else ft.Colors.ON_SURFACE
