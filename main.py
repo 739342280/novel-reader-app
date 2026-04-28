@@ -1344,6 +1344,9 @@ class NovelReaderApp:
         return str(pb).lower().endswith("dark")
 
     def _apply_theme_colors(self):
+        if self.page.route != "/reader":
+            return
+        
         is_dark = self._get_is_dark_mode()
         
         if is_dark:
