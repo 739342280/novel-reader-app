@@ -239,6 +239,9 @@ class NovelReaderApp:
             self.page.route = self.page.views[-1].route
             self.page.update()
 
+        if e is not None:
+            e.handled = True
+
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
             self.page.theme_mode = ft.ThemeMode.SYSTEM

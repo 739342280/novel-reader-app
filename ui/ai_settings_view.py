@@ -15,22 +15,26 @@ def get_ai_settings_view(app):
     # ==========================================
     # Tab 1: 对话模型配置
     # ==========================================
-    url_tf = ft.TextField(label="API URL", value=app.ai_config.get("url", ""), text_size=13, dense=True, width=UI_WIDTH)
-    key_tf = ft.TextField(label="API Key", value=app.ai_config.get("key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=UI_WIDTH)
-    model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("model", ""), text_size=13, dense=True, width=UI_WIDTH)
+    # 💥 删除了硬编码的 width=UI_WIDTH，让其自适应延展
+    url_tf = ft.TextField(label="API URL", value=app.ai_config.get("url", ""), text_size=13, dense=True)
+    key_tf = ft.TextField(label="API Key", value=app.ai_config.get("key", ""), password=True, can_reveal_password=True, text_size=13, dense=True)
+    model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("model", ""), text_size=13, dense=True)
     
-    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
-    prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
-    prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
+    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
+    prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
+    prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
     
     tab1_col = ft.Column(
         [url_tf, key_tf, model_tf, prompt_tf, prompt_char_tf, prompt_clue_tf], 
         spacing=15, 
-        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
-        scroll=ft.ScrollMode.AUTO  # 💥 新增：开启内容溢出时的自动滚动
+        # 💥 改为 STRETCH，强制子控件横向拉伸对齐
+        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+        scroll=ft.ScrollMode.AUTO  
     )
     
+    # 外层 padding 控制了与屏幕边缘的安全距离，实现完美的视觉居中
     tab1_container = ft.Container(content=tab1_col, padding=ft.padding.only(left=20, top=20, right=20, bottom=10))
+    
     # ==========================================
     # Tab 2: 向量引擎配置
     # ==========================================
