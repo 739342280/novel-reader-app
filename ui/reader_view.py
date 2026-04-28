@@ -190,7 +190,7 @@ def get_reader_view(app):
         items=[
             ft.PopupMenuItem(
                 content=ft.Row([ft.Icon(ft.Icons.BAR_CHART), ft.Text("阅读统计")], spacing=10),
-                on_click=lambda _: app.page.run_task(app.page.push_route, "/reader/statistics")
+                on_click=app.show_statistics_dialog
             ),
             ft.PopupMenuItem(
                 content=ft.Row([ft.Icon(ft.Icons.AUTO_AWESOME), ft.Text("AI 设置")], spacing=10),

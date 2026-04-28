@@ -10,7 +10,6 @@ def get_ai_settings_view(app):
     UI_WIDTH = 500  
 
     def go_back(e):
-        # 💥 万剑归宗：统一调用主控制器的退栈逻辑
         app.view_pop(None)
 
     # ==========================================
@@ -19,11 +18,19 @@ def get_ai_settings_view(app):
     url_tf = ft.TextField(label="API URL", value=app.ai_config.get("url", ""), text_size=13, dense=True, width=UI_WIDTH)
     key_tf = ft.TextField(label="API Key", value=app.ai_config.get("key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=UI_WIDTH)
     model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("model", ""), text_size=13, dense=True, width=UI_WIDTH)
-    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
     
-    tab1_col = ft.Column([url_tf, key_tf, model_tf, prompt_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
+    prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
+    prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=UI_WIDTH)
+    
+    tab1_col = ft.Column(
+        [url_tf, key_tf, model_tf, prompt_tf, prompt_char_tf, prompt_clue_tf], 
+        spacing=15, 
+        horizontal_alignment=ft.CrossAxisAlignment.CENTER,
+        scroll=ft.ScrollMode.AUTO  # 💥 新增：开启内容溢出时的自动滚动
+    )
+    
     tab1_container = ft.Container(content=tab1_col, padding=ft.padding.only(left=20, top=20, right=20, bottom=10))
-
     # ==========================================
     # Tab 2: 向量引擎配置
     # ==========================================
@@ -66,7 +73,6 @@ def get_ai_settings_view(app):
         value=app.ai_config.get("embed_mode", "云端 API"),
         text_size=13, dense=True, width=UI_WIDTH
     )
-    # 稳健挂载法
     embed_mode_dd.on_change = on_embed_mode_change
 
     content_slot.content = local_view if embed_mode_dd.value == "本地模型" else cloud_view
@@ -121,8 +127,7 @@ def get_ai_settings_view(app):
         except ImportError:
             status_text.value = f"当前阅读：《{book_name}》\n⚠️ 未安装 sqlite-vec 扩展库，知识库暂不可用"
             btn_build.disabled = btn_clear.disabled = True
-            try: tab3_col.update()
-            except Exception: pass
+            # 💥 删除了会引发崩溃的 tab3_col.update()
             return
 
         book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
@@ -364,7 +369,9 @@ def get_ai_settings_view(app):
         app.ai_config["key"] = key_tf.value.strip()
         app.ai_config["model"] = model_tf.value.strip()
         app.ai_config["prompt"] = prompt_tf.value.strip()
-        
+        app.ai_config["prompt_char"] = prompt_char_tf.value.strip() # 💥 保存新提示词
+        app.ai_config["prompt_clue"] = prompt_clue_tf.value.strip() # 💥 保存新提示词
+
         app.ai_config["embed_mode"] = embed_mode_dd.value
         app.ai_config["embed_url"] = embed_url_tf.value.strip()
         app.ai_config["embed_key"] = embed_key_tf.value.strip()
@@ -374,42 +381,100 @@ def get_ai_settings_view(app):
         
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
-        go_back(None)
+        # 💥 移除 go_back(None)，保存后不再自动退回正文
 
-    # 💥 完全使用你原版 dialogs.py 中的稳健结构
-    tab_bar = ft.TabBar(
-        tabs=[
-            ft.Tab(label="对话模型"),
-            ft.Tab(label="向量引擎"),
-            ft.Tab(label="本书知识库")
-        ]
-    )
-    
-    tab_view = ft.TabBarView(
-        controls=[
-            tab1_container,
-            tab2_container,
-            tab3_container
-        ],
-        expand=True
-    )
+    # ==========================================
+    # 💥 恢复使用 0.84.0 最新的官方原生 TabBar 架构
+    # ==========================================
+    # ==========================================
+    # ✅ 手动标签页切换（完全不用 Tab 系列控件）
+    # ==========================================
 
-    tabs = ft.Tabs(
-        selected_index=0,
-        length=3,
-        expand=True,
-        content=ft.Column(
-            controls=[tab_bar, tab_view], 
-            expand=True
+    # 当前选中的标签索引
+    current_tab_index = 0
+
+    def get_tab_button_style(is_active):
+        """根据是否激活返回不同的按钮样式"""
+        is_dark = app._get_is_dark_mode()
+        active_bg = "#1AFFFFFF" if is_dark else "#1A000000"
+        inactive_bg = ft.Colors.TRANSPARENT
+        return ft.ButtonStyle(
+            shape=ft.RoundedRectangleBorder(radius=8),
+            bgcolor=active_bg if is_active else inactive_bg,
+            elevation=0,
+            padding=ft.padding.symmetric(horizontal=12, vertical=8)
         )
+
+    # 三个标签按钮
+    tab_btn_main = ft.TextButton(
+        "对话模型", style=get_tab_button_style(True)
+    )
+    tab_btn_embed = ft.TextButton(
+        "向量引擎", style=get_tab_button_style(False)
+    )
+    tab_btn_vdb = ft.TextButton(
+        "本书知识库", style=get_tab_button_style(False)
+    )
+
+    # 按钮行
+    tab_bar_row = ft.Row(
+        controls=[tab_btn_main, tab_btn_embed, tab_btn_vdb],
+        alignment=ft.MainAxisAlignment.SPACE_AROUND,
+    )
+    tab_bar_wrapper = ft.Container(
+        content=tab_bar_row,
+        padding=ft.padding.symmetric(horizontal=20)   # 标签行左右留白，不贴边
+    )
+
+    # 内容显示区域（默认显示第一个容器）
+    content_area = ft.Container(
+        content=tab1_container,
+        expand=True,
+        padding=ft.padding.only(left=0, top=10, right=0, bottom=10),
+    )
+
+    # 点击切换逻辑
+    def switch_tab(e, idx):
+        nonlocal current_tab_index
+        current_tab_index = idx
+        # 切换内容
+        content_area.content = [tab1_container, tab2_container, tab3_container][idx]
+        content_area.update()
+        # 更新按钮样式
+        for i, btn in enumerate([tab_btn_main, tab_btn_embed, tab_btn_vdb]):
+            btn.style = get_tab_button_style(i == idx)
+            btn.update()
+
+    tab_btn_main.on_click = lambda e: switch_tab(e, 0)
+    tab_btn_embed.on_click = lambda e: switch_tab(e, 1)
+    tab_btn_vdb.on_click = lambda e: switch_tab(e, 2)
+
+    # 整体布局
+    tabs = ft.Column(
+        controls=[
+            tab_bar_wrapper,
+            ft.Divider(height=1, thickness=0.5),
+            content_area,
+        ],
+        expand=True,
+        spacing=0,
     )
     
+    # 底部悬浮按钮栏：仅保留“保存设置”按钮
     bottom_bar = ft.Container(
         content=ft.Row([
-            ft.TextButton(content=ft.Text("取消"), on_click=go_back),
-            ft.ElevatedButton(content=ft.Text("保存设置并返回"), bgcolor="blue", color="white", on_click=save)
-        ], alignment=ft.MainAxisAlignment.END),
-        padding=10,
+            ft.ElevatedButton(
+                content=ft.Text("保存设置", size=15, weight=ft.FontWeight.BOLD), 
+                bgcolor="primary",
+                color="onPrimary",
+                on_click=save,
+                style=ft.ButtonStyle(
+                    padding=ft.padding.symmetric(horizontal=50, vertical=20), 
+                    shape=ft.RoundedRectangleBorder(radius=12)
+                )
+            )
+        ], alignment=ft.MainAxisAlignment.CENTER), 
+        padding=ft.padding.only(top=10, bottom=20), 
         bgcolor="surfaceVariant"
     )
 
@@ -422,7 +487,7 @@ def get_ai_settings_view(app):
             bgcolor="surfaceVariant"
         ),
         controls=[
-            ft.Container(content=tabs, expand=True),
+            ft.Container(content=tabs, expand=True), # 挂载官方控制器
             bottom_bar
         ],
         padding=0,

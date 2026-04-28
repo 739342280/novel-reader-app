@@ -143,6 +143,10 @@ class NovelReaderApp:
                 "- 字数控制在300字以内。\n"
                 "- 严禁评价剧情“好不好看”，只做客观梳理。"
             ),
+            # 💥 新增：人物提示词默认值
+            "prompt_char": "提取本章出现的所有人物，写出一段深度的人物梳理。用一句话标明他们的阵营、当前状态、以及与主角的关系。严禁脑补未发生的情节。",
+            # 💥 新增：伏笔提示词默认值
+            "prompt_clue": "找出本章看似不起眼的环境描写、对话停顿或异常行为，推测作者可能埋下的伏笔与线索。尽量精简干练。",
             "embed_mode": "云端 API",
             "embed_url": "https://api.deepseek.com/v1/embeddings",
             "embed_key": "",
@@ -1554,12 +1558,13 @@ class NovelReaderApp:
         DialogManager.show_book_options_dialog(self, path, current_name)
 
     def show_statistics_dialog(self, e):
-        # 换用最新的 push_route
-        self.page.run_task(self.page.push_route, "/reader/statistics")
+        # 💥 强行修改内部状态并重绘，彻底击穿 Flet 的路由缓存锁
+        self.page.route = "/reader/statistics"
+        self.route_change(None)
 
     def show_settings_dialog(self, e):
-        # 💥 拦截旧的弹窗请求，改为最新的异步路由跳转
-        self.page.run_task(self.page.push_route, "/reader/ai_settings")
+        self.page.route = "/reader/ai_settings"
+        self.route_change(None)
 
     def show_global_settings_dialog(self, e):
         DialogManager.show_global_settings_dialog(self, e)
@@ -1568,8 +1573,8 @@ class NovelReaderApp:
         DialogManager.show_changelog_dialog(self, e)
 
     def show_ai_dialog(self, e):
-        # 💥 彻底修改为路由跳转
-        self.page.run_task(self.page.push_route, "/reader/ai_chat")
+        self.page.route = "/reader/ai_chat"
+        self.route_change(None)
 
     def _execute_copy(self, text):
         try:

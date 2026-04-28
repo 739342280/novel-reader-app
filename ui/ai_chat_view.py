@@ -75,11 +75,12 @@ def get_ai_chat_view(app):
     def get_sys_prompt():
         if state["mode"] == "main": 
             return app.ai_config.get("prompt", "")
+        # 💥 改为从配置中读取，而不是硬编码
         if state["mode"] in ["characters", "characters_pro"]: 
-            return "提取本章出现的所有人物，写出一段深度的人物梳理。用一句话标明他们的阵营、当前状态、以及与主角的关系。严禁脑补未发生的情节。"
+            return app.ai_config.get("prompt_char", "")
         if state["mode"] == "clues": 
-            return "找出本章看似不起眼的环境描写、对话停顿或异常行为，推测作者可能埋下的伏笔与线索。尽量精简干练。"
-
+            return app.ai_config.get("prompt_clue", "")
+        
     def render_chat():
         chat_list_col.controls.clear()
         
