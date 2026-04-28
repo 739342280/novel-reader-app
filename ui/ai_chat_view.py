@@ -45,8 +45,8 @@ def get_ai_chat_view(app):
     btn_copy = ft.ElevatedButton(content=ft.Text("复制", color="onSurface"), style=app.get_action_button_style())
 
     def go_back(e):
-        # 配合 main.py 里的增量路由，直接 push_route 回正文即可
-        app.page.run_task(app.page.push_route, "/reader")
+        # 💥 万剑归宗：统一调用主控制器的退栈逻辑
+        app.view_pop(None)
 
     # 💥 新的核心判定锁：通过路由判断当前视图是否存活
     def is_active():

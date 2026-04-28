@@ -10,7 +10,8 @@ def get_ai_settings_view(app):
     UI_WIDTH = 500  
 
     def go_back(e):
-        app.page.run_task(app.page.push_route, "/reader")
+        # 💥 万剑归宗：统一调用主控制器的退栈逻辑
+        app.view_pop(None)
 
     # ==========================================
     # Tab 1: 对话模型配置

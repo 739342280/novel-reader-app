@@ -211,27 +211,36 @@ class NovelReaderApp:
 
     # 💥 修改点 2：修复物理返回键/Esc 键的同步逻辑
     def view_pop(self, e):
-        # 增加防连击保护
+        # 1. 增加防连击保护
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 拦截面板逻辑（保持不变）
-        if getattr(self, "toc_panel", None) and self.toc_panel.visible:
-            self.page.run_task(self.close_reader_overlays); return
-        if getattr(self, "settings_panel", None) and self.settings_panel.visible:
-            self.page.run_task(self.close_reader_overlays); return
-        if getattr(self, "global_dialog", False):
-            self._universal_close(self.global_dialog); return 
+        # 2. 拦截底部面板
+        if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
+            self.page.run_task(self.close_reader_overlays)
+            return
+        if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
+            self.page.run_task(self.close_reader_overlays)
+            return
+            
+        # 💥 3. 修复致命黑洞：检查 .open 属性，而不是对象本身是否存在！
+        if getattr(self.global_dialog, "open", False):
+            self._universal_close(self.global_dialog)
+            return 
 
-        # 核心：使用 push_route 触发同步，而不是手动设置 page.route
+        # 💥 4. 修复退栈悖论：回归最纯净的图层剥离，彻底适配安卓物理返回！
         if len(self.page.views) > 1:
+            # 如果当前是从正文退回首页，保存阅读进度
             if self.page.views[-1].route == "/reader":
                 self.save_current_progress()
-                self.page.run_task(self.page.push_route, "/")
-            else:
-                # 从统计页回退
-                self.page.run_task(self.page.push_route, "/reader")
+                
+            # 直接抽走顶层视图 (无论是统计页、AI页、还是阅读页)
+            self.page.views.pop()
+            
+            # 将底层的真实路由同步给系统，绝不使用 push_route 制造套娃！
+            self.page.route = self.page.views[-1].route
+            self.page.update()
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):

@@ -46,9 +46,8 @@ def get_statistics_view(app):
     vol_unread_words = vol_total_words - vol_read_words
     
     def go_back(e):
-        # 💥 关键修改：不再使用手动 pop，而是使用 push_route 告诉 Flet 引擎我们要回到正文
-        # 配合 main.py 的增量逻辑，它会自动拿掉统计层，且绝不重新加载正文
-        app.page.run_task(app.page.push_route, "/reader")
+        # 💥 万剑归宗：统一调用主控制器的退栈逻辑
+        app.view_pop(None)
 
     appbar = ft.AppBar(
         leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=go_back),
