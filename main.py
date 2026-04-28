@@ -951,15 +951,15 @@ class NovelReaderApp:
     # region 4. 主题排版与 UI 渲染刷子
     # =========================================================================
     
-    def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface"):
+    def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface", is_reader_btn=False):
         is_dark = self._get_is_dark_mode()
         
-        in_reader = getattr(self.page, "route", "/") == "/reader"
-        
+        # 💥 彻底废除基于路由的猜测，直接听从参数指挥！
         if is_dark:
             btn_bg_c = "#2C2C2C" 
         else:
-            if not in_reader:
+            if not is_reader_btn:
+                # 只要不是阅读页亲儿子，统统返回标准灰色
                 btn_bg_c = "#F0F0F0"
             else:
                 bg_c = self.bg_color
@@ -972,7 +972,7 @@ class NovelReaderApp:
                 else: btn_bg_c = "#F0F0F0"
                 
         return ft.ButtonStyle(bgcolor=btn_bg_c, color=text_color, elevation=0, shape=ft.RoundedRectangleBorder(radius=30), padding=padding)
-
+    
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
         if "bg_image" in kwargs: self.bg_image = kwargs["bg_image"]  
@@ -1171,15 +1171,19 @@ class NovelReaderApp:
         return str(pb).lower().endswith("dark")
 
     def _apply_theme_colors(self):
+        # 💥 修改点 1：提取物理视图栈中真正的当前路由，不再信任可能脱节的 self.page.route
+        current_real_route = self.page.views[-1].route if self.page.views else "/"
+
         # 【新增修复】如果是退回首页，专门洗掉全局弹窗的颜色，然后直接终止
-        if self.page.route == "/":
+        if current_real_route == "/":
             if hasattr(self, "global_dialog") and self.global_dialog:
                 self.global_dialog.bgcolor = "surface"
                 if getattr(self.global_dialog, "content", None) and isinstance(self.global_dialog.content, ft.Container):
                     self.global_dialog.content.bgcolor = "surface"
             return
         
-        if self.page.route != "/reader":
+        # 💥 修改点 2：根据真实的物理栈顶路由进行拦截判断
+        if current_real_route != "/reader":
             return
         
         is_dark = self._get_is_dark_mode()
@@ -1206,7 +1210,8 @@ class NovelReaderApp:
             try: self.reading_base_layer.update()
             except Exception: pass
 
-        in_reader = getattr(self.page, "route", "/") == "/reader"
+        current_real_route = self.page.views[-1].route if getattr(self.page, "views", None) else "/"
+        in_reader = current_real_route == "/reader"
         dialog_bg_c = menu_c if in_reader else "surface"
 
         for sheet in [getattr(self, "global_dialog", None), getattr(self, "settings_panel", None), getattr(self, "toc_panel", None)]:
@@ -1298,13 +1303,23 @@ class NovelReaderApp:
             (getattr(self, "btn_copy_current", None), pad_8) 
         ]:
             if btn:
-                if getattr(btn, "content", None) and isinstance(btn.content, ft.Text):
-                    btn.content.color = top_chap_c
-                    try: btn.content.update()
-                    except Exception: pass
+                if getattr(btn, "content", None):
+                    # 💥 升级点：如果内容是单纯的文本
+                    if isinstance(btn.content, ft.Text):
+                        btn.content.color = top_chap_c
+                        try: btn.content.update()
+                        except Exception: pass
+                    # 💥 升级点：如果内容是 Row（如：复制本章按钮），钻进去找文本和图标
+                    elif isinstance(btn.content, ft.Row):
+                        for item in btn.content.controls:
+                            if isinstance(item, ft.Text) or isinstance(item, ft.Icon):
+                                item.color = top_chap_c
+                                try: item.update()
+                                except Exception: pass
                 
                 btn.icon_color = top_chap_c
-                btn.style = self.get_action_button_style(pad, text_color=top_chap_c)
+                # 💥 重点修改：专门为这 6 个底部按钮颁发通行证 is_reader_btn=True
+                btn.style = self.get_action_button_style(pad, text_color=top_chap_c, is_reader_btn=True)
                 try: btn.update()
                 except Exception: pass
 

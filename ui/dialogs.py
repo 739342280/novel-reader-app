@@ -280,7 +280,7 @@ class DialogManager:
         ], tight=True)
         
         app.global_dialog.actions = [
-            ft.TextButton(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
+            ft.ElevatedButton(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
         ]
         app._open_dialog()
 
@@ -324,7 +324,7 @@ class DialogManager:
         )
         
         app.global_dialog.actions = [
-            ft.TextButton(
+            ft.ElevatedButton(
                 content=ft.Text("关闭", color="onSurface"), 
                 on_click=lambda _: app._close_dialog(), 
                 style=app.get_action_button_style()
