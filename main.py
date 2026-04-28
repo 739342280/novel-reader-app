@@ -87,6 +87,13 @@ class NovelReaderApp:
             scrollbar_theme=ft.ScrollbarTheme(
                 thumb_visibility=False,         
                 thumb_color=ft.Colors.OUTLINE_VARIANT
+            ),
+            page_transitions=ft.PageTransitionsTheme(
+            android=ft.PageTransitionTheme.CUPERTINO,
+            ios=ft.PageTransitionTheme.CUPERTINO,
+            macos=ft.PageTransitionTheme.CUPERTINO,
+            windows=ft.PageTransitionTheme.CUPERTINO,
+            linux=ft.PageTransitionTheme.CUPERTINO,
             )
         ) 
         self.page.padding = 0
