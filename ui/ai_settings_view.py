@@ -15,88 +15,151 @@ def get_ai_settings_view(app):
         app.view_pop(None)
 
     # ==========================================
-    # Tab 1: 对话模型配置
+    # Tab 1: 对话模型配置 (UI升级：卡片化与折叠)
     # ==========================================
-    # 💥 删除了硬编码的 width=UI_WIDTH，让其自适应延展
-    url_tf = ft.TextField(label="API URL", value=app.ai_config.get("url", ""), text_size=13, dense=True)
-    key_tf = ft.TextField(label="API Key", value=app.ai_config.get("key", ""), password=True, can_reveal_password=True, text_size=13, dense=True)
-    model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("model", ""), text_size=13, dense=True)
+    # 💥 修改点：为所有输入框增加固定宽度，防止无限拉伸
+    INPUT_WIDTH = 450 
+
+    url_tf = ft.TextField(label="API URL", value=app.ai_config.get("url", ""), text_size=13, dense=True, width=INPUT_WIDTH)
+    key_tf = ft.TextField(label="API Key", value=app.ai_config.get("key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=INPUT_WIDTH)
+    model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("model", ""), text_size=13, dense=True, width=INPUT_WIDTH)
     
-    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
-    prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
-    prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True)
+    prompt_tf = ft.TextField(label="系统提示词", value=app.ai_config.get("prompt", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=INPUT_WIDTH)
     
-    tab1_col = ft.Column(
-        [url_tf, key_tf, model_tf, prompt_tf, prompt_char_tf, prompt_clue_tf], 
-        spacing=15, 
-        # 💥 改为 STRETCH，强制子控件横向拉伸对齐
-        horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-        scroll=ft.ScrollMode.AUTO  
+    prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=INPUT_WIDTH)
+    prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=INPUT_WIDTH)
+    
+    expansion_prompts = ft.ExpansionTile(
+        title=ft.Text("高级提示词设置 (人物/伏笔)", size=13, weight="bold"),
+        subtitle=ft.Text("通常无需修改，除非您想自定义分析深度", size=11, color="grey"),
+        width=INPUT_WIDTH, # 💥 折叠面板也限宽
+        controls=[
+            ft.Container(
+                content=ft.Column([prompt_char_tf, prompt_clue_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=ft.padding.only(top=10, bottom=10)
+            )
+        ],
+        maintain_state=True
+    )
+
+    tab1_container = ft.Container(
+        content=ft.Column([
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.LOCK, size=16), ft.Text("API 身份认证", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        url_tf, key_tf, model_tf
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER), # 💥 改为居中
+                    padding=15
+                ),
+                elevation=1
+            ),
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.EDIT, size=16), ft.Text("模型指令配置", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        prompt_tf,
+                        expansion_prompts
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER), # 💥 改为居中
+                    padding=15
+                ),
+                elevation=1
+            )
+        ], spacing=15, scroll=ft.ScrollMode.AUTO, horizontal_alignment=ft.CrossAxisAlignment.CENTER), # 💥 父级 Column 也居中
+        padding=20
     )
     
-    # 外层 padding 控制了与屏幕边缘的安全距离，实现完美的视觉居中
-    tab1_container = ft.Container(content=tab1_col, padding=ft.padding.only(left=20, top=20, right=20, bottom=10))
+    # ==========================================
+    # Tab 2: 向量引擎配置 (UI升级：卡片化)
+    # ==========================================
+    embed_url_tf = ft.TextField(label="Embedding API URL", value=app.ai_config.get("embed_url", ""), text_size=13, dense=True, width=INPUT_WIDTH)
+    embed_key_tf = ft.TextField(label="API Key", value=app.ai_config.get("embed_key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=INPUT_WIDTH)
+    embed_model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("embed_model", ""), text_size=13, dense=True, width=INPUT_WIDTH)
     
-    # ==========================================
-    # Tab 2: 向量引擎配置
-    # ==========================================
-    embed_url_tf = ft.TextField(label="Embedding API URL", value=app.ai_config.get("embed_url", ""), text_size=13, dense=True, width=UI_WIDTH)
-    embed_key_tf = ft.TextField(label="API Key", value=app.ai_config.get("embed_key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=UI_WIDTH)
-    embed_model_tf = ft.TextField(label="模型名称 (如 text-embedding-3-small)", value=app.ai_config.get("embed_model", ""), text_size=13, dense=True, width=UI_WIDTH)
+    # 云端 API 视图容器
     cloud_view = ft.Column([embed_url_tf, embed_key_tf, embed_model_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 
     local_models = app.get_local_models()
-    saved_local_model = app.ai_config.get("local_model_path", "")
     local_model_dd = ft.Dropdown(
         label="已导入的本地模型",
         options=[ft.dropdown.Option(m) for m in local_models],
-        value=saved_local_model if saved_local_model in local_models else None,
-        text_size=13, dense=True, expand=True
+        value=app.ai_config.get("local_model_path", "") if app.ai_config.get("local_model_path", "") in local_models else None,
+        text_size=13, dense=True, width=INPUT_WIDTH - 60 # 为旁边的按钮留出空间
     )
     import_btn = ft.IconButton(
-        icon=ft.Icons.FOLDER_OPEN, icon_color="blue", tooltip="导入本地模型文件",
+        icon=ft.Icons.FOLDER_OPEN, icon_color="blue",
         on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_dd)
     )
-    local_path_row = ft.Row([local_model_dd, import_btn], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, width=UI_WIDTH)
-    local_view = ft.Column([local_path_row], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+    
+    # 本地模型视图容器
+    local_view = ft.Row([local_model_dd, import_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
 
-    content_slot = ft.Container()
+    # 💥 核心：动态内容插槽
+    content_slot = ft.Container(expand=True)
 
     def on_embed_mode_change(e):
-        mode = e.data if e and getattr(e, "data", None) else embed_mode_dd.value
-        if e and getattr(e, "data", None):
-            embed_mode_dd.value = mode
-
+        # 💥 0.84.0 推荐直接通过 e.control.value 获取状态，更稳健
+        mode = embed_mode_dd.value
         content_slot.content = local_view if mode == "本地模型" else cloud_view
-        try:
-            content_slot.update()
-            app.page.update()
+        try: content_slot.update()
         except Exception: pass
         
+    # 💥 修复：移除初始化里的 on_change 参数
     embed_mode_dd = ft.Dropdown(
         label="工作模式", 
         options=[ft.dropdown.Option("云端 API"), ft.dropdown.Option("本地模型")], 
         value=app.ai_config.get("embed_mode", "云端 API"),
-        text_size=13, dense=True, width=UI_WIDTH
+        text_size=13, dense=True, width=INPUT_WIDTH
     )
+    
+    # 💥 修复：在实例化后，通过属性赋值来绑定事件（0.84.0 最稳健写法）
     embed_mode_dd.on_change = on_embed_mode_change
 
+    # 初始化默认显示
     content_slot.content = local_view if embed_mode_dd.value == "本地模型" else cloud_view
 
-    tab2_col = ft.Column([embed_mode_dd, ft.Container(height=5), content_slot], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-    tab2_container = ft.Container(content=tab2_col, padding=ft.padding.only(left=20, top=20, right=20, bottom=10))
+    tab2_container = ft.Container(
+        content=ft.Column([
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.HUB, size=16), ft.Text("Embedding 引擎设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        embed_mode_dd,
+                        ft.Divider(height=10, thickness=0.5),
+                        content_slot
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=15
+                ),
+                elevation=1
+            )
+        ], spacing=15, scroll=ft.ScrollMode.AUTO, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=20
+    )
 
     # ==========================================
-    # Tab 3: 本书知识库 
+    # Tab 3: 本书知识库 (100% 还原业务逻辑，UI升级为仪表盘)
     # ==========================================
     book_name = app.current_book_name if getattr(app, 'current_book_name', "") else "未打开任何书籍"
     status_text = ft.Text(f"当前阅读：《{book_name}》\n索引状态：未建立", size=14, color="onSurface", text_align=ft.TextAlign.CENTER)
     
+    # 动态状态仪表盘
+    status_card = ft.Container(
+        content=ft.Column([
+            ft.Row([ft.Icon(ft.Icons.INFO_OUTLINE, size=20), ft.Text("知识库运行状态", weight="bold")], alignment=ft.MainAxisAlignment.CENTER),
+            status_text,
+        ], horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=20,
+        border_radius=12,
+        bgcolor="surfaceVariant", 
+        # 💥 修复：直接使用大写的 ft.Animation
+        animate=ft.Animation(300, ft.AnimationCurve.DECELERATE)
+    )
+
     init_prog_val = getattr(app, "build_progress_value", 0)
     init_prog_text = getattr(app, "build_progress_text", "准备切块中...")
     is_building = getattr(app, "is_building_index", False)
     
-    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=UI_WIDTH)
+    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8)
     prog_text = ft.Text(init_prog_text, size=12, color="grey", visible=is_building)
     
     btn_build = ft.ElevatedButton(content=ft.Text("🚀 向量建库"), style=app.get_action_button_style(ft.padding.symmetric(horizontal=16, vertical=12)))
@@ -113,17 +176,24 @@ def get_ai_settings_view(app):
         try: top_k_text.update()
         except Exception: pass
 
-    top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change, width=UI_WIDTH)
+    top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change)
     
-    top_k_container = ft.Column([
-        ft.Row([ft.Icon(ft.Icons.TUNE, size=16, color="grey"), top_k_text], alignment=ft.MainAxisAlignment.START),
-        top_k_slider,
-        ft.Text("提示: 数值越大提供的背景知识越多，但也越容易分散大模型注意力或导致 API 超时。", size=11, color="grey", text_align=ft.TextAlign.LEFT)
-    ], spacing=5)
+    top_k_card = ft.Card(
+        content=ft.Container(
+            content=ft.Column([
+                ft.Row([ft.Icon(ft.Icons.TUNE, size=16), ft.Text("检索性能参数", weight="bold")]),
+                top_k_text,
+                top_k_slider,
+                ft.Text("提示: 数值越大提供的背景知识越多，但也越容易分散大模型注意力或导致 API 超时。", size=11, color="grey")
+            ], spacing=10),
+            padding=15
+        ),
+        elevation=1
+    )
 
     app._active_ui = {
         'prog_bar': prog_bar, 'prog_text': prog_text,
-        'btn_build': btn_build, 'btn_clear': btn_clear, 'status_text': status_text
+        'btn_build': btn_build, 'btn_clear': btn_clear, 'status_text': status_text, 'status_card': status_card
     }
 
     def refresh_db_status():
@@ -133,7 +203,6 @@ def get_ai_settings_view(app):
         except ImportError:
             status_text.value = f"当前阅读：《{book_name}》\n⚠️ 未安装 sqlite-vec 扩展库，知识库暂不可用"
             btn_build.disabled = btn_clear.disabled = True
-            # 💥 删除了会引发崩溃的 tab3_col.update()
             return
 
         book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
@@ -144,13 +213,19 @@ def get_ai_settings_view(app):
                 status = vdb.get_index_status()
                 if status["is_indexed"]:
                     status_text.value = f"当前阅读：《{book_name}》\n索引状态：已建库 ({status['chunk_count']} 个切块)"
+                    status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.BLUE) # 建库后变色
                     btn_build.content.value = "🔁 重新建库"
                 else:
+                    status_card.bgcolor = "surfaceVariant"
                     btn_build.content.value = "🚀 向量建库"
             except Exception: 
                 btn_build.content.value = "🚀 向量建库"
         else:
+            status_card.bgcolor = "surfaceVariant"
             btn_build.content.value = "🚀 向量建库"
+            
+        try: status_card.update()
+        except Exception: pass
 
     if is_building:
         btn_build.content.value = "⏳ 后台建库中..."
@@ -158,6 +233,7 @@ def get_ai_settings_view(app):
     else:
         refresh_db_status()
     
+    # 🚨 完整保留的业务核心代码：建库逻辑
     def on_build_click(e):
         if not app.current_book_path:
             app.show_snack_bar("⚠️ 请先在首页打开一本小说")
@@ -251,10 +327,12 @@ def get_ai_settings_view(app):
                         try:
                             ui = app._active_ui
                             ui['status_text'].value = f"当前阅读：《{target_book_name}》\n索引状态：已建库 ({total} 个切块)"
+                            ui['status_card'].bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.BLUE)
                             ui['btn_build'].content.value = "🔁 重新建库"
                             ui['btn_build'].disabled = False
                             ui['btn_clear'].disabled = False
                             ui['status_text'].update()
+                            ui['status_card'].update()
                             ui['btn_build'].update()
                             ui['btn_clear'].update()
                         except Exception: pass
@@ -309,6 +387,7 @@ def get_ai_settings_view(app):
         confirm_dlg.open = True
         app.page.update()
 
+    # 🚨 完整保留的业务核心代码：清除逻辑
     def on_clear_click(e):
         if not app.current_book_path: return
         if "未建立" in status_text.value:
@@ -328,9 +407,13 @@ def get_ai_settings_view(app):
                 vdb = VectorDB(db_path)
                 vdb.clear_index()
                 status_text.value = f"当前阅读：《{book_name}》\n索引状态：未建立"
+                status_card.bgcolor = "surfaceVariant"
                 btn_build.content.value = "🚀 向量建库"
                 app.show_snack_bar("🧹 索引已清除")
-                try: tab3_col.update()
+                try: 
+                    status_text.update()
+                    status_card.update()
+                    btn_build.update()
                 except Exception: pass
 
         def close_clear(e):
@@ -357,26 +440,45 @@ def get_ai_settings_view(app):
     btn_build.on_click = on_build_click
     btn_clear.on_click = on_clear_click
 
-    tab3_col = ft.Column([
-        ft.Container(height=10), status_text, ft.Container(height=20),
-        prog_bar, prog_text, ft.Container(height=20),
-        action_row, ft.Container(height=20),
-        ft.Divider(height=1, thickness=0.5), ft.Container(height=10),
-        top_k_container
-    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True)
+    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=INPUT_WIDTH)
+    top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change, width=INPUT_WIDTH)
+    
+    # 将 status_card 也加上宽度限制
+    status_card.width = INPUT_WIDTH
 
-    tab3_container = ft.Container(content=tab3_col, padding=ft.padding.all(20))
+    tab3_col = ft.Column([
+        status_card, 
+        prog_bar, 
+        prog_text, 
+        action_row, 
+        ft.Divider(height=20, thickness=0.5),
+        # 💥 给 top_k_card 增加居中对齐
+        ft.Card(
+            content=ft.Container(
+                content=ft.Column([
+                    ft.Row([ft.Icon(ft.Icons.TUNE, size=16), ft.Text("检索性能参数", weight="bold")], alignment=ft.MainAxisAlignment.CENTER),
+                    top_k_text,
+                    top_k_slider,
+                    ft.Text("提示: 数值越大提供的背景知识越多，但也越容易分散大模型注意力。", size=11, color="grey", text_align=ft.TextAlign.CENTER)
+                ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                padding=15
+            ),
+            elevation=1
+        )
+    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True, scroll=ft.ScrollMode.AUTO, spacing=15)
+
+    tab3_container = ft.Container(content=tab3_col, padding=20)
 
     # ==========================================
-    # 保存与组装层
+    # 保存逻辑与控制器装配
     # ==========================================
     def save(e):
         app.ai_config["url"] = url_tf.value.strip()
         app.ai_config["key"] = key_tf.value.strip()
         app.ai_config["model"] = model_tf.value.strip()
         app.ai_config["prompt"] = prompt_tf.value.strip()
-        app.ai_config["prompt_char"] = prompt_char_tf.value.strip() # 💥 保存新提示词
-        app.ai_config["prompt_clue"] = prompt_clue_tf.value.strip() # 💥 保存新提示词
+        app.ai_config["prompt_char"] = prompt_char_tf.value.strip() 
+        app.ai_config["prompt_clue"] = prompt_clue_tf.value.strip() 
 
         app.ai_config["embed_mode"] = embed_mode_dd.value
         app.ai_config["embed_url"] = embed_url_tf.value.strip()
@@ -387,115 +489,64 @@ def get_ai_settings_view(app):
         
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
-        # 💥 移除 go_back(None)，保存后不再自动退回正文
 
-    # ==========================================
-    # 💥 恢复使用 0.84.0 最新的官方原生 TabBar 架构
-    # ==========================================
-    # ==========================================
-    # ✅ 手动标签页切换（完全不用 Tab 系列控件）
-    # ==========================================
+    # 💥 核心修复：创建一个专门用来动态装载内容的容器
+    content_area = ft.Container(content=tab1_container, expand=True)
 
-    # 当前选中的标签索引
-    current_tab_index = 0
+    # 监听原生 TabBar 的滑动/点击切换，手动更新下方的内容容器
+    def handle_tab_change(e):
+        idx = e.control.selected_index
+        if idx == 0:
+            content_area.content = tab1_container
+        elif idx == 1:
+            content_area.content = tab2_container
+        elif idx == 2:
+            content_area.content = tab3_container
+            refresh_db_status() # 切换到知识库时自动刷新状态
+        
+        try: content_area.update()
+        except Exception: pass
 
-    def get_tab_button_style(is_active):
-        """根据是否激活返回不同的按钮样式"""
-        is_dark = app._get_is_dark_mode()
-        active_bg = "#1AFFFFFF" if is_dark else "#1A000000"
-        inactive_bg = ft.Colors.TRANSPARENT
-        return ft.ButtonStyle(
-            shape=ft.RoundedRectangleBorder(radius=8),
-            bgcolor=active_bg if is_active else inactive_bg,
-            elevation=0,
-            padding=ft.padding.symmetric(horizontal=12, vertical=8)
+    # 💥 核心修复：添加 Flet 0.84.0 强制要求的 length 参数
+    settings_tabs = ft.Tabs(
+        length=3, # 💥 必须明确告诉控制器这里有 3 个选项卡
+        selected_index=0,
+        on_change=handle_tab_change,
+        content=ft.TabBar(
+            tab_alignment=ft.TabAlignment.CENTER, 
+            tabs=[
+                ft.Tab(label="对话模型", icon=ft.Icons.CHAT),
+                ft.Tab(label="向量引擎", icon=ft.Icons.HUB),
+                ft.Tab(label="全书知识库", icon=ft.Icons.STORAGE),
+            ]
         )
-
-    # 三个标签按钮
-    tab_btn_main = ft.TextButton(
-        "对话模型", style=get_tab_button_style(True)
-    )
-    tab_btn_embed = ft.TextButton(
-        "向量引擎", style=get_tab_button_style(False)
-    )
-    tab_btn_vdb = ft.TextButton(
-        "本书知识库", style=get_tab_button_style(False)
     )
 
-    # 按钮行
-    tab_bar_row = ft.Row(
-        controls=[tab_btn_main, tab_btn_embed, tab_btn_vdb],
-        alignment=ft.MainAxisAlignment.SPACE_AROUND,
-    )
-    tab_bar_wrapper = ft.Container(
-        content=tab_bar_row,
-        padding=ft.padding.symmetric(horizontal=20)   # 标签行左右留白，不贴边
-    )
-
-    # 内容显示区域（默认显示第一个容器）
-    content_area = ft.Container(
-        content=tab1_container,
-        expand=True,
-        padding=ft.padding.only(left=0, top=10, right=0, bottom=10),
-    )
-
-    # 点击切换逻辑
-    def switch_tab(e, idx):
-        nonlocal current_tab_index
-        current_tab_index = idx
-        # 切换内容
-        content_area.content = [tab1_container, tab2_container, tab3_container][idx]
-        content_area.update()
-        # 更新按钮样式
-        for i, btn in enumerate([tab_btn_main, tab_btn_embed, tab_btn_vdb]):
-            btn.style = get_tab_button_style(i == idx)
-            btn.update()
-
-    tab_btn_main.on_click = lambda e: switch_tab(e, 0)
-    tab_btn_embed.on_click = lambda e: switch_tab(e, 1)
-    tab_btn_vdb.on_click = lambda e: switch_tab(e, 2)
-
-    # 整体布局
-    tabs = ft.Column(
+    # 像拼积木一样拼接：顶部的状态与导航 + 底部的动态内容区
+    tabs_layout = ft.Column(
         controls=[
-            tab_bar_wrapper,
-            ft.Divider(height=1, thickness=0.5),
-            content_area,
+            settings_tabs,
+            content_area
         ],
         expand=True,
-        spacing=0,
-    )
-    
-    # 底部悬浮按钮栏：仅保留“保存设置”按钮
-    bottom_bar = ft.Container(
-        content=ft.Row([
-            ft.ElevatedButton(
-                content=ft.Text("保存设置", size=15, weight=ft.FontWeight.BOLD), 
-                bgcolor="primary",
-                color="onPrimary",
-                on_click=save,
-                style=ft.ButtonStyle(
-                    padding=ft.padding.symmetric(horizontal=50, vertical=20), 
-                    shape=ft.RoundedRectangleBorder(radius=12)
-                )
-            )
-        ], alignment=ft.MainAxisAlignment.CENTER), 
-        padding=ft.padding.only(top=10, bottom=20), 
-        bgcolor="surfaceVariant"
+        spacing=0
     )
 
     return ft.View(
         route="/reader/ai_settings",
         appbar=ft.AppBar(
             leading=ft.IconButton(ft.Icons.ARROW_BACK, on_click=go_back),
-            title=ft.Text("AI 设置与知识库中心", size=18, weight="bold"),
+            title=ft.Text("AI 设置中心", size=18, weight="bold"),
             center_title=True,
-            bgcolor="surfaceVariant"
+            bgcolor="surfaceVariant",
+            actions=[
+                # 💥 软盘图标保存按钮
+                ft.IconButton(icon=ft.Icons.SAVE, on_click=save, icon_color="primary", tooltip="保存设置"),
+                # 💥 修改点：增加一个透明容器作为右边距 padding，数值你可以根据手感调整
+                ft.Container(width=15) 
+            ]
         ),
-        controls=[
-            ft.Container(content=tabs, expand=True), # 挂载官方控制器
-            bottom_bar
-        ],
+        controls=[tabs_layout], 
         padding=0,
         bgcolor="surface"
     )
