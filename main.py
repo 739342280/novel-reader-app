@@ -211,34 +211,27 @@ class NovelReaderApp:
 
     # 💥 修改点 2：修复物理返回键/Esc 键的同步逻辑
     def view_pop(self, e):
-        # 1. 增加防连击保护
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 2. 拦截底部面板
         if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
-            self.page.run_task(self.close_reader_overlays)
-            return
+            self.page.run_task(self.close_reader_overlays); return
         if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
-            self.page.run_task(self.close_reader_overlays)
-            return
-            
-        # 💥 3. 修复致命黑洞：检查 .open 属性，而不是对象本身是否存在！
+            self.page.run_task(self.close_reader_overlays); return
         if getattr(self.global_dialog, "open", False):
-            self._universal_close(self.global_dialog)
-            return 
+            self._universal_close(self.global_dialog); return 
 
-        # 💥 4. 修复退栈悖论：回归最纯净的图层剥离，彻底适配安卓物理返回！
+        # 核心逻辑：物理退栈，绝不 push
         if len(self.page.views) > 1:
-            # 如果当前是从正文退回首页，保存阅读进度
+            # 如果当前顶层是正文，说明要回首页了，存个进度
             if self.page.views[-1].route == "/reader":
                 self.save_current_progress()
-                
-            # 直接抽走顶层视图 (无论是统计页、AI页、还是阅读页)
+            
+            # 💥 关键：物理弹出当前视图
             self.page.views.pop()
             
-            # 将底层的真实路由同步给系统，绝不使用 push_route 制造套娃！
+            # 💥 关键：默默同步 URL 状态，不要用 push_route，否则会污染历史记录
             self.page.route = self.page.views[-1].route
             self.page.update()
 
