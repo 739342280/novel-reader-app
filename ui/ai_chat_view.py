@@ -17,9 +17,15 @@ def get_ai_chat_view(app):
         saved_data = {"main": saved_data}
         app.current_book_summaries[target_idx_str] = saved_data
 
+    # 💥 修改点 1：将 chat 升级为独立的多频道字典，保留各模式追问记录
     state = {
         "mode": "main",         
-        "chat": [],             
+        "chats": {
+            "main": [],
+            "characters": [],
+            "characters_pro": [],
+            "clues": []
+        },             
         "is_streaming": False
     }
 
@@ -36,47 +42,20 @@ def get_ai_chat_view(app):
     
     send_btn = ft.IconButton(icon=ft.Icons.SEND, icon_color="onSurface", on_click=lambda _: send_message(None))
 
-    mode_btn_main = ft.TextButton(content=ft.Text("主线"), style=ft.ButtonStyle(color="onSurface"))
-    mode_btn_char = ft.TextButton(content=ft.Text("人物"), style=ft.ButtonStyle(color="onSurface"))
-    mode_btn_char_pro = ft.TextButton(content=ft.Text("人物+"), style=ft.ButtonStyle(color="onSurface"))
-    mode_btn_clue = ft.TextButton(content=ft.Text("伏笔"), style=ft.ButtonStyle(color="onSurface"))
-
     btn_regen = ft.ElevatedButton(content=ft.Text("总结"), style=ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE))
     btn_copy = ft.ElevatedButton(content=ft.Text("复制", color="onSurface"), style=app.get_action_button_style())
 
     def go_back(e):
         # 🚨 【路由纪律：禁止修改】：统一调用主控制器的 view_pop 进行退栈。
-        # 严禁在此处直接使用 app.page.go("/reader") 或 push_route，以避免与安卓原生弹栈动画发生时序撕裂。
         app.view_pop(None)
 
-    # 💥 新的核心判定锁：通过路由判断当前视图是否存活
+    # 核心判定锁：通过路由判断当前视图是否存活
     def is_active():
         return app.page.route == "/reader/ai_chat"
-
-    def update_mode_btns_ui():
-        is_dark = app._get_is_dark_mode()
-        active_bg = "#1AFFFFFF" if is_dark else "#1A000000"
-        inactive_bg = ft.Colors.TRANSPARENT
-        
-        for btn, m in [(mode_btn_main, "main"), (mode_btn_char, "characters"), (mode_btn_char_pro, "characters_pro"), (mode_btn_clue, "clues")]:
-            is_active_btn = (state["mode"] == m)
-            btn.style = ft.ButtonStyle(
-                shape=ft.RoundedRectangleBorder(radius=8),
-                bgcolor=active_bg if is_active_btn else inactive_bg,
-                elevation=0,
-                padding=ft.padding.symmetric(horizontal=12, vertical=8)
-            )
-            try: btn.update()
-            except Exception: pass
-        
-        btn_copy.style = app.get_action_button_style()
-        try: btn_copy.update()
-        except Exception: pass
 
     def get_sys_prompt():
         if state["mode"] == "main": 
             return app.ai_config.get("prompt", "")
-        # 💥 改为从配置中读取，而不是硬编码
         if state["mode"] in ["characters", "characters_pro"]: 
             return app.ai_config.get("prompt_char", "")
         if state["mode"] == "clues": 
@@ -87,7 +66,7 @@ def get_ai_chat_view(app):
         
         base_content = saved_data.get(state["mode"], "")
         if not base_content:
-            base_content = "请点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
+            base_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
             btn_regen.content.value = "总结"
         else:
             btn_regen.content.value = "重新总结"
@@ -104,7 +83,8 @@ def get_ai_chat_view(app):
             )
         )
 
-        for msg in state["chat"]:
+        # 💥 修改点 2：读取独立频道的聊天记录
+        for msg in state["chats"][state["mode"]]:
             if msg["role"] == "user":
                 chat_list_col.controls.append(
                     ft.Row(
@@ -140,17 +120,40 @@ def get_ai_chat_view(app):
             except Exception: pass
         app.page.run_task(safe_scroll)
 
-    def switch_mode(new_mode):
-        if state["is_streaming"]: return
-        state["mode"] = new_mode
-        state["chat"].clear() 
-        update_mode_btns_ui()
+    # 💥 修改点 3：增加顶端 Tabs 的原生切换处理逻辑
+    def handle_tab_change(e):
+        modes = ["main", "characters", "characters_pro", "clues"]
+        target_idx = e.control.selected_index
+        
+        # 稳健性拦截：流式输出中严禁切换频道
+        if state["is_streaming"]:
+            app.show_snack_bar("⚠️ AI 正在输出中，请等待完成后切换")
+            # 强制回弹指示器位置
+            e.control.selected_index = modes.index(state["mode"])
+            try: e.control.update()
+            except Exception: pass
+            return
+            
+        state["mode"] = modes[target_idx]
+        # 注意：这里不再清空 state["chats"]，以此实现记忆历史
         render_chat()
 
-    mode_btn_main.on_click = lambda _: switch_mode("main")
-    mode_btn_char.on_click = lambda _: switch_mode("characters")
-    mode_btn_char_pro.on_click = lambda _: switch_mode("characters_pro")
-    mode_btn_clue.on_click = lambda _: switch_mode("clues")
+   # 💥 彻底适配 Flet 最新版本的选项卡分离架构
+    ai_tabs = ft.Tabs(
+        selected_index=0,
+        length=4,  # 💥 新版要求必须在控制器上声明选项卡总数量
+        on_change=handle_tab_change,
+        content=ft.TabBar(
+            tab_alignment=ft.TabAlignment.CENTER, # 💥 居中对齐，替代以前的 scrollable 属性
+            tabs=[
+                # 💥 核心修复：属性名彻底变更为 label，原生 icon 完美回归
+                ft.Tab(label="主线", icon=ft.Icons.MENU_BOOK),
+                ft.Tab(label="人物", icon=ft.Icons.PERSON),
+                ft.Tab(label="人物+", icon=ft.Icons.PERSON_ADD_ALT_1),
+                ft.Tab(label="伏笔", icon=ft.Icons.SEARCH),
+            ]
+        )
+    )
 
     def generate_base(e):
         if not app.ai_config.get("key"):
@@ -159,7 +162,8 @@ def get_ai_chat_view(app):
         if state["is_streaming"]: return
 
         state["is_streaming"] = True
-        state["chat"].clear() 
+        # 重新生成大纲时，清空当前频道的追问历史
+        state["chats"][state["mode"]].clear() 
         btn_regen.disabled = True
 
         if state["mode"] == "characters_pro":
@@ -352,8 +356,10 @@ def get_ai_chat_view(app):
         except Exception: pass
 
         state["is_streaming"] = True
-        state["chat"].append({"role": "user", "content": text})
-        state["chat"].append({"role": "assistant", "content": "⏳ 正在检索防剧透知识库并思考中..."})
+        
+        # 💥 修改点 5：追加对话记录至当前模式专属存储区
+        state["chats"][state["mode"]].append({"role": "user", "content": text})
+        state["chats"][state["mode"]].append({"role": "assistant", "content": "⏳ 正在检索防剧透知识库并思考中..."})
         render_chat()
 
         def rag_chat_task():
@@ -393,7 +399,7 @@ def get_ai_chat_view(app):
                 if saved_data.get(state["mode"]):
                     messages.append({"role": "assistant", "content": saved_data[state["mode"]]})
                 
-                for msg in state["chat"][:-1]: 
+                for msg in state["chats"][state["mode"]][:-1]: 
                     messages.append(msg)
 
                 stream_buffer = [""]
@@ -425,18 +431,18 @@ def get_ai_chat_view(app):
 
                 def on_complete(full):
                     state["is_streaming"] = False
-                    state["chat"][-1]["content"] = full
+                    state["chats"][state["mode"]][-1]["content"] = full
                 
                 def on_error(err):
                     state["is_streaming"] = False
                     stream_buffer[0] = f"请求失败: {err}"
-                    state["chat"][-1]["content"] = stream_buffer[0]
+                    state["chats"][state["mode"]][-1]["content"] = stream_buffer[0]
 
                 AIService.stream_chat(app.ai_config, messages, on_chunk, on_complete, on_error, is_active)
                 
             except Exception as ex:
                 state["is_streaming"] = False
-                state["chat"][-1]["content"] = f"系统错误: {ex}"
+                state["chats"][state["mode"]][-1]["content"] = f"系统错误: {ex}"
                 try: app.page.update()
                 except Exception: pass
 
@@ -445,9 +451,10 @@ def get_ai_chat_view(app):
     async def copy_result(e):
         content_to_copy = saved_data.get(state["mode"], "")
         
-        if state["chat"]:
+        # 💥 修改点 6：复制时连带导出本频道的专属追问记录
+        if state["chats"][state["mode"]]:
             content_to_copy += "\n\n--- 追问记录 ---\n"
-            for msg in state["chat"]:
+            for msg in state["chats"][state["mode"]]:
                 role_name = "【我】" if msg["role"] == "user" else "【AI】"
                 content_to_copy += f"\n{role_name}：\n{msg['content']}\n"
 
@@ -467,16 +474,12 @@ def get_ai_chat_view(app):
     btn_regen.on_click = generate_base
     btn_copy.on_click = copy_result
 
-    update_mode_btns_ui()
+    # 首次进入页面，渲染默认的主线频道
     render_chat()
 
-    # 底部控制区（固定在下方）
+    # 💥 修改点 7：底栏大瘦身，彻底抛弃原有按钮轨道
     bottom_area = ft.Container(
         content=ft.Column([
-            ft.Row(
-                [mode_btn_main, mode_btn_char, mode_btn_char_pro, mode_btn_clue], 
-                alignment=ft.MainAxisAlignment.SPACE_AROUND
-            ),
             ft.Row(
                 [btn_regen, btn_copy], 
                 alignment=ft.MainAxisAlignment.SPACE_AROUND
@@ -487,10 +490,11 @@ def get_ai_chat_view(app):
             )
         ], tight=True, spacing=10),
         padding=ft.padding.all(10),
-        bgcolor="surfaceVariant",
+        bgcolor="surface", 
         border=ft.border.only(top=ft.BorderSide(1, "outlineVariant"))
     )
 
+    # 💥 修改点 8：按标准的 View 架构注入 Tabs
     return ft.View(
         route="/reader/ai_chat",
         appbar=ft.AppBar(
@@ -500,6 +504,8 @@ def get_ai_chat_view(app):
             bgcolor="surfaceVariant"
         ),
         controls=[
+            # 在 AppBar 下方紧贴注入我们新做好的选项卡组件
+            ai_tabs,
             ft.Container(
                 content=chat_list_col,
                 expand=True,
