@@ -221,12 +221,12 @@ class NovelReaderApp:
         self.page.update()
 
     def view_pop(self, e):
-        # 防抖
+        # 1. 防重复触发锁
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 关闭覆盖层
+        # 2. 覆盖层拦截 (保持新版的优秀设计)
         if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
             self.page.run_task(self.close_reader_overlays); return
         if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
@@ -234,30 +234,19 @@ class NovelReaderApp:
         if getattr(self.global_dialog, "open", False):
             self._universal_close(self.global_dialog); return
 
-        # 视图弹出处理
+        # 3. 核心退栈逻辑（💥 完美还原老代码的精髓）
         if len(self.page.views) > 1:
-            current_route = self.page.route
-            # 即将暴露的目标路由（栈顶下一个视图的路由）
-            target_route = self.page.views[-2].route if len(self.page.views) >= 2 else "/"
-
-            # 保存阅读进度
-            if current_route == "/reader":
+            if self.page.views[-1].route == "/reader":
                 self.save_current_progress()
 
-            # ----- 核心策略：返回书架时重建，返回正文时增量弹出 -----
-            if target_route == "/":
-                # 返回首页：完全重建书架，确保安卓事件绑定
-                self.page.views.clear()
-                self.page.route = "/"
-                self.route_change(None)
-            else:
-                # 返回正文页（从统计/AI等子页面）：只弹出当前视图，保留底层 reader_view
-                self.page.views.pop()
-                self.page.route = target_route
-                self.page.update()
-        else:
-            # 已经在根页面，不做任何操作
-            pass
+            # 弹出当前被滑掉的视图
+            self.page.views.pop()
+            top_view = self.page.views[-1]
+            
+            # 💥 奇迹指令：像老代码一样，强行向前端推入目标路由！
+            # 这会激活 route_change 里的 self.page.views.clear() 机制
+            # 彻底推翻重建僵尸书架，让所有书籍点击事件满血复活！
+            self.page.run_task(self.page.push_route, top_view.route)
             
 
     def _on_os_theme_change(self, e):
