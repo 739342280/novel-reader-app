@@ -2,6 +2,15 @@ import flet as ft
 import asyncio
 import threading
 import time
+# --- 新增的依赖导入 ---
+import os
+import sys
+import shutil
+import io
+import zipfile
+from datetime import datetime
+from data.storage import StorageManager
+# ---------------------
 from core.ai_service import AIService
 
 class DialogManager:
@@ -30,7 +39,6 @@ class DialogManager:
             app._close_dialog()
             await app.trigger_export_picker(path, current_name)
 
-        # 💥 修正：ft.Button 替换为 ft.ElevatedButton
         export_btn = ft.ElevatedButton(
             content=ft.Row(
                 [ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], 
@@ -49,13 +57,198 @@ class DialogManager:
             ft.Text("注：移出书架不会删除原文件，导出则会另存一份副本", size=12, color=ft.Colors.GREY)
         ], tight=True) 
         
-        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
             ft.TextButton(content=ft.Text("保存名称"), on_click=on_save),
             ft.TextButton(content=ft.Text("移出书架"), style=ft.ButtonStyle(color=ft.Colors.RED), on_click=confirm_delete),
             ft.TextButton(content=ft.Text("取消"), on_click=lambda _: app._close_dialog())
         ]
         app._open_dialog()
+
+    # ==========================================
+    # --- 【新增】从 main.py 迁移过来的备份导出逻辑 ---
+    # ==========================================
+    @staticmethod
+    async def export_app_data(app, e):
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M")
+            suggested_name = f"小说智读备份_{timestamp}.zip"
+            base_dir = StorageManager.get_base_dir()
+
+            all_files = []
+            for root, dirs, files in os.walk(base_dir):
+                if 'models' in dirs:
+                    dirs.remove('models')
+                    
+                for file in files:
+                    all_files.append(os.path.join(root, file))
+            
+            total_files = len(all_files)
+            if total_files == 0:
+                app.show_snack_bar("⚠️ 没有可导出的数据")
+                return
+            
+            # 使用 app.page.platform 准确识别，避免安卓被误判为 Linux
+            platform_str = str(app.page.platform).lower()
+            is_mobile_or_web = "android" in platform_str or "ios" in platform_str or "web" in platform_str
+            
+            if not is_mobile_or_web:
+                # --- PC 端逻辑 ---
+                save_path = await ft.FilePicker().save_file(
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["zip"],
+                    file_name=suggested_name
+                )
+                
+                if not save_path:
+                    app.show_snack_bar("⚠️ 已取消导出")
+                    return
+
+                prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+                prog_text = ft.Text("正在打包写入硬盘...", size=13, color="onSurface")
+                
+                app.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
+                app.global_dialog.content = ft.Column([
+                    ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
+                ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                app.global_dialog.actions = []
+                app.page.update()
+
+                with zipfile.ZipFile(save_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for i, abs_path in enumerate(all_files):
+                        rel_path = os.path.relpath(abs_path, base_dir)
+                        zipf.write(abs_path, rel_path)
+                        
+                        if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                            prog_bar.value = (i + 1) / total_files
+                            prog_text.value = f"正在写入硬盘... {i+1} / {total_files}"
+                            app.page.update()
+                            await asyncio.sleep(0.01)
+
+                app.show_snack_bar("✅ 应用数据已完整导出到本地")
+                app._close_dialog()
+
+            else:
+                # --- 移动端逻辑 (Android/iOS) ---
+                prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+                prog_text = ft.Text("正在内存中构建数据包...", size=13, color="onSurface")
+                
+                app.global_dialog.title = ft.Text("正在导出备份", size=18, weight=ft.FontWeight.BOLD)
+                app.global_dialog.content = ft.Column([
+                    ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
+                ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+                app.global_dialog.actions = []
+                app.page.update()
+
+                zip_buffer = io.BytesIO()
+
+                with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    for i, abs_path in enumerate(all_files):
+                        rel_path = os.path.relpath(abs_path, base_dir)
+                        zipf.write(abs_path, rel_path)
+                        
+                        if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                            prog_bar.value = (i + 1) / total_files
+                            prog_text.value = f"正在构建数据包... {i+1} / {total_files}"
+                            app.page.update()
+                            await asyncio.sleep(0.01)
+
+                zip_bytes = zip_buffer.getvalue()
+                prog_bar.value = 1.0
+                prog_text.value = "构建完成！请在系统弹窗中选择保存..."
+                app.page.update()
+                
+                # Android 真正带着 src_bytes 去调用底层保存
+                await ft.FilePicker().save_file(
+                    file_type=ft.FilePickerFileType.CUSTOM,
+                    allowed_extensions=["zip"],
+                    file_name=suggested_name,
+                    src_bytes=zip_bytes
+                )
+                
+                app.show_snack_bar("✅ 操作结束 (若未取消，备份已保存)")
+                app._close_dialog()
+
+        except Exception as ex:
+            app.show_snack_bar(f"❌ 导出失败: {str(ex)}")
+            app._close_dialog()
+
+
+    # ==========================================
+    # --- 【新增】从 main.py 迁移过来的备份恢复逻辑 ---
+    # ==========================================
+    @staticmethod
+    async def import_app_data(app, e):
+        try:
+            prog_bar = ft.ProgressBar(value=0, color=ft.Colors.BLUE, height=8, width=300)
+            prog_text = ft.Text("正在准备恢复环境...", size=13, color="onSurface")
+            
+            app.global_dialog.title = ft.Text("正在恢复备份", size=18, weight=ft.FontWeight.BOLD)
+            app.global_dialog.content = ft.Column([
+                ft.Container(height=10), prog_bar, prog_text, ft.Container(height=10)
+            ], tight=True, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
+            app.global_dialog.actions = []
+            app.page.update()
+
+            files = await ft.FilePicker().pick_files(
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["zip"]
+            )
+
+            if files and len(files) > 0:
+                zip_path = files[0].path
+                if zip_path:
+                    app.current_book_path = "" 
+                    app.engine.chapters_info = []
+                    
+                    prog_text.value = "正在验证备份文件..."
+                    app.page.update()
+
+                    base_dir = StorageManager.get_base_dir()
+                    
+                    with zipfile.ZipFile(zip_path, 'r') as zipf:
+                        zip_infos = zipf.infolist()
+                        total_files = len(zip_infos)
+                        
+                        for i, zip_info in enumerate(zip_infos):
+                            try:
+                                target_path = os.path.join(base_dir, zip_info.filename)
+                                if os.path.exists(target_path):
+                                    import stat
+                                    try:
+                                        os.chmod(target_path, stat.S_IWRITE) 
+                                    except Exception:
+                                        pass 
+
+                                zipf.extract(zip_info, base_dir)
+                                
+                            except PermissionError:
+                                filename = zip_info.filename
+                                raise Exception(f"文件正在被占用：{filename}\n请确保已关闭所有正在阅读的界面，并重试。")
+                            
+                            if i % max(1, total_files // 20) == 0 or i == total_files - 1:
+                                prog_bar.value = (i + 1) / total_files
+                                prog_text.value = f"正在还原文件... {i+1} / {total_files}"
+                                app.page.update()
+                                await asyncio.sleep(0.01)
+
+                    app.show_snack_bar("✅ 数据已完美恢复，请重启应用生效")
+                    app._load_config_from_appdata()
+                    app._load_bookshelf()
+                    app.refresh_bookshelf_ui()
+                    
+                    if sys.platform == "win32":
+                        os.system("taskkill /F /IM llama-server.exe >nul 2>&1")
+
+                else:
+                    app.show_snack_bar("❌ 无法获取文件路径")
+            else:
+                app.show_snack_bar("⚠️ 已取消恢复")
+            
+            app._close_dialog()
+            
+        except Exception as ex:
+            app.show_snack_bar(f"❌ 恢复失败: {str(ex)}")
+            app._close_dialog()
 
    
     @staticmethod
@@ -64,10 +257,18 @@ class DialogManager:
         app.global_dialog.inset_padding = None
         app.global_dialog.content_padding = ft.padding.only(left=20, top=15, right=20, bottom=15)
 
-        # 💥 修正：ft.Button 替换为 ft.ElevatedButton
+        # 💥 【修改说明】此处修改了绑定事件，使用 lambda 和 page.run_task 调用本类的静态方法
         backup_row = ft.Row([
-            ft.ElevatedButton(content=ft.Row([ft.Icon(ft.Icons.UPLOAD), ft.Text("导出备份", color="onSurface")]), on_click=app.export_app_data, style=app.get_action_button_style()),
-            ft.ElevatedButton(content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("恢复备份", color="onSurface")]), on_click=app.import_app_data, style=app.get_action_button_style())
+            ft.ElevatedButton(
+                content=ft.Row([ft.Icon(ft.Icons.UPLOAD), ft.Text("导出备份", color="onSurface")]), 
+                on_click=lambda e: app.page.run_task(DialogManager.export_app_data, app, e), 
+                style=app.get_action_button_style()
+            ),
+            ft.ElevatedButton(
+                content=ft.Row([ft.Icon(ft.Icons.DOWNLOAD), ft.Text("恢复备份", color="onSurface")]), 
+                on_click=lambda e: app.page.run_task(DialogManager.import_app_data, app, e), 
+                style=app.get_action_button_style()
+            )
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
 
         app.global_dialog.title = ft.Text("⚙️ 全局设置", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
@@ -78,7 +279,6 @@ class DialogManager:
             backup_row
         ], tight=True)
         
-        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
             ft.TextButton(content=ft.Text("关闭", color="onSurface"), on_click=lambda _: app._close_dialog(), style=app.get_action_button_style())
         ]
@@ -123,7 +323,6 @@ class DialogManager:
             height=400, width=500
         )
         
-        # 💥 修正：ft.Button 替换为 ft.TextButton
         app.global_dialog.actions = [
             ft.TextButton(
                 content=ft.Text("关闭", color="onSurface"), 
