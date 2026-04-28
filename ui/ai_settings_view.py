@@ -233,30 +233,38 @@ def get_ai_settings_view(app):
     else:
         refresh_db_status()
     
-    # 🚨 完整保留的业务核心代码：建库逻辑
     def on_build_click(e):
         if not app.current_book_path:
             app.show_snack_bar("⚠️ 请先在首页打开一本小说")
             return
 
+        # 快照当前书籍信息（防止在建库过程中用户切换书籍）
+        target_book_path = app.current_book_path
+        target_book_name = app.current_book_name
+        target_chapters = app.engine.chapters_info.copy()
+
         def do_build():
-            target_book_path = app.current_book_path
-            target_book_name = app.current_book_name
-            target_chapters = app.engine.chapters_info.copy()
-            
+            nonlocal target_book_path, target_book_name, target_chapters
+
             app.is_building_index = True
             app.build_progress_value = 0
             app.build_progress_text = "正在进行滑动窗口分块..."
-            
+
+            # 更新 UI 按钮状态
             btn_build.content.value = "⏳ 后台建库中..."
             btn_build.disabled = btn_clear.disabled = True
             prog_bar.visible = prog_text.visible = True
             prog_bar.value = app.build_progress_value
             prog_text.value = app.build_progress_text
-            try: tab3_col.update()
-            except Exception: pass
+            try:
+                tab3_col.update()
+            except Exception:
+                pass
 
-            def build_task():
+            # ----- 内部函数 build_task，接收快照参数 -----
+            def build_task(path, name, chapters):
+                import traceback
+
                 def safe_update_ui(val, text):
                     app.build_progress_value = val
                     app.build_progress_text = text
@@ -267,66 +275,88 @@ def get_ai_settings_view(app):
                             ui['prog_text'].value = text
                             ui['prog_bar'].update()
                             ui['prog_text'].update()
-                        except Exception: pass
+                        except Exception:
+                            pass
 
                 try:
+                    # 1. 导入依赖
+                    safe_update_ui(0, "📦 正在加载依赖模块...")
                     from core.chunker import NovelChunker
                     from core.ai_service import AIService
                     try:
                         from core.vector_db import VectorDB
-                    except ImportError:
-                        safe_update_ui(0, "❌ 启动失败：缺少 sqlite-vec 依赖")
-                        app.page.update()
+                    except ImportError as ie:
+                        safe_update_ui(0, f"❌ 缺少 sqlite-vec 扩展: {ie}")
                         return
-                    
-                    book_hash = hashlib.md5(target_book_path.encode('utf-8')).hexdigest()
+
+                    # 2. 准备数据库目录
+                    safe_update_ui(0, "📁 准备数据库目录...")
+                    book_hash = hashlib.md5(path.encode('utf-8')).hexdigest()
                     db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
                     os.makedirs(db_dir, exist_ok=True)
                     db_path = os.path.join(db_dir, f"{book_hash}.db")
-                    
+
+                    # 3. 文本分块
+                    safe_update_ui(0, "✂️ 正在进行滑动窗口分块...")
                     chunker = NovelChunker(chunk_size=500, overlap=50)
                     all_chunks = []
-                    
-                    for idx, ch in enumerate(target_chapters):
+                    total_chapters = len(chapters)
+                    for idx, ch in enumerate(chapters):
+                        if idx % 10 == 0 or idx == total_chapters - 1:
+                            safe_update_ui(idx / total_chapters, f"📖 分块中：第 {idx+1}/{total_chapters} 章")
                         chunks = chunker.chunk_text(app.engine.get_chapter_text(idx))
                         for c in chunks:
                             all_chunks.append((idx, c))
-                            
+
                     total = len(all_chunks)
-                    if total == 0: raise Exception("提取不到书籍文本内容")
-                        
-                    safe_update_ui(0, f"分块完毕 (共 {total} 块)，请求 API 获取维度...")
-                    app.page.update()
-                    
+                    if total == 0:
+                        raise Exception("提取不到书籍文本内容")
+
+                    safe_update_ui(0.1, f"✅ 分块完成，共 {total} 个文本块")
+
+                    # 4. 获取向量维度
+                    safe_update_ui(0.15, "🔍 获取向量维度（测试第一个块）...")
                     first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
                     dim = len(first_emb)
-                    
+                    safe_update_ui(0.2, f"📐 向量维度: {dim}")
+
+                    # 5. 初始化数据库表
+                    safe_update_ui(0.2, "🗄️ 初始化数据库索引...")
                     vdb = VectorDB(db_path)
                     vdb.init_tables(dim)
-                    
+
+                    # 6. 批量向量化并入库
                     batch_size = 50
-                    for i in range(0, total, batch_size):
-                        batch = all_chunks[i:i+batch_size]
-                        
-                        safe_update_ui(i / total, f"🚀 正在调用 Embedding 接口... ( {i} / {total} )")
-                        
+                    total_batches = (total + batch_size - 1) // batch_size
+                    for batch_idx in range(0, total, batch_size):
+                        batch = all_chunks[batch_idx:batch_idx+batch_size]
+                        current_batch_num = batch_idx // batch_size + 1
+                        percent = batch_idx / total
+                        safe_update_ui(percent, f"🧠 批量向量化 ({current_batch_num}/{total_batches})  请稍候...")
+
                         batch_texts = [c[1] for c in batch]
-                        batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
+                        try:
+                            batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
+                        except Exception as e:
+                            error_detail = traceback.format_exc()
+                            safe_update_ui(percent, f"❌ API 调用失败: {str(e)}\n{error_detail[-200:]}")
+                            raise
 
                         db_data = []
                         for idx_in_batch, (chapter_idx, chunk_text) in enumerate(batch):
                             emb = batch_embs[idx_in_batch]
                             db_data.append((chapter_idx, chunk_text, emb))
-                            
+
+                        safe_update_ui(percent, f"💾 写入数据库 ({current_batch_num}/{total_batches})...")
                         vdb.insert_chunks(db_data)
-                        
+
+                    # 完成
                     app.is_building_index = False
-                    safe_update_ui(1.0, "✅ 建库大功告成！")
-                    
+                    safe_update_ui(1.0, "🎉 建库大功告成！")
                     if hasattr(app, '_active_ui'):
                         try:
                             ui = app._active_ui
-                            ui['status_text'].value = f"当前阅读：《{target_book_name}》\n索引状态：已建库 ({total} 个切块)"
+                            ui['status_text'].value = f"当前阅读：《{name}》\n索引状态：已建库 ({total} 个切块)"
                             ui['status_card'].bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.BLUE)
                             ui['btn_build'].content.value = "🔁 重新建库"
                             ui['btn_build'].disabled = False
@@ -335,14 +365,21 @@ def get_ai_settings_view(app):
                             ui['status_card'].update()
                             ui['btn_build'].update()
                             ui['btn_clear'].update()
-                        except Exception: pass
-                        
-                    app.show_snack_bar(f"✅ 《{target_book_name}》全书向量建库已在后台完成！")
-                    
+                        except Exception:
+                            pass
+                    app.show_snack_bar(f"✅ 《{name}》全书向量建库已在后台完成！")
+
                 except Exception as ex:
                     app.is_building_index = False
-                    safe_update_ui(app.build_progress_value, f"❌ 建库失败: {str(ex)}")
-                    
+                    full_trace = traceback.format_exc()
+                    safe_update_ui(app.build_progress_value, f"❌ 建库失败: {str(ex)}\n详情见崩溃日志")
+                    try:
+                        crash_log = os.path.join(StorageManager.get_base_dir(), "crash_build.log")
+                        with open(crash_log, "w", encoding="utf-8") as f:
+                            f.write(full_trace)
+                        app.show_snack_bar(f"❌ 失败详情已保存至：{crash_log}")
+                    except Exception:
+                        pass
                     if hasattr(app, '_active_ui'):
                         try:
                             ui = app._active_ui
@@ -350,12 +387,14 @@ def get_ai_settings_view(app):
                             ui['btn_clear'].disabled = False
                             ui['btn_build'].update()
                             ui['btn_clear'].update()
-                        except Exception: pass
-                        
-                    app.show_snack_bar(f"❌ 《{target_book_name}》后台建库中断: {str(ex)}")
-                    
-            threading.Thread(target=build_task, daemon=True).start()
+                        except Exception:
+                            pass
+                    app.show_snack_bar(f"❌ 《{name}》后台建库中断: {str(ex)}")
 
+            # 启动后台线程，传入快照变量
+            threading.Thread(target=build_task, args=(target_book_path, target_book_name, target_chapters), daemon=True).start()
+
+        # 弹窗确认逻辑
         def close_confirm(e):
             confirm_dlg.open = False
             app.page.update()
