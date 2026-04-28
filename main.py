@@ -219,26 +219,37 @@ class NovelReaderApp:
             return
         self._last_pop_time = time.time()
 
-        if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
+        # 1. 关闭所有覆盖层
+        if getattr(self, "toc_panel", None) and self.toc_panel.visible:
             self.page.run_task(self.close_reader_overlays); return
-        if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
+        if getattr(self, "settings_panel", None) and self.settings_panel.visible:
             self.page.run_task(self.close_reader_overlays); return
         if getattr(self.global_dialog, "open", False):
-            self._universal_close(self.global_dialog); return 
+            self._universal_close(self.global_dialog); return
 
-        # 核心逻辑：物理退栈，绝不 push
         if len(self.page.views) > 1:
-            # 如果当前顶层是正文，说明要回首页了，存个进度
-            if self.page.views[-1].route == "/reader":
-                self.save_current_progress()
-            
-            # 💥 关键：物理弹出当前视图
-            self.page.views.pop()
-            
-            # 💥 关键：默默同步 URL 状态，不要用 push_route，否则会污染历史记录
-            self.page.route = self.page.views[-1].route
-            self.page.update()
+            route = self.page.route
 
+            # 2. 从子页面（统计/AI设置/AI聊天）返回正文
+            if route.startswith("/reader/") and route != "/reader":
+                self.page.views.pop()
+                self.page.route = "/reader"
+                self.page.update()
+                if e is not None: e.handled = True
+                return
+        
+            # 3. 从正文返回书架（关键修复：重建书架）
+            if route == "/reader":
+                self.save_current_progress()
+                # 清空所有视图，重建书架
+                self.page.views.clear()
+                self.page.views.append(get_home_view(self))
+                self.page.route = "/"
+                self.page.update()
+                if e is not None: e.handled = True
+                return
+
+        # 已经是最顶层（书架），阻止默认行为即可
         if e is not None:
             e.handled = True
 
