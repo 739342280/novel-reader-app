@@ -213,45 +213,33 @@ class NovelReaderApp:
         self._apply_theme_colors()
         self.page.update()
 
-    # 💥 修改点 2：修复物理返回键/Esc 键的同步逻辑
     def view_pop(self, e):
+        # 防重复触发
         if hasattr(self, "_last_pop_time") and (time.time() - self._last_pop_time < 0.3):
             return
         self._last_pop_time = time.time()
 
-        # 1. 关闭所有覆盖层
-        if getattr(self, "toc_panel", None) and self.toc_panel.visible:
+        # 关闭所有覆盖层
+        if getattr(self, "toc_panel", None) and getattr(self.toc_panel, "visible", False):
             self.page.run_task(self.close_reader_overlays); return
-        if getattr(self, "settings_panel", None) and self.settings_panel.visible:
+        if getattr(self, "settings_panel", None) and getattr(self.settings_panel, "visible", False):
             self.page.run_task(self.close_reader_overlays); return
         if getattr(self.global_dialog, "open", False):
             self._universal_close(self.global_dialog); return
 
         if len(self.page.views) > 1:
-            route = self.page.route
-
-            # 2. 从子页面（统计/AI设置/AI聊天）返回正文
-            if route.startswith("/reader/") and route != "/reader":
-                self.page.views.pop()
-                self.page.route = "/reader"
-                self.page.update()
-                if e is not None: e.handled = True
-                return
-        
-            # 3. 从正文返回书架（关键修复：重建书架）
-            if route == "/reader":
+            # 保存阅读进度
+            if self.page.views[-1].route == "/reader":
                 self.save_current_progress()
-                # 清空所有视图，重建书架
-                self.page.views.clear()
-                self.page.views.append(get_home_view(self))
-                self.page.route = "/"
-                self.page.update()
-                if e is not None: e.handled = True
-                return
-
-        # 已经是最顶层（书架），阻止默认行为即可
-        if e is not None:
-            e.handled = True
+            
+            # 手动弹出当前视图
+            self.page.views.pop()
+            
+            # 获取新栈顶路由，同步前端并触发 route_change
+            new_route = self.page.views[-1].route
+            self.page.route = new_route
+            self.route_change(None)
+            
 
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):

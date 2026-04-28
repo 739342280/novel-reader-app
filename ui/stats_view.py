@@ -46,7 +46,7 @@ def get_statistics_view(app):
     vol_unread_words = vol_total_words - vol_read_words
     
     def go_back(e):
-        # 💥 万剑归宗：统一调用主控制器的退栈逻辑
+        
         app.view_pop(None)
 
     appbar = ft.AppBar(
