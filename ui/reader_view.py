@@ -274,28 +274,28 @@ def get_reader_view(app):
         app._save_config_to_appdata()
 
     # 💥 强制修正：全部替换为真实存在的 TextButton / ElevatedButton，并将点击事件指向新方法
-    app.theme_btn = ft.TextButton(
+    app.theme_btn = ft.ElevatedButton(
         content=ft.Text("日间"), icon=ft.Icons.LIGHT_MODE, on_click=toggle_app_theme,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8)) 
     )
     app.sync_theme_btn_ui()
 
-    app.btn_toc = ft.TextButton(
+    app.btn_toc = ft.ElevatedButton(
         content=ft.Text("目录"), icon=ft.Icons.MENU_BOOK, on_click=app._open_toc_panel,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
     )
     
-    app.btn_settings = ft.TextButton(
+    app.btn_settings = ft.ElevatedButton(
         content=ft.Text("界面"), icon=ft.Icons.FORMAT_SIZE, on_click=app._open_settings_panel,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=8))
     )
 
-    app.btn_prev = ft.TextButton(
+    app.btn_prev = ft.ElevatedButton(
         content=ft.Text("上一章"), icon=ft.Icons.NAVIGATE_BEFORE, on_click=app.load_prev,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
     )
     
-    app.btn_next = ft.TextButton(
+    app.btn_next = ft.ElevatedButton(
         content=ft.Text("下一章"), icon=ft.Icons.NAVIGATE_NEXT, on_click=app.load_next,
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
     )
@@ -317,6 +317,7 @@ def get_reader_view(app):
         ], tight=True, spacing=10),
         offset=ft.Offset(0, 0), animate_offset=ft.Animation(300, ft.AnimationCurve.DECELERATE)
     )
+    
 
     app.reader_view = ft.Stack([
         app.reading_base_layer,

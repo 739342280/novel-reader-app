@@ -954,12 +954,13 @@ class NovelReaderApp:
     def get_action_button_style(self, padding=ft.Padding.symmetric(horizontal=16, vertical=8), text_color="onSurface", is_reader_btn=False):
         is_dark = self._get_is_dark_mode()
         
-        # 💥 彻底废除基于路由的猜测，直接听从参数指挥！
+        # 💥 恢复轻量级：只需极小的 1 值即可激活原生的精致阴影，不传的按钮保持 0
+        curr_elevation = 1 if is_reader_btn else 0
+        
         if is_dark:
             btn_bg_c = "#2C2C2C" 
         else:
             if not is_reader_btn:
-                # 只要不是阅读页亲儿子，统统返回标准灰色
                 btn_bg_c = "#F0F0F0"
             else:
                 bg_c = self.bg_color
@@ -971,7 +972,14 @@ class NovelReaderApp:
                 elif bg_c == "#CCE8CF": btn_bg_c = "#E0FCE3"       
                 else: btn_bg_c = "#F0F0F0"
                 
-        return ft.ButtonStyle(bgcolor=btn_bg_c, color=text_color, elevation=0, shape=ft.RoundedRectangleBorder(radius=30), padding=padding)
+        # 💥 删去上一版强加的 shadow_color="black" 等冗余参数，返璞归真
+        return ft.ButtonStyle(
+            bgcolor=btn_bg_c, 
+            color=text_color, 
+            elevation=curr_elevation, 
+            shape=ft.RoundedRectangleBorder(radius=30), 
+            padding=padding
+        )
     
     def update_reader_appearance(self, **kwargs):
         if "bg" in kwargs: self.bg_color = kwargs["bg"]
