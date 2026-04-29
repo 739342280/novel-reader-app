@@ -159,7 +159,9 @@ class NovelReaderApp:
             "embed_key": "",
             "embed_model": "text-embedding-3-small",
             "local_embed_path": "",
-            "top_k": 5
+            "top_k": 5,
+            # 💥 新增：气泡提示默认时长
+            "snack_duration": 3000
         }
 
         # --- 5. 生命周期拉起与路由挂载 ---
@@ -314,7 +316,8 @@ class NovelReaderApp:
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
-            for k in ["url", "key", "model", "prompt", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k"]:
+            # 💥 在数组最后加上 "snack_duration"
+            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration"]:
                 if k in data: self.ai_config[k] = data[k]
             bg_c = data.get("bg_color")
             self.bg_color = bg_c if bg_c else "#FFFFFF"
@@ -1374,7 +1377,8 @@ class NovelReaderApp:
             bgcolor=ft.Colors.TRANSPARENT,  
             elevation=0,                    
             padding=0,                      
-            duration=1200,                  
+            # 💥 修改：动态获取时长，如果没有设置过，默认给 3000 毫秒
+            duration=self.ai_config.get("snack_duration", 3000), 
             key=f"snack_{self.snack_counter}"
         )
         self._universal_open(new_snack)

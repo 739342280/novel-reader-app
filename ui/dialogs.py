@@ -271,12 +271,39 @@ class DialogManager:
             )
         ], alignment=ft.MainAxisAlignment.SPACE_AROUND)
 
+        # ==========================================
+        # 💥 新增：气泡时长调节滑块
+        # ==========================================
+        current_dur = app.ai_config.get("snack_duration", 3000) / 1000.0
+        snack_text = ft.Text(f"气泡提示显示时长: {current_dur:.1f} 秒", size=13, color="onSurface")
+        
+        def on_snack_change(e):
+            val = float(e.control.value)
+            snack_text.value = f"气泡提示显示时长: {val:.1f} 秒"
+            app.ai_config["snack_duration"] = int(val * 1000) # 转为毫秒保存
+            app._save_config_to_appdata() # 实时保存到本地
+            try: snack_text.update()
+            except Exception: pass
+
+        snack_slider = ft.Slider(
+            min=1.0, max=10.0, divisions=18, value=current_dur, 
+            label="{value} 秒", on_change=on_snack_change
+        )
+        # ==========================================
+
         app.global_dialog.title = ft.Text("⚙️ 全局设置", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Column([
             ft.Text("数据安全", weight=ft.FontWeight.BOLD, size=14, color="onSurface"),
             ft.Text("本地备份包含所有书籍、阅读进度及 AI 总结数据", size=12, color=ft.Colors.GREY_500),
             ft.Container(height=5),
-            backup_row
+            backup_row,
+
+            # 💥 新增：界面偏好分区
+            ft.Divider(height=20, thickness=0.5),
+            ft.Text("界面偏好", weight=ft.FontWeight.BOLD, size=14, color="onSurface"),
+            snack_text,
+            snack_slider
+            
         ], tight=True)
         
         app.global_dialog.actions = [
