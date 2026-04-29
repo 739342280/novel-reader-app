@@ -99,8 +99,13 @@ if sys.platform == "win32":
                 # stderr=subprocess.DEVNULL
             )
 
-            # 轮询探测服务是否就绪 (最长等待 15 秒)
-            for _ in range(30):
+            # 轮询探测服务是否就绪 (给老电脑最高 60 次 * 1.5秒 = 90秒的宽容度)
+            for _ in range(60):
+                # 💥 增加“心跳检测”：如果底层黑框引擎已经暴毙，立刻停止死等！
+                if self.process.poll() is not None:
+                    self._stop_local_server()
+                    raise Exception("引擎启动瞬间即崩溃！请检查：1.设置中是否已导入正确的本地模型。 2.模型文件是否被删除。")
+                    
                 try:
                     req = urllib.request.Request(f"http://127.0.0.1:{self.port}/health")
                     with urllib.request.urlopen(req, timeout=1) as response:
