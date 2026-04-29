@@ -83,7 +83,7 @@ def get_ai_settings_view(app):
         label="已导入的本地模型",
         options=[ft.dropdown.Option(m) for m in local_models],
         value=app.ai_config.get("local_model_path", "") if app.ai_config.get("local_model_path", "") in local_models else None,
-        text_size=13, dense=True, width=INPUT_WIDTH - 60 
+        text_size=13, dense=True, expand=True 
     )
     import_btn = ft.IconButton(
         icon=ft.Icons.FOLDER_OPEN, icon_color="blue", tooltip="导入本地模型文件",
@@ -118,8 +118,21 @@ def get_ai_settings_view(app):
                 content=ft.Container(
                     content=ft.Column([
                         ft.Row([ft.Icon(ft.Icons.COMPUTER, size=16), ft.Text("本地模型设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
-                        ft.Row([local_model_dd, import_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
-                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                        ft.Row(
+                            controls=[local_model_dd, import_btn], 
+                            alignment=ft.MainAxisAlignment.CENTER, 
+                            spacing=10, 
+                            width=INPUT_WIDTH  # 💥 给整个 Row 套上与上下输入框相同的紧箍咒
+                        ),
+                        # 💥 新增的 UI 提示，放在下拉框正下方
+                        ft.Divider(height=5, thickness=0.5, color="transparent"),
+                        ft.Text(
+                            "💡 硬件加速提示: 若您的电脑装有 NVIDIA 显卡且驱动版本 >= 551.14，系统将自动开启 GPU 极速建库。\n否则将智能回退至纯 CPU 模式运行（速度稍慢，但不影响正常使用）。", 
+                            size=11, 
+                            color="grey", 
+                            text_align=ft.TextAlign.CENTER
+                        )
+                    ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=15
                 ),
                 elevation=1
@@ -182,6 +195,19 @@ def get_ai_settings_view(app):
 
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change)
     
+    # 💥 新增的 Batch Size 控件
+    batch_size_val = app.ai_config.get("build_batch_size", 15) # 默认值给 15
+    batch_size_text = ft.Text(f"建库批处理量 (Batch Size): {batch_size_val} 块", size=13, color="onSurface")
+
+    def on_batch_size_change(e):
+        val = int(e.control.value)
+        batch_size_text.value = f"建库批处理量 (Batch Size): {val} 块"
+        try: batch_size_text.update()
+        except Exception: pass
+
+    # min=5, max=100, divisions=19 意味着每档步进为 5
+    batch_size_slider = ft.Slider(min=5, max=100, divisions=19, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
+
     top_k_card = ft.Card(
         content=ft.Container(
             content=ft.Column([
@@ -302,6 +328,8 @@ def get_ai_settings_view(app):
                     app.build_progress_text = text
 
                 try:
+                    # 💥 在建库最开头，记录总起点时间
+                    total_start_time = time.time()
                     from core.chunker import NovelChunker
                     from core.ai_service import AIService
                     from core.vector_db import VectorDB
@@ -334,7 +362,7 @@ def get_ai_settings_view(app):
                     vdb.init_tables(dim)
 
                     # 4. 批量向量化
-                    batch_size = 15
+                    batch_size = app.ai_config.get("build_batch_size", 15)
                     total_batches = (total + batch_size - 1) // batch_size
                     
                     for batch_idx in range(0, total, batch_size):
@@ -357,9 +385,15 @@ def get_ai_settings_view(app):
                         safe_update_ui(percent + (0.1 / total_batches), f"💾 写入索引 (本批次耗时 {cost:.1f}s)...")
                         vdb.insert_chunks(db_data)
 
+                    # 💥 补上漏掉的耗时计算逻辑
+                    total_cost_sec = time.time() - total_start_time
+                    mins, secs = divmod(total_cost_sec, 60)
+                    cost_str = f"{int(mins)}分{secs:.1f}秒" if mins > 0 else f"{secs:.1f}秒"
+
                     # 5. 完成：通知监控器停止，并进行最后的大清洗式刷新
                     app.is_building_index = False
-                    safe_update_ui(1.0, "🎉 建库大功告成！")
+
+                    safe_update_ui(1.0, f"🎉 建库大功告成！总耗时: {cost_str}")
                     
                     # 此时后台重算结束，主线程完全空闲，可以直接安全地 update
                     if hasattr(app, '_active_ui'):
@@ -387,7 +421,7 @@ def get_ai_settings_view(app):
                             app.page.update()
                         except Exception: pass
                         
-                    app.show_snack_bar(f"✅ 《{name}》全书向量建库已完成！")
+                    app.show_snack_bar(f"✅ 《{name}》全书建库已完成！总耗时: {cost_str}")
                     
                 except Exception as ex:
                     app.is_building_index = False
@@ -509,21 +543,28 @@ def get_ai_settings_view(app):
         prog_text, 
         action_row, 
         ft.Divider(height=20, thickness=0.5),
-        # 💥 给 top_k_card 增加居中对齐
+        # 💥 合并升级后的“引擎与检索调优”卡片
         ft.Card(
             content=ft.Container(
                 content=ft.Column([
-                    ft.Row([ft.Icon(ft.Icons.TUNE, size=16), ft.Text("检索性能参数", weight="bold")], alignment=ft.MainAxisAlignment.CENTER),
+                    ft.Row([ft.Icon(ft.Icons.SPEED, size=16), ft.Text("引擎与检索性能调优", weight="bold")], alignment=ft.MainAxisAlignment.CENTER),
+                    
+                    ft.Divider(height=5, thickness=0.5, color="transparent"),
+                    batch_size_text,
+                    batch_size_slider,
+                    ft.Text("提示: 决定显卡单次计算的文本量。数值越大显卡占用率越高、建库越快，但界面进度条可能会出现跳跃式刷新。", size=11, color="grey", text_align=ft.TextAlign.CENTER),
+                    
+                    ft.Divider(height=10, thickness=0.5),
                     top_k_text,
                     top_k_slider,
-                    ft.Text("提示: 数值越大提供的背景知识越多，但也越容易分散大模型注意力。", size=11, color="grey", text_align=ft.TextAlign.CENTER)
+                    ft.Text("提示: 问答时提供的背景知识量。数值越大知识越丰富，但也越容易分散大模型注意力。", size=11, color="grey", text_align=ft.TextAlign.CENTER)
                 ], spacing=10, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                 padding=15
             ),
             elevation=1
         )
     ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, expand=True, scroll=ft.ScrollMode.AUTO, spacing=15)
-
+    
     tab3_container = ft.Container(content=tab3_col, padding=20)
 
     # ==========================================
@@ -543,7 +584,9 @@ def get_ai_settings_view(app):
         app.ai_config["embed_model"] = embed_model_tf.value.strip()
         app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
         app.ai_config["top_k"] = int(top_k_slider.value) 
-        
+        # 💥 增加这一行，保存 Batch Size
+        app.ai_config["build_batch_size"] = int(batch_size_slider.value)
+
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
 

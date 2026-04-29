@@ -270,6 +270,22 @@ jobs:
       run: |
         pip install flet==0.84.0 flet-desktop==0.84.0 pyinstaller Pillow
         pip install -r requirements.txt || echo "No requirements.txt"
+    
+    # 💥 插入这一个核心步骤：从你自己的 Release 中下载并解压巨大依赖库
+    - name: Download Huge CUDA Dependencies
+      shell: bash
+      run: |
+        echo "正在从云端拉取 Windows 底层依赖库..."
+        # 替换为你刚才复制的真实 zip 下载链接
+        curl -L -o cuda_deps.zip "https://github.com/739342280/novel-reader-app/releases/download/dependencies/windows-cuda-deps.zip"
+        
+        # 解压到 assets 文件夹中（如果压缩包里有层级，注意解压路径匹配）
+        mkdir -p assets
+        unzip -o cuda_deps.zip -d assets/
+        
+        # 阅后即焚，清理战场
+        rm cuda_deps.zip
+        echo "✅ 底层依赖已就绪！"
 
     - name: Build Windows App Directory (PyInstaller Engine)
       shell: bash
