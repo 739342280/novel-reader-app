@@ -118,13 +118,16 @@ class AIService:
                 raise Exception(f"【本地模式失败】未找到模型文件，请检查设置中的路径：\n{model_path}")
                 
             try:
-                # 💥 防御性延迟导入：只有用户真正触发本地计算时，才去加载危险的底层 C 库
-                # 这样即使底层库报错，也不会影响其他云端功能的使用
                 from .local_inference import LocalEmbeddingEngine
                 
-                # 单例延迟加载
+                # 💥 核心修改：读取并发数，并进行“热重载”判断
+                n_parallel = config.get("n_parallel", 8)
+                if cls._local_engine is not None and getattr(cls._local_engine, 'n_parallel', 8) != n_parallel:
+                    cls._local_engine = None # 参数改变，强制销毁旧引擎
+
                 if cls._local_engine is None:
-                    cls._local_engine = LocalEmbeddingEngine(model_path)
+                    cls._local_engine = LocalEmbeddingEngine(model_path, n_parallel=n_parallel)
+                    
                 return cls._local_engine.get_embedding(text)
             except Exception as e:
                 # 失败即阻断，不再向后尝试云端
@@ -235,9 +238,15 @@ class AIService:
                 
             try:
                 from .local_inference import LocalEmbeddingEngine
+                
+                # 💥 同步修改批量接口的逻辑
+                n_parallel = config.get("n_parallel", 8)
+                if cls._local_engine is not None and getattr(cls._local_engine, 'n_parallel', 8) != n_parallel:
+                    cls._local_engine = None
+
                 if cls._local_engine is None:
-                    cls._local_engine = LocalEmbeddingEngine(model_path)
-                # 💥 核心：调用底层的并发数组处理接口
+                    cls._local_engine = LocalEmbeddingEngine(model_path, n_parallel=n_parallel)
+                    
                 return cls._local_engine.get_embeddings(texts)
             except Exception as e:
                 raise Exception(f"【本地推理崩溃】批量计算向量失败: {str(e)}")

@@ -78,16 +78,23 @@ def get_ai_settings_view(app):
     embed_key_tf = ft.TextField(label="API Key", value=app.ai_config.get("embed_key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=INPUT_WIDTH)
     embed_model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("embed_model", ""), text_size=13, dense=True, width=INPUT_WIDTH)
     
-    local_models = app.get_local_models()
-    local_model_dd = ft.Dropdown(
-        label="已导入的本地模型",
-        options=[ft.dropdown.Option(m) for m in local_models],
-        value=app.ai_config.get("local_model_path", "") if app.ai_config.get("local_model_path", "") in local_models else None,
-        text_size=13, dense=True, expand=True 
+    # 💥 删掉这两行：不再去扫描 AppData 里的本地模型了
+    # local_models = app.get_local_models() 
+    # local_model_dd = ft.Dropdown(...)
+
+    # 💥 替换为全新的绝对路径显示框
+    local_model_tf = ft.TextField(
+        label="本地模型绝对路径",
+        value=app.ai_config.get("local_model_path", ""),
+        text_size=13, dense=True, expand=True,
+        read_only=True, # 设置为只读，强制用户只能通过右侧按钮选择，防止手残改错路径
+        hint_text="请点击右侧按钮选择纯英文路径下的 .gguf 模型"
     )
+
     import_btn = ft.IconButton(
-        icon=ft.Icons.FOLDER_OPEN, icon_color="blue", tooltip="导入本地模型文件",
-        on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_dd)
+        icon=ft.Icons.FOLDER_OPEN, icon_color="blue", tooltip="选择本地模型文件",
+        # 💥 注意：这里传给选择器的参数，从 local_model_dd 变成了 local_model_tf
+        on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_tf)
     )
 
     embed_mode_dd = ft.Dropdown(
@@ -119,10 +126,10 @@ def get_ai_settings_view(app):
                     content=ft.Column([
                         ft.Row([ft.Icon(ft.Icons.COMPUTER, size=16), ft.Text("本地模型设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
                         ft.Row(
-                            controls=[local_model_dd, import_btn], 
+                            controls=[local_model_tf, import_btn], # 💥 变量名修改
                             alignment=ft.MainAxisAlignment.CENTER, 
                             spacing=10, 
-                            width=INPUT_WIDTH  # 💥 给整个 Row 套上与上下输入框相同的紧箍咒
+                            width=INPUT_WIDTH  
                         ),
                         # 💥 新增的 UI 提示，放在下拉框正下方
                         ft.Divider(height=5, thickness=0.5, color="transparent"),
@@ -208,6 +215,19 @@ def get_ai_settings_view(app):
     # min=5, max=100, divisions=19 意味着每档步进为 5
     batch_size_slider = ft.Slider(min=5, max=100, divisions=19, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
 
+    # 💥 新增：硬件并发通道数 (Parallelism) 控件
+    parallel_val = app.ai_config.get("n_parallel", 8) # 默认甜点并发给 8
+    parallel_text = ft.Text(f"硬件并发通道数 (Parallelism): {parallel_val}", size=13, color="onSurface")
+
+    def on_parallel_change(e):
+        val = int(e.control.value)
+        parallel_text.value = f"硬件并发通道数 (Parallelism): {val}"
+        try: parallel_text.update()
+        except Exception: pass
+
+    # 范围 1 到 32，步进 1
+    parallel_slider = ft.Slider(min=1, max=32, divisions=31, value=parallel_val, label="{value}", on_change=on_parallel_change, width=INPUT_WIDTH)
+
     top_k_card = ft.Card(
         content=ft.Container(
             content=ft.Column([
@@ -226,10 +246,36 @@ def get_ai_settings_view(app):
         'btn_build': btn_build, 'btn_clear': btn_clear, 'status_text': status_text, 'status_card': status_card
     }
 
+    # 💥 新增：将刷新器提取到页面根作用域
+    async def progress_updater():
+        last_val = -1
+        last_text = ""
+        # 只要还在建库，这个监控器就会一直运行
+        while getattr(app, "is_building_index", False):
+            curr_val = getattr(app, "build_progress_value", 0)
+            curr_text = getattr(app, "build_progress_text", "")
+            
+            if curr_val != last_val or curr_text != last_text:
+                try:
+                    prog_bar.value = curr_val
+                    prog_text.value = curr_text
+                    prog_bar.update()
+                    prog_text.update()
+                except Exception: pass
+                last_val = curr_val
+                last_text = curr_text
+            
+            await asyncio.sleep(0.5)
+    
     def refresh_db_status():
+        # 💥 极点防御：如果后台正在建库，绝对不许去读半成品的数据库！
+        if getattr(app, "is_building_index", False): 
+            return
+            
         if not app.current_book_path: return
         try:
             from core.vector_db import VectorDB
+            
         except ImportError:
             status_text.value = f"当前阅读：《{book_name}》\n⚠️ 未安装 sqlite-vec 扩展库，知识库暂不可用"
             btn_build.disabled = btn_clear.disabled = True
@@ -257,9 +303,11 @@ def get_ai_settings_view(app):
         try: status_card.update()
         except Exception: pass
 
+    # 💥 修改：重新进入页面时，如果正在建库，立刻唤醒新版监控器！
     if is_building:
         btn_build.content.value = "⏳ 后台建库中..."
         btn_build.disabled = btn_clear.disabled = True
+        app.page.run_task(progress_updater) # 👈 加了这行
     else:
         refresh_db_status()
     
@@ -292,29 +340,7 @@ def get_ai_settings_view(app):
                 app.page.update()
             except Exception: pass
 
-            # 💥 核心修复：听你的建议，引入“定时刷新”的 UI 监控协程
-            async def progress_updater():
-                last_val = -1
-                last_text = ""
-                # 只要还在建库，这个监控器就会一直运行
-                while getattr(app, "is_building_index", False):
-                    curr_val = getattr(app, "build_progress_value", 0)
-                    curr_text = getattr(app, "build_progress_text", "")
-                    
-                    # 只有当进度真的发生变化时，才通知 UI 刷新
-                    if curr_val != last_val or curr_text != last_text:
-                        try:
-                            prog_bar.value = curr_val
-                            prog_text.value = curr_text
-                            prog_bar.update()
-                            prog_text.update()
-                        except Exception: pass
-                        last_val = curr_val
-                        last_text = curr_text
-                    
-                    # 每 0.5 秒醒来刷新一次，既能保证视觉连贯，又绝对不卡顿
-                    await asyncio.sleep(0.5)
-
+            
             # 让 Flet 主循环启动这个定时监控器
             app.page.run_task(progress_updater)
 
@@ -549,11 +575,23 @@ def get_ai_settings_view(app):
                 content=ft.Column([
                     ft.Row([ft.Icon(ft.Icons.SPEED, size=16), ft.Text("引擎与检索性能调优", weight="bold")], alignment=ft.MainAxisAlignment.CENTER),
                     
+                    # 💥 插入并发控制滑块
+                    ft.Divider(height=5, thickness=0.5, color="transparent"),
+                    parallel_text,
+                    parallel_slider,
+                    ft.Text(
+                        "💡 物理算力限制：受显存大小制约。核显/老显卡建议设为 1~4，中高端独显建议 8~16。\n若建库时频繁瞬间崩溃或报 500 错误，请务必调低此值！", 
+                        size=11, color="grey", text_align=ft.TextAlign.CENTER
+                    ),
+
                     ft.Divider(height=5, thickness=0.5, color="transparent"),
                     batch_size_text,
                     batch_size_slider,
-                    ft.Text("提示: 决定显卡单次计算的文本量。数值越大显卡占用率越高、建库越快，但界面进度条可能会出现跳跃式刷新。", size=11, color="grey", text_align=ft.TextAlign.CENTER),
-                    
+                    ft.Text(
+                        "💡 软件投喂频率：建议设为上方【并发通道数】的 2 到 4 倍。\n过小会导致显卡算力闲置浪费，过大可能导致进度条长时间卡顿或网络超时。", 
+                        size=11, color="grey", text_align=ft.TextAlign.CENTER
+                    ),
+
                     ft.Divider(height=10, thickness=0.5),
                     top_k_text,
                     top_k_slider,
@@ -582,10 +620,13 @@ def get_ai_settings_view(app):
         app.ai_config["embed_url"] = embed_url_tf.value.strip()
         app.ai_config["embed_key"] = embed_key_tf.value.strip()
         app.ai_config["embed_model"] = embed_model_tf.value.strip()
-        app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
-        app.ai_config["top_k"] = int(top_k_slider.value) 
+        # app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
+        # 💥 替换为从文本框取值
+        app.ai_config["local_model_path"] = local_model_tf.value.strip()
         # 💥 增加这一行，保存 Batch Size
         app.ai_config["build_batch_size"] = int(batch_size_slider.value)
+        # 💥 保存并发数
+        app.ai_config["n_parallel"] = int(parallel_slider.value)
 
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")

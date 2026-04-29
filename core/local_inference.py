@@ -48,12 +48,14 @@ if sys.platform == "win32":
             except urllib.error.URLError as e:
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
-        def __init__(self, model_path: str):
+        # 💥 接收 n_parallel 参数
+        def __init__(self, model_path: str, n_parallel: int = 8):
             self.model_path = model_path
-            self.port = 18080  # 专属微服务端口
+            self.n_parallel = n_parallel
+            self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
-            self.dim = 1024 # Qwen3-0.6B-Embedding 的维度
+            self.dim = 1024 
             self._start_local_server()
 
         def _start_local_server(self):
@@ -72,47 +74,61 @@ if sys.platform == "win32":
                 # 💡 修改点2：将拼装好的绝对路径直接打印在报错里，实现精准定位
                 raise FileNotFoundError(f"【引擎缺失】未找到引擎文件！\n程序正在此处寻找：{exe_path}\n请确保文件在上述准确位置，且没被系统隐藏后缀导致变成了 .exe.exe")
 
+            # 💥 让代码自动计算上下文！每个通道死保 1024 容量
+            ctx_size = str(self.n_parallel * 1024)
+
             # 核心启动参数：加载模型，开启向量模式，绑定端口
             cmd = [
                 exe_path,
                 "-m", self.model_path,
                 "--port", str(self.port),
                 "--embedding",
-                "-c", "512",
-                "-b", "512",
+                "--parallel", str(self.n_parallel),  # 💥 注入 UI 传来的并发通道数
+                "-c", ctx_size,                      # 💥 注入算好的总容量
+                "-b", ctx_size,                      # 💥 批处理同步放大
                 "-t", optimal_threads,
                 "-ngl", "99",
-                # 💥 终极修复：强制指定为 mean (平均池化)，填补 Qwen3 模型漏写的元数据
-                "--pooling", "mean",
-                # "--log-disable"  # 关闭底层日志输出，保持控制台清爽
+                "--pooling", "mean"
             ]
 
             # 隐藏 Windows 背后弹出的黑色 CMD 窗口
             startupinfo = subprocess.STARTUPINFO()
             startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
 
-            # 启动独立进程 (物理级杜绝内存指针越界)
+            # 启动独立进程
             self.process = subprocess.Popen(
                 cmd,
-                # startupinfo=startupinfo,
-                # stdout=subprocess.DEVNULL,
-                # stderr=subprocess.DEVNULL
+                startupinfo=startupinfo, # 💥 1. 恢复这行，不再让黑框弹出来烦人
+                stdout=subprocess.PIPE,  # 💥 2. 开启管道，截获标准输出日志
+                stderr=subprocess.STDOUT,# 💥 3. 截获报错信息合并进日志
+                text=True,               # 💥 4. 自动解码为文本
+                encoding='utf-8',
+                errors='ignore'
             )
 
-            # 轮询探测服务是否就绪 (给老电脑最高 60 次 * 1.5秒 = 90秒的宽容度)
+            # 轮询探测服务是否就绪
             for _ in range(60):
-                # 💥 增加“心跳检测”：如果底层黑框引擎已经暴毙，立刻停止死等！
                 if self.process.poll() is not None:
                     self._stop_local_server()
-                    raise Exception("引擎启动瞬间即崩溃！请检查：1.设置中是否已导入正确的本地模型。 2.模型文件是否被删除。")
+                    raise Exception("引擎刚启动就崩溃退出了！")
                     
                 try:
                     req = urllib.request.Request(f"http://127.0.0.1:{self.port}/health")
                     with urllib.request.urlopen(req, timeout=1) as response:
                         if response.status == 200:
                             return # 启动成功！
+                            
+                except urllib.error.HTTPError as e:
+                    # 💥 核心修复：精准狙击引擎内部报错
+                    if e.code == 500:
+                        err_body = e.read().decode('utf-8')
+                        self._stop_local_server()
+                        raise Exception(f"模型加载彻底失败！引擎返回致命错误: {err_body}")
+                    # 如果是 503 (Service Unavailable)，说明还在努力加载，继续等
+                    
                 except Exception:
-                    time.sleep(0.5)
+                    pass
+                time.sleep(0.5)
             
             self._stop_local_server()
             raise Exception("本地微服务启动超时，请检查模型文件是否完好。")
@@ -232,8 +248,10 @@ else:
         ]
 
     class LocalEmbeddingEngine:
-        def __init__(self, model_path: str):
+        # 💥 同样接收 n_parallel 占位，防止安卓端报错
+        def __init__(self, model_path: str, n_parallel: int = 8):
             self.model_path = model_path
+            self.n_parallel = n_parallel
             
             # 💡 1. 物理层严密侦测：文件到底对不对？
             if not os.path.exists(self.model_path):

@@ -417,26 +417,9 @@ class NovelReaderApp:
         self.route_change(None)
 
     # ==========================================
-    # --- 新增 Flet 0.84.0 适配代码：本地模型文件管理与导入 ---
+    # --- 新版 Flet 0.84.0 适配代码：直接读取本地绝对路径 ---
     # ==========================================
-    def get_models_dir(self):
-        import os
-        from data.storage import StorageManager
-        models_dir = os.path.join(StorageManager.get_base_dir(), "models")
-        os.makedirs(models_dir, exist_ok=True)
-        return models_dir
-
-    def get_local_models(self):
-        import os
-        models_dir = self.get_models_dir()
-        if not os.path.exists(models_dir):
-            return []
-        try:
-            return [os.path.join(models_dir, f) for f in os.listdir(models_dir) if f.endswith(('.gguf', '.onnx', '.bin'))]
-        except Exception:
-            return []
-
-    async def trigger_model_picker(self, dropdown_control):
+    async def trigger_model_picker(self, ui_control):
         try:
             files = await ft.FilePicker().pick_files(
                 dialog_title="请选择本地大模型",
@@ -445,31 +428,24 @@ class NovelReaderApp:
             )
             
             if files and len(files) > 0:
-                import shutil
-                import asyncio
+                # 💥 直接拿到用户选中的绝对路径（如 D:\Models\xxx.gguf）
+                absolute_path = files[0].path
                 
-                src_path = files[0].path
-                original_name = files[0].name
-                
-                if not src_path:
+                if not absolute_path:
                     self.show_snack_bar("获取文件路径失败，请尝试更换目录。")
                     return
 
-                dest_path = os.path.join(self.get_models_dir(), original_name)
-
-                try:
-                    await asyncio.to_thread(shutil.copy2, src_path, dest_path)
-                    self.show_snack_bar(f"✅ 模型 {original_name} 导入成功")
+                # 1. 自动将路径填入刚改好的 TextField 中并刷新界面
+                if ui_control:
+                    ui_control.value = absolute_path
+                    try: ui_control.update()
+                    except Exception: pass
                     
-                    if dropdown_control:
-                        opts = [ft.dropdown.Option(f) for f in self.get_local_models()]
-                        dropdown_control.options = opts
-                        dropdown_control.value = dest_path
-                        try: dropdown_control.update()
-                        except Exception: pass
-                        
-                except Exception as copy_ex:
-                    self.show_snack_bar(f"模型文件转存失败: {str(copy_ex)}")
+                # 2. 直接帮你静默保存到配置文件中
+                self.ai_config["local_model_path"] = absolute_path
+                self._save_config_to_appdata()
+                
+                self.show_snack_bar(f"✅ 模型路径已设定: {absolute_path}")
                     
         except Exception as ex:
             self.show_snack_bar(f"唤起文件管理器失败: {str(ex)}")
