@@ -452,6 +452,11 @@ class NovelReaderApp:
     # ==========================================
 
     async def trigger_file_picker(self, e):
+        # 💥 极点防御 2：拦截建库期间的新书导入
+        if getattr(self, "is_building_index", False):
+            self.show_snack_bar("⚠️ 引擎正在后台高强度建库，为防止数据错乱，请等待完成后再导入新书！")
+            return
+        
         try:
             files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
@@ -577,6 +582,18 @@ class NovelReaderApp:
     # region 3. 阅读核心引擎与交互
     # =========================================================================
     def check_and_load_book(self, path):
+        # 💥 极点防御 1（优雅升级版）：拦截建库期间的书籍切换
+        if getattr(self, "is_building_index", False):
+            # 如果用户点击的正是当前正在建库的书
+            if path == getattr(self, "current_book_path", ""):
+                # 连重新加载都免了，直接秒切回阅读页，体验极度丝滑！
+                self.page.run_task(self.page.push_route, "/reader")
+                return
+            else:
+                # 如果点的是别的书，依然死死焊住大门
+                self.show_snack_bar("⚠️ 引擎正在后台建库，为防止数据错乱，暂不支持打开其他书籍！")
+                return
+            
         if not os.path.exists(path):
             self.show_snack_bar("文件丢失，可能已被移动或删除，将自动移出书架。")
             self.remove_from_bookshelf(path)

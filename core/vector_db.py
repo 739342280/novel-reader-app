@@ -69,7 +69,21 @@ class VectorDB:
                         embedding float[{dimension}]
                     )
                 """)
+            
+            # 💥 新增：创建元数据表，用来记录建库状态和总块数 (双轨制通用)
+            self.conn.execute("CREATE TABLE IF NOT EXISTS vdb_meta (key TEXT PRIMARY KEY, value TEXT)")
+    def set_meta(self, key: str, value: str):
+        with self.conn:
+            self.conn.execute("INSERT OR REPLACE INTO vdb_meta (key, value) VALUES (?, ?)", (key, value))
 
+    def get_meta(self, key: str) -> str:
+        try:
+            cursor = self.conn.execute("SELECT value FROM vdb_meta WHERE key = ?", (key,))
+            row = cursor.fetchone()
+            return row[0] if row else None
+        except sqlite3.OperationalError:
+            return None
+    
     def insert_chunks(self, chunks_data: list[tuple[int, str, list[float]]]):
         with self.conn:
             if self.use_pure_python:
@@ -184,12 +198,24 @@ class VectorDB:
             elif "chunks_meta" in tables:
                 cursor = self.conn.execute("SELECT COUNT(*) FROM chunks_meta")
             else:
-                return {"is_indexed": False, "chunk_count": 0}
+                return {"is_indexed": False, "chunk_count": 0, "status": "none"}
                 
             count = cursor.fetchone()[0]
-            return {"is_indexed": count > 0, "chunk_count": count}
+            
+            # 💥 新增：读取 Meta 表中的状态和总数
+            status = "completed"
+            total = count
+            try:
+                db_status = self.get_meta("status")
+                if db_status: status = db_status
+                
+                db_total = self.get_meta("total_chunks")
+                if db_total: total = int(db_total)
+            except Exception: pass
+            
+            return {"is_indexed": count > 0, "chunk_count": count, "status": status, "total_chunks": total}
         except sqlite3.OperationalError:
-            return {"is_indexed": False, "chunk_count": 0}
+            return {"is_indexed": False, "chunk_count": 0, "status": "none"}
             
     def clear_index(self):
         with self.conn:

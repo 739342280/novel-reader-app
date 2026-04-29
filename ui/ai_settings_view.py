@@ -275,7 +275,7 @@ def get_ai_settings_view(app):
         if not app.current_book_path: return
         try:
             from core.vector_db import VectorDB
-            
+
         except ImportError:
             status_text.value = f"当前阅读：《{book_name}》\n⚠️ 未安装 sqlite-vec 扩展库，知识库暂不可用"
             btn_build.disabled = btn_clear.disabled = True
@@ -288,9 +288,15 @@ def get_ai_settings_view(app):
                 vdb = VectorDB(db_path)
                 status = vdb.get_index_status()
                 if status["is_indexed"]:
-                    status_text.value = f"当前阅读：《{book_name}》\n索引状态：已建库 ({status['chunk_count']} 个切块)"
-                    status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN) # 建库后变色
-                    btn_build.content.value = "🔁 重新建库"
+                    # 💥 精准识别半成品
+                    if status.get("status") == "building":
+                        status_text.value = f"当前阅读：《{book_name}》\n⚠️ 索引中断：仅完成 {status['chunk_count']} / {status.get('total_chunks', '?')} 块"
+                        status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.ORANGE) 
+                        btn_build.content.value = "⚠️ 重新建库"
+                    else:
+                        status_text.value = f"当前阅读：《{book_name}》\n索引状态：已建库 ({status['chunk_count']} 个切块)"
+                        status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN) 
+                        btn_build.content.value = "🔁 重新建库"
                 else:
                     status_card.bgcolor = "surfaceVariant"
                     btn_build.content.value = "🚀 向量建库"
@@ -386,6 +392,9 @@ def get_ai_settings_view(app):
                     vdb = VectorDB(db_path)
                     vdb.clear_index() 
                     vdb.init_tables(dim)
+                    # 💥 开工前打钢印：状态设为"正在建库"，并写入你算好的 total
+                    vdb.set_meta("status", "building")
+                    vdb.set_meta("total_chunks", str(total))
 
                     # 4. 批量向量化
                     batch_size = app.ai_config.get("build_batch_size", 15)
@@ -415,6 +424,8 @@ def get_ai_settings_view(app):
                     total_cost_sec = time.time() - total_start_time
                     mins, secs = divmod(total_cost_sec, 60)
                     cost_str = f"{int(mins)}分{secs:.1f}秒" if mins > 0 else f"{secs:.1f}秒"
+                    # 💥 完工后修改钢印：状态改为"已完成"
+                    vdb.set_meta("status", "completed")
 
                     # 5. 完成：通知监控器停止，并进行最后的大清洗式刷新
                     app.is_building_index = False
