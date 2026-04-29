@@ -70,63 +70,67 @@ def get_ai_settings_view(app):
     )
     
     # ==========================================
-    # Tab 2: 向量引擎配置 (UI升级：卡片化)
+    # Tab 2: 向量引擎配置 (重构：静态三卡片布局)
     # ==========================================
+    
+    # 1. 基础控件定义 (保持限宽 INPUT_WIDTH)
     embed_url_tf = ft.TextField(label="Embedding API URL", value=app.ai_config.get("embed_url", ""), text_size=13, dense=True, width=INPUT_WIDTH)
     embed_key_tf = ft.TextField(label="API Key", value=app.ai_config.get("embed_key", ""), password=True, can_reveal_password=True, text_size=13, dense=True, width=INPUT_WIDTH)
     embed_model_tf = ft.TextField(label="模型名称", value=app.ai_config.get("embed_model", ""), text_size=13, dense=True, width=INPUT_WIDTH)
     
-    # 云端 API 视图容器
-    cloud_view = ft.Column([embed_url_tf, embed_key_tf, embed_model_tf], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
-
     local_models = app.get_local_models()
     local_model_dd = ft.Dropdown(
         label="已导入的本地模型",
         options=[ft.dropdown.Option(m) for m in local_models],
         value=app.ai_config.get("local_model_path", "") if app.ai_config.get("local_model_path", "") in local_models else None,
-        text_size=13, dense=True, width=INPUT_WIDTH - 60 # 为旁边的按钮留出空间
+        text_size=13, dense=True, width=INPUT_WIDTH - 60 
     )
     import_btn = ft.IconButton(
-        icon=ft.Icons.FOLDER_OPEN, icon_color="blue",
+        icon=ft.Icons.FOLDER_OPEN, icon_color="blue", tooltip="导入本地模型文件",
         on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_dd)
     )
-    
-    # 本地模型视图容器
-    local_view = ft.Row([local_model_dd, import_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
 
-    # 💥 核心：动态内容插槽
-    content_slot = ft.Container(expand=True)
-
-    def on_embed_mode_change(e):
-        # 💥 0.84.0 推荐直接通过 e.control.value 获取状态，更稳健
-        mode = embed_mode_dd.value
-        content_slot.content = local_view if mode == "本地模型" else cloud_view
-        try: content_slot.update()
-        except Exception: pass
-        
-    # 💥 修复：移除初始化里的 on_change 参数
     embed_mode_dd = ft.Dropdown(
-        label="工作模式", 
+        label="当前生效工作模式", 
         options=[ft.dropdown.Option("云端 API"), ft.dropdown.Option("本地模型")], 
         value=app.ai_config.get("embed_mode", "云端 API"),
         text_size=13, dense=True, width=INPUT_WIDTH
     )
-    
-    # 💥 修复：在实例化后，通过属性赋值来绑定事件（0.84.0 最稳健写法）
-    embed_mode_dd.on_change = on_embed_mode_change
 
-    # 初始化默认显示
-    content_slot.content = local_view if embed_mode_dd.value == "本地模型" else cloud_view
-
+    # 2. 组装成三个独立的卡片，彻底抛弃动态切换逻辑
     tab2_container = ft.Container(
         content=ft.Column([
+            # 卡片一：全局工作模式设定
             ft.Card(
                 content=ft.Container(
                     content=ft.Column([
-                        ft.Row([ft.Icon(ft.Icons.HUB, size=16), ft.Text("Embedding 引擎设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Row([ft.Icon(ft.Icons.HUB, size=16), ft.Text("全局模式设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
                         embed_mode_dd,
-                        ft.Divider(height=10, thickness=0.5),
-                        content_slot
+                        ft.Text("提示: 此选项决定系统最终使用下方哪一套配置进行建库和检索", size=11, color="grey", text_align=ft.TextAlign.CENTER)
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=15
+                ),
+                elevation=1
+            ),
+            
+            # 卡片二：本地模型设定
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.COMPUTER, size=16), ft.Text("本地模型设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        ft.Row([local_model_dd, import_btn], alignment=ft.MainAxisAlignment.CENTER, spacing=10)
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=15
+                ),
+                elevation=1
+            ),
+            
+            # 卡片三：云端 API 设定
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.CLOUD, size=16), ft.Text("云端 API 设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        embed_url_tf, embed_key_tf, embed_model_tf
                     ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
                     padding=15
                 ),
