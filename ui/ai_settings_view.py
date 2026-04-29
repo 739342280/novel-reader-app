@@ -163,7 +163,7 @@ def get_ai_settings_view(app):
     init_prog_text = getattr(app, "build_progress_text", "准备切块中...")
     is_building = getattr(app, "is_building_index", False)
     
-    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8)
+    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=INPUT_WIDTH) # 💥 加上宽度
     prog_text = ft.Text(init_prog_text, size=12, color="grey", visible=is_building)
     
     btn_build = ft.ElevatedButton(content=ft.Text("🚀 向量建库"), style=app.get_action_button_style(ft.padding.symmetric(horizontal=16, vertical=12)))
@@ -217,7 +217,7 @@ def get_ai_settings_view(app):
                 status = vdb.get_index_status()
                 if status["is_indexed"]:
                     status_text.value = f"当前阅读：《{book_name}》\n索引状态：已建库 ({status['chunk_count']} 个切块)"
-                    status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.BLUE) # 建库后变色
+                    status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN) # 建库后变色
                     btn_build.content.value = "🔁 重新建库"
                 else:
                     status_card.bgcolor = "surfaceVariant"
@@ -252,152 +252,165 @@ def get_ai_settings_view(app):
 
             app.is_building_index = True
             app.build_progress_value = 0
-            app.build_progress_text = "正在进行滑动窗口分块..."
+            app.build_progress_text = "正在初始化引擎..."
 
-            # 更新 UI 按钮状态
+            # 更新 UI 按钮初始状态
             btn_build.content.value = "⏳ 后台建库中..."
             btn_build.disabled = btn_clear.disabled = True
             prog_bar.visible = prog_text.visible = True
-            prog_bar.value = app.build_progress_value
+            prog_bar.value = 0
             prog_text.value = app.build_progress_text
+            
             try:
                 tab3_col.update()
-            except Exception:
-                pass
+                app.page.update()
+            except Exception: pass
 
-            # ----- 内部函数 build_task，接收快照参数 -----
+            # 💥 核心修复：听你的建议，引入“定时刷新”的 UI 监控协程
+            async def progress_updater():
+                last_val = -1
+                last_text = ""
+                # 只要还在建库，这个监控器就会一直运行
+                while getattr(app, "is_building_index", False):
+                    curr_val = getattr(app, "build_progress_value", 0)
+                    curr_text = getattr(app, "build_progress_text", "")
+                    
+                    # 只有当进度真的发生变化时，才通知 UI 刷新
+                    if curr_val != last_val or curr_text != last_text:
+                        try:
+                            prog_bar.value = curr_val
+                            prog_text.value = curr_text
+                            prog_bar.update()
+                            prog_text.update()
+                        except Exception: pass
+                        last_val = curr_val
+                        last_text = curr_text
+                    
+                    # 每 0.5 秒醒来刷新一次，既能保证视觉连贯，又绝对不卡顿
+                    await asyncio.sleep(0.5)
+
+            # 让 Flet 主循环启动这个定时监控器
+            app.page.run_task(progress_updater)
+
             def build_task(path, name, chapters):
                 import traceback
+                import time
 
                 def safe_update_ui(val, text):
+                    # 💥 后台线程现在只负责静默修改变量，绝对不去碰 .update()
                     app.build_progress_value = val
                     app.build_progress_text = text
-                    if hasattr(app, '_active_ui'):
-                        try:
-                            ui = app._active_ui
-                            ui['prog_bar'].value = val
-                            ui['prog_text'].value = text
-                            ui['prog_bar'].update()
-                            ui['prog_text'].update()
-                        except Exception:
-                            pass
 
                 try:
-                    # 1. 导入依赖
-                    safe_update_ui(0, "📦 正在加载依赖模块...")
                     from core.chunker import NovelChunker
                     from core.ai_service import AIService
-                    try:
-                        from core.vector_db import VectorDB
-                    except ImportError as ie:
-                        safe_update_ui(0, f"❌ 缺少 sqlite-vec 扩展: {ie}")
-                        return
-
-                    # 2. 准备数据库目录
-                    safe_update_ui(0, "📁 准备数据库目录...")
+                    from core.vector_db import VectorDB
+                    
                     book_hash = hashlib.md5(path.encode('utf-8')).hexdigest()
                     db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
                     os.makedirs(db_dir, exist_ok=True)
                     db_path = os.path.join(db_dir, f"{book_hash}.db")
 
-                    # 3. 文本分块
+                    # 1. 文本分块
                     safe_update_ui(0, "✂️ 正在进行滑动窗口分块...")
                     chunker = NovelChunker(chunk_size=500, overlap=50)
                     all_chunks = []
-                    total_chapters = len(chapters)
                     for idx, ch in enumerate(chapters):
-                        if idx % 10 == 0 or idx == total_chapters - 1:
-                            safe_update_ui(idx / total_chapters, f"📖 分块中：第 {idx+1}/{total_chapters} 章")
                         chunks = chunker.chunk_text(app.engine.get_chapter_text(idx))
                         for c in chunks:
                             all_chunks.append((idx, c))
 
                     total = len(all_chunks)
-                    if total == 0:
-                        raise Exception("提取不到书籍文本内容")
+                    if total == 0: raise Exception("提取不到书籍文本内容")
 
-                    safe_update_ui(0.1, f"✅ 分块完成，共 {total} 个文本块")
-
-                    # 4. 获取向量维度
-                    safe_update_ui(0.15, "🔍 获取向量维度（测试第一个块）...")
+                    # 2. 获取向量维度
+                    safe_update_ui(0.05, f"🔍 正在获取 Embedding 维度 (总块数: {total})...")
                     first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
                     dim = len(first_emb)
-                    safe_update_ui(0.2, f"📐 向量维度: {dim}")
 
-                    # 5. 初始化数据库表
-                    safe_update_ui(0.2, "🗄️ 初始化数据库索引...")
+                    # 3. 初始化数据库 (显式清除防止叠加)
                     vdb = VectorDB(db_path)
+                    vdb.clear_index() 
                     vdb.init_tables(dim)
 
-                    # 6. 批量向量化并入库
-                    batch_size = 50
+                    # 4. 批量向量化
+                    batch_size = 15
                     total_batches = (total + batch_size - 1) // batch_size
+                    
                     for batch_idx in range(0, total, batch_size):
                         batch = all_chunks[batch_idx:batch_idx+batch_size]
                         current_batch_num = batch_idx // batch_size + 1
                         percent = batch_idx / total
-                        safe_update_ui(percent, f"🧠 批量向量化 ({current_batch_num}/{total_batches})  请稍候...")
+                        current_end = min(batch_idx + batch_size, total)
+                        
+                        safe_update_ui(percent, f"🧠 推理中 (批次 {current_batch_num}/{total_batches} | 第 {batch_idx+1}-{current_end}/{total} 块)")
 
                         batch_texts = [c[1] for c in batch]
-                        try:
-                            batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
-                        except Exception as e:
-                            error_detail = traceback.format_exc()
-                            safe_update_ui(percent, f"❌ API 调用失败: {str(e)}\n{error_detail[-200:]}")
-                            raise
+                        start_time = time.time()
+                        batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
+                        cost = time.time() - start_time
 
                         db_data = []
-                        for idx_in_batch, (chapter_idx, chunk_text) in enumerate(batch):
-                            emb = batch_embs[idx_in_batch]
-                            db_data.append((chapter_idx, chunk_text, emb))
+                        for i_b, (ch_idx, text) in enumerate(batch):
+                            db_data.append((ch_idx, text, batch_embs[i_b]))
 
-                        safe_update_ui(percent, f"💾 写入数据库 ({current_batch_num}/{total_batches})...")
+                        safe_update_ui(percent + (0.1 / total_batches), f"💾 写入索引 (本批次耗时 {cost:.1f}s)...")
                         vdb.insert_chunks(db_data)
 
-                    # 完成
+                    # 5. 完成：通知监控器停止，并进行最后的大清洗式刷新
                     app.is_building_index = False
                     safe_update_ui(1.0, "🎉 建库大功告成！")
+                    
+                    # 此时后台重算结束，主线程完全空闲，可以直接安全地 update
                     if hasattr(app, '_active_ui'):
                         try:
                             ui = app._active_ui
                             ui['status_text'].value = f"当前阅读：《{name}》\n索引状态：已建库 ({total} 个切块)"
-                            ui['status_card'].bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.BLUE)
+                            ui['status_card'].bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN)
                             ui['btn_build'].content.value = "🔁 重新建库"
                             ui['btn_build'].disabled = False
                             ui['btn_clear'].disabled = False
+                            
+                            # 💥 核心修复：强行隐藏进度条和文字
+                            ui['prog_bar'].visible = False
+                            ui['prog_text'].visible = False
+
                             ui['status_text'].update()
                             ui['status_card'].update()
                             ui['btn_build'].update()
                             ui['btn_clear'].update()
-                        except Exception:
-                            pass
-                    app.show_snack_bar(f"✅ 《{name}》全书向量建库已在后台完成！")
-
+                            ui['prog_bar'].update() # 💥 推送隐藏状态
+                            ui['prog_text'].update() # 💥 推送隐藏状态
+                            
+                            # 给监控器一点时间渲染最后一条文字，然后收尾
+                            time.sleep(0.5)
+                            app.page.update()
+                        except Exception: pass
+                        
+                    app.show_snack_bar(f"✅ 《{name}》全书向量建库已完成！")
+                    
                 except Exception as ex:
                     app.is_building_index = False
-                    full_trace = traceback.format_exc()
-                    safe_update_ui(app.build_progress_value, f"❌ 建库失败: {str(ex)}\n详情见崩溃日志")
-                    try:
-                        crash_log = os.path.join(StorageManager.get_base_dir(), "crash_build.log")
-                        with open(crash_log, "w", encoding="utf-8") as f:
-                            f.write(full_trace)
-                        app.show_snack_bar(f"❌ 失败详情已保存至：{crash_log}")
-                    except Exception:
-                        pass
+                    safe_update_ui(app.build_progress_value, f"❌ 建库失败: {str(ex)}")
                     if hasattr(app, '_active_ui'):
                         try:
                             ui = app._active_ui
                             ui['btn_build'].disabled = False
                             ui['btn_clear'].disabled = False
+                            # 💥 如果建库失败，同样应该隐藏进度条，防止卡在界面上
+                            ui['prog_bar'].visible = False
+                            ui['prog_text'].visible = False
+
                             ui['btn_build'].update()
                             ui['btn_clear'].update()
-                        except Exception:
-                            pass
+                            ui['prog_bar'].update()
+                            ui['prog_text'].update()
+                            app.page.update()
+                        except Exception: pass
                     app.show_snack_bar(f"❌ 《{name}》后台建库中断: {str(ex)}")
 
-            # 启动后台线程，传入快照变量
             threading.Thread(target=build_task, args=(target_book_path, target_book_name, target_chapters), daemon=True).start()
-
+        
         # 弹窗确认逻辑
         def close_confirm(e):
             confirm_dlg.open = False
@@ -482,8 +495,9 @@ def get_ai_settings_view(app):
             
     btn_build.on_click = on_build_click
     btn_clear.on_click = on_clear_click
-
-    prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=INPUT_WIDTH)
+    
+    # 💥 把这行直接删掉！不要了！
+    # prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=INPUT_WIDTH)
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change, width=INPUT_WIDTH)
     
     # 将 status_card 也加上宽度限制

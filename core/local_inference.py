@@ -229,10 +229,18 @@ else:
     class LocalEmbeddingEngine:
         def __init__(self, model_path: str):
             self.model_path = model_path
+            
+            # 💡 1. 物理层严密侦测：文件到底对不对？
+            if not os.path.exists(self.model_path):
+                raise Exception(f"【引擎报错】系统找不到模型文件！\n路径: {self.model_path}")
+            
+            file_size = os.path.getsize(self.model_path)
+            if file_size < 10 * 1024 * 1024:  # 如果文件小于 10MB，绝对是坏的
+                raise Exception(f"【引擎报错】模型文件严重损坏或未下载完整！当前大小仅: {file_size / 1024 / 1024:.2f} MB")
+
             self.lib = self._load_library()
             self.lib.llama_backend_init()
             
-            # 由于在安卓打包时，Flet 会限制 assets 路径，需做特殊路径提取
             original_cwd = os.getcwd()
             try:
                 if getattr(sys, 'frozen', False):
@@ -252,9 +260,17 @@ else:
                 os.chdir(original_cwd) 
                 
             mparams = self.lib.llama_model_default_params()
-            self.model = self.lib.llama_load_model_from_file(self.model_path.encode('utf-8'), mparams)
+            
+            # 💡 2. 安卓内存防御：关闭可能导致崩溃的 mmap 和 mlock
+            mparams.use_mmap = False 
+            mparams.use_mlock = False
+            
+            # 💡 3. 稳健的指针传递：防止 Bytes 被提前垃圾回收
+            b_path = self.model_path.encode('utf-8')
+            self.model = self.lib.llama_load_model_from_file(b_path, mparams)
+            
             if not self.model:
-                raise Exception("无法从文件加载本地模型")
+                raise Exception(f"【引擎报错】C++ 底层拒绝加载模型！请检查该 GGUF 模型是否兼容当前的 .so 版本 (文件大小: {file_size / 1024 / 1024:.2f} MB)")
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
