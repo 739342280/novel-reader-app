@@ -84,7 +84,7 @@ if sys.platform == "win32":
                 "-ngl", "99",
                 # 💥 终极修复：强制指定为 mean (平均池化)，填补 Qwen3 模型漏写的元数据
                 "--pooling", "mean",
-                "--log-disable"  # 关闭底层日志输出，保持控制台清爽
+                # "--log-disable"  # 关闭底层日志输出，保持控制台清爽
             ]
 
             # 隐藏 Windows 背后弹出的黑色 CMD 窗口
@@ -94,9 +94,9 @@ if sys.platform == "win32":
             # 启动独立进程 (物理级杜绝内存指针越界)
             self.process = subprocess.Popen(
                 cmd,
-                startupinfo=startupinfo,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL
+                # startupinfo=startupinfo,
+                # stdout=subprocess.DEVNULL,
+                # stderr=subprocess.DEVNULL
             )
 
             # 轮询探测服务是否就绪 (最长等待 15 秒)
