@@ -176,21 +176,18 @@ if sys.platform == "win32":
 
 else:
     # ---------------------------------------------------------
-    # 【Android / 移动端 NDK 核心】带 C++ 深度日志探针版
+    # 【Android / 移动端 NDK 核心】带 C++ 深度日志与多态反射探针版
     # ---------------------------------------------------------
     import ctypes
 
-    # 💥 全局日志拦截器：用于截获 C++ 哑巴引擎的真实求救信号
     _llama_internal_logs = []
     llama_log_cb_func = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
     def _llama_log_callback(level, text, user_data):
         try:
             msg = text.decode('utf-8', errors='ignore').strip()
-            if msg:
-                # 过滤掉罗嗦的权重加载进度，只留核心信息
-                if "loading tensor" not in msg and "load_weights" not in msg:
-                    _llama_internal_logs.append(msg)
+            if msg and "loading tensor" not in msg and "load_weights" not in msg:
+                _llama_internal_logs.append(f"[C++] {msg}")
         except:
             pass
 
@@ -278,60 +275,88 @@ else:
                 if "模型损坏" in str(e): raise e
                 raise Exception(f"【权限锁死】Python 无法读取该文件: {e}")
 
-            # 1. 仅加载核心库与接口绑定
             self.lib = self._load_library()
             
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
             except Exception: pass
 
-            # 2. 必须先初始化引擎大脑
             self.lib.llama_backend_init()
-            
-            # 💥 3. 终极大招：Python 级反射注入 (完美绕过安卓 dlopen 黑洞)
+            _llama_internal_logs.append("[Python] 引擎大脑初始化完毕 (llama_backend_init)")
+
+            # ──────── 核心反射注入与日志探测 ────────
             native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
-            # 抓取框架核心，准备接收肌肉模块
-            lib_ggml = ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so")) if native_lib_dir else self.lib
-            
+            _llama_internal_logs.append(f"[Python] GGML_BACKEND_PATH = {native_lib_dir}")
+
+            lib_ggml = None
+            if native_lib_dir:
+                try:
+                    lib_ggml = ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so"), mode=ctypes.RTLD_GLOBAL)
+                    _llama_internal_logs.append("[Python] ✅ 成功获取 libggml.so 句柄用于反射")
+                except Exception as e:
+                    _llama_internal_logs.append(f"[Python] ❌ 获取 libggml.so 失败: {e}")
+                    lib_ggml = self.lib
+
+            if lib_ggml:
+                register_func_name = None
+                # 兼容旧版和新版 llama.cpp API
+                for candidate in ["ggml_backend_register", "ggml_backend_reg_register", "ggml_backend_add"]:
+                    if hasattr(lib_ggml, candidate):
+                        register_func_name = candidate
+                        break
+                _llama_internal_logs.append(f"[Python] 探测注册函数: {register_func_name if register_func_name else '全军覆没'}")
+
             registered_count = 0
             if native_lib_dir and os.path.exists(native_lib_dir):
-                for file_name in os.listdir(native_lib_dir):
-                    if file_name.startswith("libggml-cpu") and file_name.endswith(".so"):
-                        try:
-                            # 第一步：用 Python 强行把肌肉模块拉进全局内存
-                            cpu_lib = ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
+                cpu_files = [f for f in os.listdir(native_lib_dir) if f.startswith("libggml-cpu") and f.endswith(".so")]
+                _llama_internal_logs.append(f"[Python] 发现待注入后端模块: {cpu_files}")
+                
+                for file_name in cpu_files:
+                    full_path = os.path.join(native_lib_dir, file_name)
+                    try:
+                        cpu_lib = ctypes.CDLL(full_path, mode=ctypes.RTLD_GLOBAL)
+                        _llama_internal_logs.append(f"[Python] 正在处理: {file_name}")
+                        
+                        if hasattr(cpu_lib, "ggml_backend_reg_get"):
+                            cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
+                            reg_ptr = cpu_lib.ggml_backend_reg_get()
+                            _llama_internal_logs.append(f"[Python]   > reg_get 指针: {hex(reg_ptr) if reg_ptr else 'NULL'}")
                             
-                            # 第二步：反向侦测它的内部注册函数
-                            if hasattr(cpu_lib, "ggml_backend_reg_get"):
-                                cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
-                                reg_ptr = cpu_lib.ggml_backend_reg_get() # 获取肌肉的物理指针
-                                
-                                # 第三步：强行插回主框架！
-                                if reg_ptr and hasattr(lib_ggml, "ggml_backend_register"):
-                                    lib_ggml.ggml_backend_register.argtypes = [ctypes.c_void_p]
-                                    lib_ggml.ggml_backend_register(reg_ptr)
-                                    registered_count += 1
-                                    _llama_internal_logs.append(f"✅ 反射注册成功: {file_name}")
-                        except Exception as e:
-                            _llama_internal_logs.append(f"反射失败 {file_name}: {e}")
+                            if reg_ptr and lib_ggml and register_func_name:
+                                reg_func = getattr(lib_ggml, register_func_name)
+                                reg_func.argtypes = [ctypes.c_void_p]
+                                reg_func(reg_ptr)
+                                registered_count += 1
+                                _llama_internal_logs.append(f"[Python]   ✅ 注入成功 (via {register_func_name})")
+                            else:
+                                _llama_internal_logs.append(f"[Python]   ⚠️ 注入流产: ptr={bool(reg_ptr)}, func={bool(register_func_name)}")
+                        else:
+                            _llama_internal_logs.append(f"[Python]   ❌ 缺少 ggml_backend_reg_get 暴露接口")
+                    except Exception as e:
+                        _llama_internal_logs.append(f"[Python]   ❌ 发生异常: {e}")
 
-            # 兜底：保留官方指令，万一反射漏了什么
+            _llama_internal_logs.append(f"[Python] 总计成功注入肌肉模块数: {registered_count}")
+
+            # 兜底调用
             original_cwd = os.getcwd()
             try:
                 if native_lib_dir: os.chdir(native_lib_dir)
                 if hasattr(lib_ggml, 'ggml_backend_load_all'):
                     lib_ggml.ggml_backend_load_all()
-            except Exception: pass
+                    _llama_internal_logs.append("[Python] 触发官方 ggml_backend_load_all 兜底")
+            except Exception as e:
+                _llama_internal_logs.append(f"[Python] 兜底唤醒报错: {e}")
             finally:
                 os.chdir(original_cwd)
-                
+
             mparams = self.lib.llama_model_default_params()
             b_path = self.model_path.encode('utf-8')
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                log_details = "\n".join(_llama_internal_logs[-12:])
-                raise Exception(f"【引擎内部报错】加载失败！C++ 底层真实原因如下:\n{log_details}")
+                # 打印最后 25 条日志，彻底曝光所有细节
+                log_details = "\n".join(_llama_internal_logs[-25:])
+                raise Exception(f"【引擎内部报错】加载失败！全链路探测报告如下:\n{log_details}")
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
@@ -355,9 +380,8 @@ else:
                     native_lib_dir = paths[0]
                     os.environ["GGML_BACKEND_PATH"] = native_lib_dir
             except Exception as e:
-                _llama_internal_logs.append(f"寻找原生库路径失败: {e}")
+                _llama_internal_logs.append(f"[Python] 寻找原生库路径失败: {e}")
 
-            # 提前按族谱把基础环境铺垫好
             if native_lib_dir:
                 for base_lib in ["libggml-base.so", "libggml.so"]:
                     try:
@@ -370,7 +394,6 @@ else:
             except Exception as e:
                 raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
 
-            # 接口绑定不变
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
             lib_llama.llama_context_default_params.restype = LlamaContextParams
