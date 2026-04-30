@@ -263,78 +263,74 @@ else:
             self.model_path = model_path
             self.n_parallel = n_parallel
             
-            # 清空上一轮的日志
             global _llama_internal_logs
             _llama_internal_logs.clear()
             
             if not os.path.exists(self.model_path):
                 raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
             
-            # 1. 终极文件健康检查
             try:
                 with open(self.model_path, 'rb') as f:
                     magic = f.read(4)
                     if magic != b'GGUF':
-                        raise Exception(f"【模型损坏】该文件根本不是 GGUF 格式！它的开头字节是: {magic}。文件可能在下载或复制时损坏，请重新下载！")
+                        raise Exception(f"【模型损坏】该文件根本不是 GGUF 格式！开头字节: {magic}")
             except Exception as e:
                 if "模型损坏" in str(e): raise e
-                raise Exception(f"【权限锁死】Python 无法读取该文件内容: {e}")
+                raise Exception(f"【权限锁死】Python 无法读取该文件: {e}")
 
-            # 2. 加载动态库与接口
+            # 1. 仅加载核心库与接口绑定
             self.lib = self._load_library()
             
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
-            except Exception:
-                pass
+            except Exception: pass
 
-            # 3. 严格遵守 C++ 生命周期：初始化 backend
+            # 2. 必须先初始化引擎大脑
             self.lib.llama_backend_init()
             
-            # 💥 4. 终极点火指令：强行塞入绝对路径，治好 C++ 的瞎眼症！
+            # 💥 3. 终极大招：Python 级反射注入 (完美绕过安卓 dlopen 黑洞)
+            native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
+            # 抓取框架核心，准备接收肌肉模块
+            lib_ggml = ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so")) if native_lib_dir else self.lib
+            
+            registered_count = 0
+            if native_lib_dir and os.path.exists(native_lib_dir):
+                for file_name in os.listdir(native_lib_dir):
+                    if file_name.startswith("libggml-cpu") and file_name.endswith(".so"):
+                        try:
+                            # 第一步：用 Python 强行把肌肉模块拉进全局内存
+                            cpu_lib = ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
+                            
+                            # 第二步：反向侦测它的内部注册函数
+                            if hasattr(cpu_lib, "ggml_backend_reg_get"):
+                                cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
+                                reg_ptr = cpu_lib.ggml_backend_reg_get() # 获取肌肉的物理指针
+                                
+                                # 第三步：强行插回主框架！
+                                if reg_ptr and hasattr(lib_ggml, "ggml_backend_register"):
+                                    lib_ggml.ggml_backend_register.argtypes = [ctypes.c_void_p]
+                                    lib_ggml.ggml_backend_register(reg_ptr)
+                                    registered_count += 1
+                                    _llama_internal_logs.append(f"✅ 反射注册成功: {file_name}")
+                        except Exception as e:
+                            _llama_internal_logs.append(f"反射失败 {file_name}: {e}")
+
+            # 兜底：保留官方指令，万一反射漏了什么
             original_cwd = os.getcwd()
             try:
-                native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
-                if native_lib_dir:
-                    os.chdir(native_lib_dir) 
-                
-                ggml_path = os.path.join(native_lib_dir, "libggml.so") if native_lib_dir else "libggml.so"
-                ggml_lib = ctypes.CDLL(ggml_path, mode=ctypes.RTLD_GLOBAL)
-                
-                loaded_backend = False
-                
-                # 🚀 核心大招：强行指定坐标进行唤醒
-                if native_lib_dir and hasattr(ggml_lib, 'ggml_backend_load_all_from_path'):
-                    # 必须声明参数类型为 C 的 char 指针
-                    ggml_lib.ggml_backend_load_all_from_path.argtypes = [ctypes.c_char_p]
-                    # 强行塞入绝对路径！
-                    ggml_lib.ggml_backend_load_all_from_path(native_lib_dir.encode('utf-8'))
-                    loaded_backend = True
-                    _llama_internal_logs.append(f"成功使用绝对路径唤醒后端: {native_lib_dir}")
-                
-                # 兜底：如果官方版本过老没有高级 API，则使用旧版盲扫
-                elif hasattr(ggml_lib, 'ggml_backend_load_all'):
-                    ggml_lib.ggml_backend_load_all()
-                    loaded_backend = True
-                elif hasattr(self.lib, 'ggml_backend_load_all'): 
-                    self.lib.ggml_backend_load_all()
-                    loaded_backend = True
-                
-                if not loaded_backend:
-                    _llama_internal_logs.append("警告：找不到任何 backend_load 函数，C++ 引擎可能未激活。")
-                    
-            except Exception as e:
-                _llama_internal_logs.append(f"唤醒计算后端发生异常: {e}")
+                if native_lib_dir: os.chdir(native_lib_dir)
+                if hasattr(lib_ggml, 'ggml_backend_load_all'):
+                    lib_ggml.ggml_backend_load_all()
+            except Exception: pass
             finally:
                 os.chdir(original_cwd)
                 
             mparams = self.lib.llama_model_default_params()
-            
             b_path = self.model_path.encode('utf-8')
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                log_details = "\n".join(_llama_internal_logs[-10:])
+                log_details = "\n".join(_llama_internal_logs[-12:])
                 raise Exception(f"【引擎内部报错】加载失败！C++ 底层真实原因如下:\n{log_details}")
                 
             cparams = self.lib.llama_context_default_params()
@@ -351,7 +347,6 @@ else:
         def _load_library(self):
             global _llama_internal_logs
             
-            # 1. 扫描出原生地下掩体的绝对坐标
             native_lib_dir = ""
             try:
                 import glob
@@ -362,33 +357,20 @@ else:
             except Exception as e:
                 _llama_internal_logs.append(f"寻找原生库路径失败: {e}")
 
-            # 2. 严格按“族谱依赖顺序”预加载核心库
+            # 提前按族谱把基础环境铺垫好
             if native_lib_dir:
-                try:
-                    ctypes.CDLL(os.path.join(native_lib_dir, "libggml-base.so"), mode=ctypes.RTLD_GLOBAL)
-                except Exception: pass
-                
-                try:
-                    ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so"), mode=ctypes.RTLD_GLOBAL)
-                except Exception: pass
-            
-            # 3. 抓取主脑 libllama.so 作为操控接口
+                for base_lib in ["libggml-base.so", "libggml.so"]:
+                    try:
+                        ctypes.CDLL(os.path.join(native_lib_dir, base_lib), mode=ctypes.RTLD_GLOBAL)
+                    except Exception: pass
+
+            main_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
             try:
-                main_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
                 lib_llama = ctypes.CDLL(main_path, mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
                 raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
 
-            # 4. 预装载所有肌肉模块（CPU 后端）
-            if native_lib_dir and os.path.exists(native_lib_dir):
-                for file_name in os.listdir(native_lib_dir):
-                    if file_name.startswith("libggml-cpu") and file_name.endswith(".so"):
-                        try:
-                            ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
-                        except Exception as e:
-                            _llama_internal_logs.append(f"预加载后端 {file_name} 警告: {e}")
-
-            # --- 以下是雷打不动的 C++ 函数接口绑定 ---
+            # 接口绑定不变
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
             lib_llama.llama_context_default_params.restype = LlamaContextParams
@@ -405,10 +387,8 @@ else:
             lib_llama.llama_get_embeddings.argtypes = [ctypes.c_void_p]
             lib_llama.llama_get_embeddings.restype = ctypes.POINTER(ctypes.c_float)
             
-            try:
-                lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
+            try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
             except Exception: pass
-                
             try:
                 lib_llama.llama_get_embeddings_seq.argtypes = [ctypes.c_void_p, ctypes.c_int32]
                 lib_llama.llama_get_embeddings_seq.restype = ctypes.POINTER(ctypes.c_float)
