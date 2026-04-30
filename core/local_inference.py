@@ -280,6 +280,7 @@ else:
                 if "模型损坏" in str(e): raise e
                 raise Exception(f"【权限锁死】Python 无法读取该文件内容: {e}")
 
+            # 先加载所有动态库进内存，并绑定 C++ 函数接口
             self.lib = self._load_library()
             
             # 💥 2. 挂载日志拦截器
@@ -288,25 +289,27 @@ else:
             except Exception:
                 pass
 
+            # 💥 3. 严格遵循 C++ 生命周期：先初始化 backend
             self.lib.llama_backend_init()
             
-            # 💥 终极点火指令：跨库唤醒后端！
-            # 因为唤醒函数在 libggml.so 里，而不在 self.lib 里，我们必须精确定位并执行它
+            # 💥 4. 终极点火指令：跨库唤醒所有 CPU 肌肉后端！
+            original_cwd = os.getcwd()
             try:
-                # 获取上一轮扫描到的绝对路径
                 native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
-                ggml_path = os.path.join(native_lib_dir, "libggml.so") if native_lib_dir else "libggml.so"
+                if native_lib_dir:
+                    os.chdir(native_lib_dir) # 强行切入掩体，保证能找到兄弟模块
                 
-                # 强行抓取 libggml.so 实体
+                ggml_path = os.path.join(native_lib_dir, "libggml.so") if native_lib_dir else "libggml.so"
                 ggml_lib = ctypes.CDLL(ggml_path, mode=ctypes.RTLD_GLOBAL)
                 
-                # 强行按下点火按钮！
                 if hasattr(ggml_lib, 'ggml_backend_load_all'):
                     ggml_lib.ggml_backend_load_all()
-                elif hasattr(self.lib, 'ggml_backend_load_all'): # 兜底逻辑
+                elif hasattr(self.lib, 'ggml_backend_load_all'): 
                     self.lib.ggml_backend_load_all()
             except Exception as e:
                 _llama_internal_logs.append(f"唤醒计算后端失败: {e}")
+            finally:
+                os.chdir(original_cwd) # 务必撤出，恢复原样
                 
             mparams = self.lib.llama_model_default_params()
             
@@ -314,7 +317,6 @@ else:
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                # 💥 3. 截获并爆出 C++ 底层的最后遗言
                 log_details = "\n".join(_llama_internal_logs[-10:])
                 raise Exception(f"【引擎内部报错】加载失败！C++ 底层真实原因如下:\n{log_details}")
                 
@@ -332,7 +334,7 @@ else:
         def _load_library(self):
             global _llama_internal_logs
             
-            # 1. 精准锁定原生库的绝对物理坐标
+            # 1. 扫描出原生地下掩体的绝对坐标
             native_lib_dir = ""
             try:
                 import glob
@@ -343,64 +345,65 @@ else:
             except Exception as e:
                 _llama_internal_logs.append(f"寻找原生库路径失败: {e}")
 
-            lib = None
-            
-            # 💥 2. 动态遍历加载：不要写死名字！把所有 ggml 家族的库全部加载
-            if native_lib_dir and os.path.exists(native_lib_dir):
+            # 2. 严格按“族谱依赖顺序”预加载核心库
+            if native_lib_dir:
                 try:
-                    for file_name in os.listdir(native_lib_dir):
-                        # 找到所有 libggml 开头的 .so 文件，且排除 libllama.so 主脑
-                        if file_name.startswith("libggml") and file_name.endswith(".so") and file_name != "libllama.so":
-                            load_path = os.path.join(native_lib_dir, file_name)
-                            try:
-                                ctypes.CDLL(load_path, mode=ctypes.RTLD_GLOBAL)
-                            except Exception as e:
-                                _llama_internal_logs.append(f"加载子模块警告: {file_name} -> {str(e)}")
-                except Exception as e:
-                    _llama_internal_logs.append(f"遍历目录失败: {e}")
-
-            # 3. 最后压轴：加载主脑 libllama.so
-            main_lib_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
+                    ctypes.CDLL(os.path.join(native_lib_dir, "libggml-base.so"), mode=ctypes.RTLD_GLOBAL)
+                except Exception: pass
+                
+                try:
+                    ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so"), mode=ctypes.RTLD_GLOBAL)
+                except Exception: pass
+            
+            # 3. 抓取主脑 libllama.so 作为操控接口
             try:
-                lib = ctypes.CDLL(main_lib_path, mode=ctypes.RTLD_GLOBAL)
+                main_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
+                lib_llama = ctypes.CDLL(main_path, mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
-                raise Exception(f"主脑 libllama.so 彻底加载失败，路径: {main_lib_path}，原因: {e}")
-            
-            # --- 下方保持原样的类型绑定 ---
-            lib.llama_backend_init.argtypes = []
-            lib.llama_model_default_params.restype = LlamaModelParams
-            lib.llama_context_default_params.restype = LlamaContextParams
-            lib.llama_load_model_from_file.argtypes = [ctypes.c_char_p, LlamaModelParams]
-            lib.llama_load_model_from_file.restype = ctypes.c_void_p
-            lib.llama_new_context_with_model.argtypes = [ctypes.c_void_p, LlamaContextParams]
-            lib.llama_new_context_with_model.restype = ctypes.c_void_p
-            lib.llama_n_embd.argtypes = [ctypes.c_void_p]
-            lib.llama_n_embd.restype = ctypes.c_int
-            lib.llama_tokenize.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
-            lib.llama_tokenize.restype = ctypes.c_int
-            lib.llama_decode.argtypes = [ctypes.c_void_p, LlamaBatch]
-            lib.llama_decode.restype = ctypes.c_int
-            lib.llama_get_embeddings.argtypes = [ctypes.c_void_p]
-            lib.llama_get_embeddings.restype = ctypes.POINTER(ctypes.c_float)
+                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
+
+            # 4. 预装载所有肌肉模块（CPU 后端）
+            if native_lib_dir and os.path.exists(native_lib_dir):
+                for file_name in os.listdir(native_lib_dir):
+                    if file_name.startswith("libggml-cpu") and file_name.endswith(".so"):
+                        try:
+                            ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
+                        except Exception as e:
+                            _llama_internal_logs.append(f"预加载后端 {file_name} 警告: {e}")
+
+            # --- 以下是雷打不动的 C++ 函数接口绑定 ---
+            lib_llama.llama_backend_init.argtypes = []
+            lib_llama.llama_model_default_params.restype = LlamaModelParams
+            lib_llama.llama_context_default_params.restype = LlamaContextParams
+            lib_llama.llama_load_model_from_file.argtypes = [ctypes.c_char_p, LlamaModelParams]
+            lib_llama.llama_load_model_from_file.restype = ctypes.c_void_p
+            lib_llama.llama_new_context_with_model.argtypes = [ctypes.c_void_p, LlamaContextParams]
+            lib_llama.llama_new_context_with_model.restype = ctypes.c_void_p
+            lib_llama.llama_n_embd.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_n_embd.restype = ctypes.c_int
+            lib_llama.llama_tokenize.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
+            lib_llama.llama_tokenize.restype = ctypes.c_int
+            lib_llama.llama_decode.argtypes = [ctypes.c_void_p, LlamaBatch]
+            lib_llama.llama_decode.restype = ctypes.c_int
+            lib_llama.llama_get_embeddings.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_get_embeddings.restype = ctypes.POINTER(ctypes.c_float)
             
             try:
-                lib.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
-            except Exception:
-                pass
+                lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
+            except Exception: pass
                 
             try:
-                lib.llama_get_embeddings_seq.argtypes = [ctypes.c_void_p, ctypes.c_int32]
-                lib.llama_get_embeddings_seq.restype = ctypes.POINTER(ctypes.c_float)
-                lib.llama_get_embeddings_ith.argtypes = [ctypes.c_void_p, ctypes.c_int32]
-                lib.llama_get_embeddings_ith.restype = ctypes.POINTER(ctypes.c_float)
-            except Exception:
-                pass
+                lib_llama.llama_get_embeddings_seq.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+                lib_llama.llama_get_embeddings_seq.restype = ctypes.POINTER(ctypes.c_float)
+                lib_llama.llama_get_embeddings_ith.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+                lib_llama.llama_get_embeddings_ith.restype = ctypes.POINTER(ctypes.c_float)
+            except Exception: pass
             
-            lib.llama_free.argtypes = [ctypes.c_void_p]
-            lib.llama_free_model.argtypes = [ctypes.c_void_p]
-            lib.llama_backend_free.argtypes = []
+            lib_llama.llama_free.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_free_model.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_backend_free.argtypes = []
             
-            return lib
+            return lib_llama
 
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
