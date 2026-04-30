@@ -304,7 +304,8 @@ else:
             # 💥 新增：放大批处理容量！
             # 假设你的 UI 最大 Batch Size 是 16，每段文本切块约 512 token
             # 16 * 512 = 8192。必须让 C++ 提前申请足够大的物理内存。
-            cparams.n_batch = 8192 
+            cparams.n_batch = 8192
+            cparams.n_ubatch = 8192  # 💥 新增这一行：强制对齐物理吞吐量 
             cparams.n_ctx = 8192
 
             # 💥 真正让 UI 的并发通道数生效的地方在这里！
@@ -458,13 +459,19 @@ else:
             for seq_id in range(len(tokenized_texts)):
                 self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
 
-            # 3. 构造超级 Batch
+            # 3. 构造超级 Batch (💥 修复：先用具名变量接住真实内存，防止瞬间被 GC 回收！)
+            token_arr = (ctypes.c_int32 * total_tokens)()
+            pos_arr = (ctypes.c_int32 * total_tokens)()
+            n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
+            logits_arr = (ctypes.c_int8 * total_tokens)()
+
             batch = LlamaBatch()
             batch.n_tokens = total_tokens
-            batch.token = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
+            batch.token = ctypes.cast(token_arr, ctypes.POINTER(ctypes.c_int32))
             batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
-            batch.pos = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
-            batch.n_seq_id = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
+            batch.pos = ctypes.cast(pos_arr, ctypes.POINTER(ctypes.c_int32))
+            batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
+            batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
             
             # 处理二维指针陷阱
             seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
@@ -474,8 +481,6 @@ else:
                 inner_seqs.append(inner)
                 seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
-            
-            batch.logits = ctypes.cast((ctypes.c_int8 * total_tokens)(), ctypes.POINTER(ctypes.c_int8))
 
             # 4. 填充超级 Batch 的数据
             idx = 0
@@ -484,15 +489,14 @@ else:
                     batch.token[idx] = tokens_array[i]
                     batch.pos[idx] = i          # 每个文本的相对位置都从 0 开始
                     batch.n_seq_id[idx] = 1
-                    inner_seqs[idx][0] = seq_id # 💥 赋予它独立的序列 ID (0, 1, 2...)
-                    # 💥 只有每段文本的最后一个 Token，才需要计算并输出 logit (向量)
+                    inner_seqs[idx][0] = seq_id # 赋予它独立的序列 ID (0, 1, 2...)
                     batch.logits[idx] = 1 if i == n_tokens - 1 else 0 
                     idx += 1
 
-            # 内存护盾，防止 Python 垃圾回收吃掉 ctypes 数组
-            self._memory_shield = (batch.token, batch.pos, batch.n_seq_id, seq_id_ptrs, inner_seqs, batch.logits)
+            # 💥 终极内存护盾：将真实数组对象存入生命周期，死死锁住物理内存！
+            self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
 
-            # 5. 一次性核爆解码！(真正的 GEMM 矩阵计算在这里发生)
+            # 5. 一次性核爆解码！
             res = self.lib.llama_decode(self.ctx, batch)
             if res != 0: 
                 raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。请检查 UI 的 Batch Size 是否过大导致超出了 n_batch 容量。")
@@ -502,7 +506,6 @@ else:
             for seq_id in range(len(tokenized_texts)):
                 emb_ptr = None
                 if hasattr(self.lib, 'llama_get_embeddings_seq'):
-                    # 精准提取对应序列 ID 的特征向量
                     emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
                 
                 if not emb_ptr:
@@ -512,7 +515,7 @@ else:
 
             self._memory_shield = None
             return embeddings
-
+        
         def __del__(self):
             if hasattr(self, 'ctx') and self.ctx: self.lib.llama_free(self.ctx)
             if hasattr(self, 'model') and self.model: self.lib.llama_free_model(self.model)
