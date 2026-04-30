@@ -284,13 +284,14 @@ else:
                 
             mparams = self.lib.llama_model_default_params()
             
-            # 💡 2. 安卓内存防御：关闭可能导致崩溃的 mmap 和 mlock
-            mparams.use_mmap = False 
-            mparams.use_mlock = False
+            # 💥 战术撤退：直接注释掉这两行！
+            # 让 C++ 底层自己去判断要不要用 mmap，避免我们在 Python 端因为结构体错位把参数写坏
+            # mparams.use_mmap = False 
+            # mparams.use_mlock = False
             
-            # 💡 3. 稳健的指针传递：防止 Bytes 被提前垃圾回收
+            # 💡 3. 极致稳健的指针传递：强制转换为 C 的 char 指针
             b_path = self.model_path.encode('utf-8')
-            self.model = self.lib.llama_load_model_from_file(b_path, mparams)
+            self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
                 raise Exception(f"【引擎报错】C++ 底层拒绝加载模型！请检查该 GGUF 模型是否兼容当前的 .so 版本 (文件大小: {file_size / 1024 / 1024:.2f} MB)")
