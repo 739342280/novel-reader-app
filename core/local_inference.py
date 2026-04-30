@@ -332,15 +332,41 @@ else:
         def _load_library(self):
             global _llama_internal_logs
             
-            # 强制加载所有计算后端，并拦截任何缺失错误
-            for lib_name in ["libggml-base.so", "libggml-cpu.so", "libggml.so"]:
+            # 1. 精准锁定原生库的绝对物理坐标
+            native_lib_dir = ""
+            try:
+                import glob
+                paths = glob.glob("/data/app/*/com.shoubeier*/lib/arm64*")
+                if paths:
+                    native_lib_dir = paths[0]
+                    os.environ["GGML_BACKEND_PATH"] = native_lib_dir
+            except Exception as e:
+                _llama_internal_logs.append(f"寻找原生库路径失败: {e}")
+
+            lib = None
+            
+            # 💥 2. 动态遍历加载：不要写死名字！把所有 ggml 家族的库全部加载
+            if native_lib_dir and os.path.exists(native_lib_dir):
                 try:
-                    ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
+                    for file_name in os.listdir(native_lib_dir):
+                        # 找到所有 libggml 开头的 .so 文件，且排除 libllama.so 主脑
+                        if file_name.startswith("libggml") and file_name.endswith(".so") and file_name != "libllama.so":
+                            load_path = os.path.join(native_lib_dir, file_name)
+                            try:
+                                ctypes.CDLL(load_path, mode=ctypes.RTLD_GLOBAL)
+                            except Exception as e:
+                                _llama_internal_logs.append(f"加载子模块警告: {file_name} -> {str(e)}")
                 except Exception as e:
-                    _llama_internal_logs.append(f"DLL加载警告: {lib_name} 失败 -> {str(e)}")
+                    _llama_internal_logs.append(f"遍历目录失败: {e}")
+
+            # 3. 最后压轴：加载主脑 libllama.so
+            main_lib_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
+            try:
+                lib = ctypes.CDLL(main_lib_path, mode=ctypes.RTLD_GLOBAL)
+            except Exception as e:
+                raise Exception(f"主脑 libllama.so 彻底加载失败，路径: {main_lib_path}，原因: {e}")
             
-            lib = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
-            
+            # --- 下方保持原样的类型绑定 ---
             lib.llama_backend_init.argtypes = []
             lib.llama_model_default_params.restype = LlamaModelParams
             lib.llama_context_default_params.restype = LlamaContextParams
