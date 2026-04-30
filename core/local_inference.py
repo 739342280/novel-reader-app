@@ -275,6 +275,7 @@ else:
                 if "模型损坏" in str(e): raise e
                 raise Exception(f"【权限锁死】Python 无法读取该文件: {e}")
 
+            # 1. 加载核心库与接口绑定
             self.lib = self._load_library()
             
             try:
@@ -282,79 +283,52 @@ else:
             except Exception: pass
 
             self.lib.llama_backend_init()
-            _llama_internal_logs.append("[Python] 引擎大脑初始化完毕 (llama_backend_init)")
 
-            # ──────── 核心反射注入与日志探测 ────────
-            native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
-            _llama_internal_logs.append(f"[Python] GGML_BACKEND_PATH = {native_lib_dir}")
-
+            # ──────── 核心反射注入 (彻底消灭双重加载版) ────────
+            native_lib_dir = getattr(self, "_native_lib_dir", "")
+            
+            # 💥 核心修正 1：统一拿短文件名 (SONAME) 的句柄，确保内存宇宙绝对同源！
             lib_ggml = None
-            if native_lib_dir:
-                try:
-                    lib_ggml = ctypes.CDLL(os.path.join(native_lib_dir, "libggml.so"), mode=ctypes.RTLD_GLOBAL)
-                    _llama_internal_logs.append("[Python] ✅ 成功获取 libggml.so 句柄用于反射")
-                except Exception as e:
-                    _llama_internal_logs.append(f"[Python] ❌ 获取 libggml.so 失败: {e}")
-                    lib_ggml = self.lib
+            try:
+                lib_ggml = ctypes.CDLL("libggml.so", mode=ctypes.RTLD_GLOBAL)
+            except Exception:
+                lib_ggml = self.lib
 
             if lib_ggml:
                 register_func_name = None
-                # 兼容旧版和新版 llama.cpp API
                 for candidate in ["ggml_backend_register", "ggml_backend_reg_register", "ggml_backend_add"]:
                     if hasattr(lib_ggml, candidate):
                         register_func_name = candidate
                         break
-                _llama_internal_logs.append(f"[Python] 探测注册函数: {register_func_name if register_func_name else '全军覆没'}")
 
             registered_count = 0
             if native_lib_dir and os.path.exists(native_lib_dir):
                 cpu_files = [f for f in os.listdir(native_lib_dir) if f.startswith("libggml-cpu") and f.endswith(".so")]
-                _llama_internal_logs.append(f"[Python] 发现待注入后端模块: {cpu_files}")
                 
                 for file_name in cpu_files:
-                    full_path = os.path.join(native_lib_dir, file_name)
                     try:
-                        cpu_lib = ctypes.CDLL(full_path, mode=ctypes.RTLD_GLOBAL)
-                        _llama_internal_logs.append(f"[Python] 正在处理: {file_name}")
+                        # 💥 核心修正 2：必须且只能用 file_name (短名) 加载，绝对不能拼接绝对路径！
+                        cpu_lib = ctypes.CDLL(file_name, mode=ctypes.RTLD_GLOBAL)
                         
                         if hasattr(cpu_lib, "ggml_backend_reg_get"):
                             cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
                             reg_ptr = cpu_lib.ggml_backend_reg_get()
-                            _llama_internal_logs.append(f"[Python]   > reg_get 指针: {hex(reg_ptr) if reg_ptr else 'NULL'}")
                             
                             if reg_ptr and lib_ggml and register_func_name:
                                 reg_func = getattr(lib_ggml, register_func_name)
                                 reg_func.argtypes = [ctypes.c_void_p]
                                 reg_func(reg_ptr)
                                 registered_count += 1
-                                _llama_internal_logs.append(f"[Python]   ✅ 注入成功 (via {register_func_name})")
-                            else:
-                                _llama_internal_logs.append(f"[Python]   ⚠️ 注入流产: ptr={bool(reg_ptr)}, func={bool(register_func_name)}")
-                        else:
-                            _llama_internal_logs.append(f"[Python]   ❌ 缺少 ggml_backend_reg_get 暴露接口")
                     except Exception as e:
-                        _llama_internal_logs.append(f"[Python]   ❌ 发生异常: {e}")
+                        _llama_internal_logs.append(f"[Python] 注入 {file_name} 失败: {e}")
 
-            _llama_internal_logs.append(f"[Python] 总计成功注入肌肉模块数: {registered_count}")
-
-            # 兜底调用
-            original_cwd = os.getcwd()
-            try:
-                if native_lib_dir: os.chdir(native_lib_dir)
-                if hasattr(lib_ggml, 'ggml_backend_load_all'):
-                    lib_ggml.ggml_backend_load_all()
-                    _llama_internal_logs.append("[Python] 触发官方 ggml_backend_load_all 兜底")
-            except Exception as e:
-                _llama_internal_logs.append(f"[Python] 兜底唤醒报错: {e}")
-            finally:
-                os.chdir(original_cwd)
-
+            # 💥 核心修正 3：彻底删掉 C++ 的兜底唤醒，防止 C++ 底层手贱用绝对路径破坏同源环境！
+            
             mparams = self.lib.llama_model_default_params()
             b_path = self.model_path.encode('utf-8')
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                # 打印最后 25 条日志，彻底曝光所有细节
                 log_details = "\n".join(_llama_internal_logs[-25:])
                 raise Exception(f"【引擎内部报错】加载失败！全链路探测报告如下:\n{log_details}")
                 
@@ -372,36 +346,34 @@ else:
         def _load_library(self):
             global _llama_internal_logs
 
-            # 第一步：仅靠系统 LD_LIBRARY_PATH 加载主引擎
-            try:
-                lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
-                _llama_internal_logs.append("[Python] libllama.so 通过系统路径加载成功")
-            except Exception as e:
-                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
-
-            # 第二步：通过 /proc/self/maps 反查 libllama.so 的真实目录
+            # 1. 查找原生库的真实目录 (仅当作雷达，用来扫描恶心的随机后缀文件名)
             native_lib_dir = ""
             try:
                 with open("/proc/self/maps", "r") as f:
                     maps = f.read()
                 import re
-                match = re.search(r'(/\S+)/libllama\.so', maps)
+                match = re.search(r'(/[^/]+)+/libllama\.so', maps)
                 if match:
                     native_lib_dir = match.group(1)
-                    os.environ["GGML_BACKEND_PATH"] = native_lib_dir
-                    _llama_internal_logs.append(f"[Python] 通过 maps 锁定原生库目录: {native_lib_dir}")
             except Exception as e:
-                _llama_internal_logs.append(f"[Python] 反查路径失败: {e}")
+                pass
 
-            # 第三步：预热基础库（可选）
-            if native_lib_dir:
-                for base_lib in ["libggml-base.so", "libggml.so"]:
-                    try:
-                        ctypes.CDLL(os.path.join(native_lib_dir, base_lib), mode=ctypes.RTLD_GLOBAL)
-                    except Exception:
-                        pass
+            # 把目录存起来，供 __init__ 当雷达使用
+            self._native_lib_dir = native_lib_dir 
 
-            # 接口绑定（与之前完全一致）
+            # 2. 预热基础库（💥 必须用短文件名！）
+            for base_lib in ["libggml-base.so", "libggml.so"]:
+                try:
+                    ctypes.CDLL(base_lib, mode=ctypes.RTLD_GLOBAL)
+                except Exception:
+                    pass
+
+            # 3. 加载主引擎（💥 必须用短文件名！）
+            try:
+                lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
+            except Exception as e:
+                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
+
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
             lib_llama.llama_context_default_params.restype = LlamaContextParams
@@ -432,7 +404,7 @@ else:
             lib_llama.llama_backend_free.argtypes = []
             
             return lib_llama
-
+        
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
             text_bytes = text.encode('utf-8')
