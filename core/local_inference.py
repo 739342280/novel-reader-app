@@ -290,23 +290,24 @@ else:
 
             self.lib.llama_backend_init()
             
-            original_cwd = os.getcwd()
+            # 💥 终极点火指令：跨库唤醒后端！
+            # 因为唤醒函数在 libggml.so 里，而不在 self.lib 里，我们必须精确定位并执行它
             try:
-                if getattr(sys, 'frozen', False):
-                    base_path = os.path.dirname(sys.executable)
-                else:
-                    base_path = os.path.dirname(os.path.abspath(__file__))
-                    
-                assets_dir = os.path.join(base_path, "assets")
-                if os.path.exists(assets_dir):
-                    os.chdir(assets_dir)
-                    
-                if hasattr(self.lib, 'ggml_backend_load_all'):
+                # 获取上一轮扫描到的绝对路径
+                native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
+                ggml_path = os.path.join(native_lib_dir, "libggml.so") if native_lib_dir else "libggml.so"
+                
+                # 强行抓取 libggml.so 实体
+                ggml_lib = ctypes.CDLL(ggml_path, mode=ctypes.RTLD_GLOBAL)
+                
+                # 强行按下点火按钮！
+                if hasattr(ggml_lib, 'ggml_backend_load_all'):
+                    ggml_lib.ggml_backend_load_all()
+                elif hasattr(self.lib, 'ggml_backend_load_all'): # 兜底逻辑
                     self.lib.ggml_backend_load_all()
-            except Exception:
-                pass
-            finally:
-                os.chdir(original_cwd) 
+            except Exception as e:
+                global _llama_internal_logs
+                _llama_internal_logs.append(f"唤醒计算后端失败: {e}")
                 
             mparams = self.lib.llama_model_default_params()
             
