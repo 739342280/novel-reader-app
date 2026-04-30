@@ -259,9 +259,6 @@ else:
             ("n_seq_id", ctypes.POINTER(ctypes.c_int32)),
             ("seq_id", ctypes.POINTER(ctypes.POINTER(ctypes.c_int32))),
             ("logits", ctypes.POINTER(ctypes.c_int8)),
-            ("all_pos_0", ctypes.c_int32),
-            ("all_pos_1", ctypes.c_int32),
-            ("all_seq_id", ctypes.c_int32),
         ]
 
     class LocalEmbeddingEngine:
@@ -288,17 +285,21 @@ else:
             mparams = self.lib.llama_model_default_params()
             b_path = self.model_path.encode('utf-8')
             
-            self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
+            self.model = self.lib.llama_model_load_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
                 log_details = "\n".join(_llama_internal_logs[-15:])
                 raise Exception(f"【引擎内部报错】加载失败！底层真实原因:\n{log_details}")
+            
+            # 💥 新增：获取 vocab 对象
+            self.vocab = self.lib.llama_model_get_vocab(self.model)
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
             cparams.n_threads = 4 
             
-            self.ctx = self.lib.llama_new_context_with_model(self.model, cparams)
+            # 改用新 API: llama_init_from_model
+            self.ctx = self.lib.llama_init_from_model(self.model, cparams)
             if not self.ctx:
                 log_details = "\n".join(_llama_internal_logs[-5:])
                 raise Exception(f"无法创建本地模型上下文！底层原因:\n{log_details}")
@@ -340,6 +341,14 @@ else:
             lib_llama.llama_decode.restype = ctypes.c_int
             lib_llama.llama_get_embeddings.argtypes = [ctypes.c_void_p]
             lib_llama.llama_get_embeddings.restype = ctypes.POINTER(ctypes.c_float)
+            # 新增/替换的绑定
+            lib_llama.llama_model_get_vocab.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_model_get_vocab.restype = ctypes.c_void_p            
+            lib_llama.llama_init_from_model.argtypes = [ctypes.c_void_p, LlamaContextParams]
+            lib_llama.llama_init_from_model.restype = ctypes.c_void_p
+            lib_llama.llama_model_load_from_file.argtypes = [ctypes.c_char_p, LlamaModelParams]
+            lib_llama.llama_model_load_from_file.restype = ctypes.c_void_p
+
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
             except Exception: pass
@@ -361,7 +370,7 @@ else:
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
             tokens_array = (ctypes.c_int32 * n_max_tokens)()
-            n_tokens = self.lib.llama_tokenize(self.model, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
+            n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
             
             if n_tokens <= 0: raise Exception("文本分词失败")
 
@@ -391,9 +400,9 @@ else:
             logits_array[n_tokens - 1] = 1 
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
-            batch.all_pos_0 = 0
-            batch.all_pos_1 = 0
-            batch.all_seq_id = 0
+            # batch.all_pos_0 = 0
+            # batch.all_pos_1 = 0
+            # batch.all_seq_id = 0
 
             self._memory_shield = (pos_array, n_seq_id_array, seq_id_ptrs, inner_seqs, logits_array)
 
