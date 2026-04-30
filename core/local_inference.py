@@ -303,13 +303,17 @@ else:
             cparams.n_threads = optimal_threads 
             cparams.n_threads_batch = optimal_threads 
 
-            # 💥 绝杀 1：总容量拉升。支持 128 块 × 512 词 = 65536。
-            # 现代手机的运存跑这个级别的 Embedding 游刃有余
-            cparams.n_ctx = 65536
+            # 1. 物理总内存：降回 8192。支持约 16 块切块(16 * 512)。
+            # 这时的 KV Cache 占用约为 1.5GB ~ 3GB，处于安卓绝对安全的范围内。
+            cparams.n_ctx = 8192
             
-            # 💥 绝杀 2：将吞吐量放大，彻底避免 ubatch 切片导致的内存碎片化
-            cparams.n_batch = 16384
-            cparams.n_ubatch = 16384  
+            # 2. 逻辑批处理量：保持 8192。告诉引擎我们可能会一次发一堆文本过来。
+            cparams.n_batch = 8192
+
+            # 3. 物理吞吐量 (核心救命参数！)：改回 512。
+            # 这意味着即使你一次发了 5120 个 Token，底层也会自动切成 10 个 512 的小块来算。
+            # 内存峰值瞬间降低 90%！且不影响整体的计算结果和速度。
+            cparams.n_ubatch = 512
             
             cparams.n_seq_max = 128
             
