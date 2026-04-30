@@ -296,29 +296,56 @@ else:
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
-            cparams.pooling_type = 1  # 强制开启 MEAN 池化，防止底层找不到序列向量            
 
-            import multiprocessing            
+            # 【修复 1】：强制开启 MEAN (平均) 池化。
+            # 这是因为我们采用了一次性发入超级大 Batch 的做法。如果不开启池化，
+            # 底层引擎在提取向量时，可能会搞混 Token 之间的归属，导致报错找不到槽位。
+            cparams.pooling_type = 1            
+
+            import multiprocessing
+            # 【动态线程分配】
+            # 骁龙芯片为异构架构。减去 2 个核心，留给 Android 系统底层运转和 Python 宿主进程。
+            # 防止满载导致系统卡顿，进而触发 OOM（内存杀手）强杀 App。            
             optimal_threads = max(1, multiprocessing.cpu_count() - 2)
             cparams.n_threads = optimal_threads 
             cparams.n_threads_batch = optimal_threads 
 
-            # 1. 物理总内存：降回 8192。支持约 16 块切块(16 * 512)。
-            # 这时的 KV Cache 占用约为 1.5GB ~ 3GB，处于安卓绝对安全的范围内。
-            cparams.n_ctx = 8192
-            
-            # 2. 逻辑批处理量：保持 8192。告诉引擎我们可能会一次发一堆文本过来。
-            cparams.n_batch = 8192
+            # ---------------------------------------------------------
+            # 🎯 内存与吞吐量核心调优区 (黄金参数)
+            # ---------------------------------------------------------
 
-            # 3. 物理吞吐量 (核心救命参数！)：改回 512。
-            # 这意味着即使你一次发了 5120 个 Token，底层也会自动切成 10 个 512 的小块来算。
-            # 内存峰值瞬间降低 90%！且不影响整体的计算结果和速度。
+            # 1. cparams.n_ctx (总物理上下文 / 总仓库面积)
+            # 【功能】决定了引擎能占用多少 RAM，以及最多能同时记住多少个 Token。
+            # 【优化】设为 8192 约消耗 1.5GB-2.5GB 运存，对于 8GB/12GB 运存的手机是最安全的甜点值。
+            # 如果设得太大（如 65536），极易被安卓低内存杀手（LMK）直接闪退。
+            cparams.n_ctx = 8192
+
+            # 2. cparams.n_batch (逻辑批处理量 / 卸货区大小)
+            # 【功能】告诉底层引擎，上层 Python 一次性最多会扔多少个 Token 过来。
+            # 【作用】必须大于等于你一次传入的总 Token 数。设为 8192，意味着你 UI 上的 Batch Size 
+            # 即使拉到 15 块（15 * 512 = 7680），引擎也愿意接收。
+            cparams.n_batch = 8192
+            
+            # 3. cparams.n_ubatch (物理吞吐量 / 运算切片大小) —— 💥 手机防爆缸救命参数
+            # 【功能】CPU ALU（算术逻辑单元）在一次底层的矩阵乘法（GEMM）中真正吞食的 Token 数量。
+            # 【作用】自动切片！虽然逻辑上你一次扔了 7680 个 Token，但如果 n_ubatch=512，
+            # 引擎会在底层自动将这 7680 个 Token 切成 15 份（每份 512）排队计算。
+            # 这不仅保住了真批处理“只加载一次模型权重”的巨大优势，还把计算瞬时内存峰值压低了 90%！
             cparams.n_ubatch = 512
             
+            # 4. cparams.n_seq_max (最大序列数 / 互不干扰的独立车道)
+            # 【功能】KV Cache 中最多能同时存放多少个“独立的上下文”。
+            # 【作用】你切出来的每一块小说，都是一个独立的序列（需要赋予不同的 seq_id 0, 1, 2...）。
+            # 这个数字必须大于等于你 UI 上允许的极限批处理量（Batch Size）。设为 128 绝对够用。
             cparams.n_seq_max = 128
             
-            # 💥 绝杀 3：开启全局共享内存池！打破静态隔离，谁需要谁用，永不溢出
+            # 5. cparams.kv_unified (全局统一内存池)
+            # 【功能】打破物理隔离！如果不设为 True，n_ctx(8192) 会被 n_seq_max(128) 静态平分，
+            # 导致每个序列只能塞进 64 个 Token（导致大块文本直接报错 Error 1）。
+            # 设为 True 后，变成共享大平层，只要总和不超过 8192，内存随便用。
             cparams.kv_unified = True
+
+            # =========================================================================
 
             # 改用新 API: llama_init_from_model
             self.ctx = self.lib.llama_init_from_model(self.model, cparams)
