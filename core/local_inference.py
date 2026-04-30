@@ -297,11 +297,23 @@ else:
             self.dim = self.lib.llama_n_embd(self.model)
 
         def _load_library(self):
-            # 因为是静态编译的完全体，安卓会自动从自己的沙盒里找到它并一次性加载完毕
+            # 1. 它们没被熔炼，所以我们依次点名，拉入全局内存 (RTLD_GLOBAL)
+            dependencies = [
+                "libggml-base.so",
+                "libggml.so",
+                "libggml-cpu.so"
+            ]
+            for lib_name in dependencies:
+                try:
+                    ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
+                except Exception:
+                    pass
+
+            # 2. 兄弟就位，最后唤醒主脑！
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
-                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
+                raise Exception(f"主引擎彻底加载失败: {e}")
 
             # --- 下面雷打不动的接口绑定保持原样 ---
             lib_llama.llama_backend_init.argtypes = []
