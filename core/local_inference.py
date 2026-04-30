@@ -296,7 +296,6 @@ else:
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
-            cparams.n_threads = 4
             # 💥 加入动态获取核心数的代码（Python 的 multiprocessing 在安卓里同样管用）
             import multiprocessing
             # 你的骁龙是 8 核架构，减去 2 个留给 Android 系统和 UI，剩下的 6 个全给大模型
