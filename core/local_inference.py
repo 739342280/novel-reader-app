@@ -306,7 +306,6 @@ else:
                 elif hasattr(self.lib, 'ggml_backend_load_all'): # 兜底逻辑
                     self.lib.ggml_backend_load_all()
             except Exception as e:
-                global _llama_internal_logs
                 _llama_internal_logs.append(f"唤醒计算后端失败: {e}")
                 
             mparams = self.lib.llama_model_default_params()
