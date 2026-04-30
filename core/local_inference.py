@@ -305,6 +305,7 @@ else:
                 raise Exception(f"无法创建本地模型上下文！底层原因:\n{log_details}")
             
             self.dim = self.lib.llama_n_embd(self.model)
+            self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
             # 1. 仅加载最基础的依赖链，绝对不要手动加载 libggml-cpu.so
@@ -328,11 +329,7 @@ else:
             # --- 下面雷打不动的接口绑定保持原样 ---
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
-            lib_llama.llama_context_default_params.restype = LlamaContextParams
-            lib_llama.llama_load_model_from_file.argtypes = [ctypes.c_char_p, LlamaModelParams]
-            lib_llama.llama_load_model_from_file.restype = ctypes.c_void_p
-            lib_llama.llama_new_context_with_model.argtypes = [ctypes.c_void_p, LlamaContextParams]
-            lib_llama.llama_new_context_with_model.restype = ctypes.c_void_p
+            lib_llama.llama_context_default_params.restype = LlamaContextParams            
             lib_llama.llama_n_embd.argtypes = [ctypes.c_void_p]
             lib_llama.llama_n_embd.restype = ctypes.c_int
             lib_llama.llama_tokenize.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int, ctypes.POINTER(ctypes.c_int32), ctypes.c_int, ctypes.c_bool, ctypes.c_bool]
@@ -348,6 +345,10 @@ else:
             lib_llama.llama_init_from_model.restype = ctypes.c_void_p
             lib_llama.llama_model_load_from_file.argtypes = [ctypes.c_char_p, LlamaModelParams]
             lib_llama.llama_model_load_from_file.restype = ctypes.c_void_p
+            lib_llama.llama_get_memory.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_get_memory.restype = ctypes.c_void_p        
+            lib_llama.llama_memory_seq_rm.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
+            lib_llama.llama_memory_seq_rm.restype = ctypes.c_bool
 
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
@@ -367,6 +368,9 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
+            # 💥 关键：每次计算前清除序列 0 的全部记忆，避免上下文污染
+            self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)  # seq_id=0, p0=0, p1=-1
+
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
             tokens_array = (ctypes.c_int32 * n_max_tokens)()
@@ -400,9 +404,6 @@ else:
             logits_array[n_tokens - 1] = 1 
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
-            # batch.all_pos_0 = 0
-            # batch.all_pos_1 = 0
-            # batch.all_seq_id = 0
 
             self._memory_shield = (pos_array, n_seq_id_array, seq_id_ptrs, inner_seqs, logits_array)
 
@@ -420,6 +421,14 @@ else:
             result = [emb_ptr[i] for i in range(self.dim)]
             self._memory_shield = None
             return result
+        
+        def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+            """批量向量计算，循环调用单次方法（已内置记忆重置）"""
+            embeddings = []
+            for text in texts:
+                emb = self.get_embedding(text)
+                embeddings.append(emb)
+            return embeddings
 
         def __del__(self):
             if hasattr(self, 'ctx') and self.ctx: self.lib.llama_free(self.ctx)
