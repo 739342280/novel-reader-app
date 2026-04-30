@@ -202,7 +202,7 @@ def get_ai_settings_view(app):
 
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change)
     
-    # 💥 新增的 Batch Size 控件
+    # 新增的 Batch Size 控件
     batch_size_val = app.ai_config.get("build_batch_size", 15) # 默认值给 15
     batch_size_text = ft.Text(f"建库批处理量 (Batch Size): {batch_size_val} 块", size=13, color="onSurface")
 
@@ -215,7 +215,39 @@ def get_ai_settings_view(app):
     # min=2, max=100, divisions=49 意味着每档步进为 (100 - 2) / 49 = 2
     batch_size_slider = ft.Slider(min=2, max=100, divisions=49, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
 
-    # 💥 新增：硬件并发通道数 (Parallelism) 控件
+    # 💥新增：物理运算切片 (n_ubatch) 档位滑块
+    ubatch_map = {1: 256, 2: 512, 3: 1024}
+    reverse_ubatch_map = {256: 1, 512: 2, 1024: 3}
+    
+    current_ubatch = app.ai_config.get("n_ubatch", 512)
+    ubatch_slider_val = reverse_ubatch_map.get(current_ubatch, 2) # 默认第 2 档
+    
+    # 直接使用一个普通的 Text 控件，不再使用花哨的 TextSpan
+    ubatch_text = ft.Text("", size=13, color="onSurface")
+
+    def update_ubatch_label(val):
+        real_val = ubatch_map[int(val)]
+        if real_val == 256:
+            mode_name = "（稳定模式）"
+        elif real_val == 512:
+            mode_name = "（均衡模式）"
+        else:
+            mode_name = "（极速模式）"
+            
+        # 💥 取消加粗，取消颜色，取消方括号，增加三个空格的间距
+        ubatch_text.value = f"物理运算切片 (n_ubatch): {real_val}{mode_name}"
+        
+        try: ubatch_text.update()
+        except Exception: pass
+
+    def on_ubatch_change(e):
+        update_ubatch_label(e.control.value)
+
+    # 设置 min=1, max=3, divisions=2，强制滑块只能停在 1, 2, 3 这三个整档位上
+    ubatch_slider = ft.Slider(min=1, max=3, divisions=2, value=ubatch_slider_val, on_change=on_ubatch_change, width=INPUT_WIDTH)
+    update_ubatch_label(ubatch_slider_val) # 初始化文字
+    
+    # 硬件并发通道数 (Parallelism) 控件
     parallel_val = app.ai_config.get("n_parallel", 8) # 默认甜点并发给 8
     parallel_text = ft.Text(f"硬件并发通道数 (Parallelism): {parallel_val}", size=13, color="onSurface")
 
@@ -603,6 +635,15 @@ def get_ai_settings_view(app):
                         size=11, color="grey", text_align=ft.TextAlign.CENTER
                     ),
 
+                    # 💥 插入物理切片滑块
+                    ft.Divider(height=5, thickness=0.5, color="transparent"),
+                    ubatch_text,
+                    ubatch_slider,
+                    ft.Text(
+                        "💡 物理运算切片：决定底层硬件单次矩阵运算的真实吞吐量。数值越大算力利用率越高，但会引发激增的瞬时内存（运存/显存）消耗。\n若建库时遭遇应用直接闪退（手机端）或显存溢出报错（电脑端），请务必调低此档位！",  
+                        size=11, color="grey", text_align=ft.TextAlign.CENTER
+                    ),
+
                     ft.Divider(height=10, thickness=0.5),
                     top_k_text,
                     top_k_slider,
@@ -638,6 +679,8 @@ def get_ai_settings_view(app):
         app.ai_config["build_batch_size"] = int(batch_size_slider.value)
         # 💥 保存并发数
         app.ai_config["n_parallel"] = int(parallel_slider.value)
+        # 💥 新增保存 n_ubatch：将滑块的 1,2,3 档翻译回真实数值
+        app.ai_config["n_ubatch"] = ubatch_map[int(ubatch_slider.value)]
 
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")

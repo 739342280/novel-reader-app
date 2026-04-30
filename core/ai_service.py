@@ -120,17 +120,27 @@ class AIService:
             try:
                 from .local_inference import LocalEmbeddingEngine
                 
-                # 💥 核心修改：读取并发数，并进行“热重载”判断
-                n_parallel = config.get("n_parallel", 8)
-                if cls._local_engine is not None and getattr(cls._local_engine, 'n_parallel', 8) != n_parallel:
-                    cls._local_engine = None # 参数改变，强制销毁旧引擎
+                # 💥 获取 UI 配置：顺手把默认值改成 1，并获取刚存好的 n_ubatch
+                n_parallel = config.get("n_parallel", 1)
+                n_ubatch = config.get("n_ubatch", 512)
+
+                # 💥 热重载检测：只要并发数或性能模式(切片数)发生改变，就销毁旧引擎
+                if cls._local_engine is not None:
+                    old_parallel = getattr(cls._local_engine, 'n_parallel', 1)
+                    old_ubatch = getattr(cls._local_engine, 'n_ubatch', 512)
+                    if old_parallel != n_parallel or old_ubatch != n_ubatch:
+                        cls._local_engine = None # 参数改变，强制销毁旧引擎
 
                 if cls._local_engine is None:
-                    cls._local_engine = LocalEmbeddingEngine(model_path, n_parallel=n_parallel)
+                    # 💥 关键点：把 n_ubatch 传递给底层的 __init__
+                    cls._local_engine = LocalEmbeddingEngine(
+                        model_path, 
+                        n_parallel=n_parallel, 
+                        n_ubatch=n_ubatch
+                    )
                     
                 return cls._local_engine.get_embedding(text)
             except Exception as e:
-                # 失败即阻断，不再向后尝试云端
                 raise Exception(f"【本地推理崩溃】无法计算向量: {str(e)}")
             
         import requests
@@ -239,13 +249,24 @@ class AIService:
             try:
                 from .local_inference import LocalEmbeddingEngine
                 
-                # 💥 同步修改批量接口的逻辑
-                n_parallel = config.get("n_parallel", 8)
-                if cls._local_engine is not None and getattr(cls._local_engine, 'n_parallel', 8) != n_parallel:
-                    cls._local_engine = None
+                # 💥 获取参数
+                n_parallel = config.get("n_parallel", 1)
+                n_ubatch = config.get("n_ubatch", 512)
+
+                # 💥 热重载检测
+                if cls._local_engine is not None:
+                    old_parallel = getattr(cls._local_engine, 'n_parallel', 1)
+                    old_ubatch = getattr(cls._local_engine, 'n_ubatch', 512)
+                    if old_parallel != n_parallel or old_ubatch != n_ubatch:
+                        cls._local_engine = None
 
                 if cls._local_engine is None:
-                    cls._local_engine = LocalEmbeddingEngine(model_path, n_parallel=n_parallel)
+                    # 💥 关键点：把 n_ubatch 传递给底层的 __init__
+                    cls._local_engine = LocalEmbeddingEngine(
+                        model_path, 
+                        n_parallel=n_parallel, 
+                        n_ubatch=n_ubatch
+                    )
                     
                 return cls._local_engine.get_embeddings(texts)
             except Exception as e:

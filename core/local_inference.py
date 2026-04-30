@@ -49,9 +49,10 @@ if sys.platform == "win32":
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
         # 💥 接收 n_parallel 参数
-        def __init__(self, model_path: str, n_parallel: int = 8):
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
             self.model_path = model_path
             self.n_parallel = n_parallel
+            self.n_ubatch = n_ubatch  # 💥 存为实例变量
             self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
@@ -331,7 +332,7 @@ else:
             # 【作用】自动切片！虽然逻辑上你一次扔了 7680 个 Token，但如果 n_ubatch=512，
             # 引擎会在底层自动将这 7680 个 Token 切成 15 份（每份 512）排队计算。
             # 这不仅保住了真批处理“只加载一次模型权重”的巨大优势，还把计算瞬时内存峰值压低了 90%！
-            cparams.n_ubatch = 512
+            cparams.n_ubatch = self.n_ubatch
             
             # 4. cparams.n_seq_max (最大序列数 / 互不干扰的独立车道)
             # 【功能】KV Cache 中最多能同时存放多少个“独立的上下文”。
