@@ -392,12 +392,14 @@ def get_ai_chat_view(app):
 
                 chapter_text = app.engine.get_chapter_text(target_idx)[:8000]
                 
-                base_prompt = app.ai_config.get("prompt", "你是一个小说阅读助手，请根据已有信息回答用户的问题。")
-                system_content = f"{get_sys_prompt()}\n{rag_context}\n\n当前阅读章节文本：\n{chapter_text}"
+                # 💥 架构优化：将之前的总结降级为参考资料，打破模型的“身份幻觉”
+                prev_summary = saved_data.get(state["mode"], "")
+                summary_context = f"\n\n【参考资料 C：初步分析】\n{prev_summary}\n(注：以上是你之前生成的初步总结，仅供参考，若与原文冲突，请坚决以原文为准。)" if prev_summary else ""
+
+                system_content = f"{get_sys_prompt()}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
                 messages = [{"role": "system", "content": system_content}]
                 
-                if saved_data.get(state["mode"]):
-                    messages.append({"role": "assistant", "content": saved_data[state["mode"]]})
+                # 💥 彻底删除了原有的 if saved_data... append("assistant"...) 的逻辑
                 
                 for msg in state["chats"][state["mode"]][:-1]: 
                     messages.append(msg)

@@ -299,21 +299,44 @@ jobs:
         if [ -d "fonts" ]; then cp -R fonts dist/小说智读/; fi
         if [ -d "images" ]; then cp -R images dist/小说智读/; fi
         
-    - name: Build Installer Setup
+    # 💥 新增步骤：先打包包含所有 CUDA DLL 的【完整安装版】
+    - name: Build Full Installer Setup
       shell: pwsh
       run: |
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
-        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Installer"
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Full_Installer"
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
+    # 💥 核心战术：过河拆桥！删掉庞大的 CUDA 依赖，进行环境瘦身
+    - name: Strip CUDA Dependencies for Lite & Portable
+      shell: bash
+      run: |
+        echo "🗑️ 正在删除庞大的 CUDA DLL 文件..."
+        # 1. 掏空 dist 目录里的 dll（为了接下来打包轻量版安装包）
+        rm -f dist/小说智读/assets/*.dll
+        # 2. 掏空根目录 assets 里的 dll（为了接下来打包便携版单文件）
+        rm -f assets/*.dll
+        echo "✅ 环境瘦身彻底完成！"
+
+    # 💥 新增步骤：拿着已经被掏空的 dist 目录，再调用一次 Inno Setup 打包【轻量安装版】
+    - name: Build Lite Installer Setup
+      shell: pwsh
+      run: |
+        $iss = Get-Content installer_script.iss
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Lite_Installer"
+        $iss | Set-Content installer_script.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
+
+    # 💥 终极步骤：拿着已经被掏空的 assets 目录，打包【便携单文件版】
     - name: Build Portable EXE
       shell: bash
       env:
         PYTHONUTF8: "1"
       run: |
-        mv dist dist_folder_backup
+        # 将刚才的 onedir 完整目录移走备份，腾出 dist 文件夹给 flet pack 使用
+        mv dist dist_onedir_backup
         mkdir dist
         rm -rf build
         
@@ -325,6 +348,9 @@ jobs:
         
         eval $PACK_CMD
 
+    # ==========================================
+    # 统一上传 Artifacts (三大护法)
+    # ==========================================
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
@@ -333,32 +359,33 @@ jobs:
         if-no-files-found: warn
         archive: false
 
-    - name: Upload Installer EXE
+    - name: Upload Full Installer EXE
       uses: actions/upload-artifact@v7
       with:
-        name: NovelReader_v${{ env.APP_VERSION }}_Installer.exe
-        path: dist_installer/NovelReader_v*_Installer.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Full_Installer.exe
+        path: dist_installer/NovelReader_v*_Full_Installer.exe
         if-no-files-found: warn
         archive: false
 
-    - name: Publish Portable EXE to Release
-      if: startsWith(github.ref, 'refs/tags/v')
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: pwsh
-      run: |
-        $portable = Get-ChildItem -Path dist -Filter "NovelReader_v*_Portable.exe" | Select-Object -First 1
-        if ($portable) {
-            gh release upload "${env:GITHUB_REF_NAME}" $portable.FullName --clobber
-        }
+    - name: Upload Lite Installer EXE
+      uses: actions/upload-artifact@v7
+      with:
+        name: NovelReader_v${{ env.APP_VERSION }}_Lite_Installer.exe
+        path: dist_installer/NovelReader_v*_Lite_Installer.exe
+        if-no-files-found: warn
+        archive: false
 
-    - name: Publish Installer EXE to Release
+    # ==========================================
+    # 统一发布到 Release (代码极度精简版)
+    # ==========================================
+    - name: Publish All EXEs to Release
       if: startsWith(github.ref, 'refs/tags/v')
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      shell: pwsh
+      shell: bash
       run: |
-        $installer = Get-ChildItem -Path dist_installer -Filter "NovelReader_v*_Installer.exe" | Select-Object -First 1
-        if ($installer) {
-            gh release upload "${env:GITHUB_REF_NAME}" $installer.FullName --clobber
-        }
+        echo "🚀 正在将三个版本的 Windows 核心推送到 Release 页面..."
+        shopt -s nullglob
+        for file in dist/NovelReader_v*_Portable.exe dist_installer/NovelReader_v*.exe; do
+          gh release upload "${{ github.ref_name }}" "$file" --clobber
+        done

@@ -55,7 +55,7 @@ if sys.platform == "win32":
             self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
-            self.dim = 1024 
+            # self.dim = 1024 
             self._start_local_server()
 
         def _start_local_server(self):
