@@ -1372,12 +1372,18 @@ class NovelReaderApp:
         )
         
         new_snack = ft.SnackBar(
-            content=ft.Row([toast_ui], alignment=ft.MainAxisAlignment.START), 
+            # ✅ 最终完美方案：使用 tight=True 的 Column 包裹
+            # tight=True 保证垂直方向不占据多余空间
+            # horizontal_alignment 保证水平方向气泡收缩包裹文本
+            content=ft.Column(
+                controls=[toast_ui], 
+                tight=True, 
+                horizontal_alignment=ft.CrossAxisAlignment.START # 如果你希望气泡居中，可以改为 CENTER
+            ), 
             behavior=ft.SnackBarBehavior.FLOATING,
             bgcolor=ft.Colors.TRANSPARENT,  
             elevation=0,                    
             padding=0,                      
-            # 💥 修改：动态获取时长，如果没有设置过，默认给 3000 毫秒
             duration=self.ai_config.get("snack_duration", 3000), 
             key=f"snack_{self.snack_counter}"
         )
