@@ -295,13 +295,22 @@ else:
             self.vocab = self.lib.llama_model_get_vocab(self.model)
                 
             cparams = self.lib.llama_context_default_params()
-            cparams.embeddings = True
-            # 💥 加入动态获取核心数的代码（Python 的 multiprocessing 在安卓里同样管用）
-            import multiprocessing
-            # 你的骁龙是 8 核架构，减去 2 个留给 Android 系统和 UI，剩下的 6 个全给大模型
+            cparams.embeddings = True            
+
+            import multiprocessing            
             optimal_threads = max(1, multiprocessing.cpu_count() - 2)
             cparams.n_threads = optimal_threads 
             
+            # 💥 新增：放大批处理容量！
+            # 假设你的 UI 最大 Batch Size 是 16，每段文本切块约 512 token
+            # 16 * 512 = 8192。必须让 C++ 提前申请足够大的物理内存。
+            cparams.n_batch = 8192 
+            cparams.n_ctx = 8192
+
+            # 💥 真正让 UI 的并发通道数生效的地方在这里！
+            # 将 Python 接收到的 n_parallel 赋给底层的最大序列数
+            cparams.n_seq_max = 128
+
             # 改用新 API: llama_init_from_model
             self.ctx = self.lib.llama_init_from_model(self.model, cparams)
             if not self.ctx:
@@ -427,11 +436,81 @@ else:
             return result
         
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
-            """批量向量计算，循环调用单次方法（已内置记忆重置）"""
-            embeddings = []
+            if not self.ctx: return []
+
+            # 1. 批量分词 (Tokenization)
+            tokenized_texts = []
+            total_tokens = 0
+            n_max_tokens = 512
+            
             for text in texts:
-                emb = self.get_embedding(text)
-                embeddings.append(emb)
+                text_bytes = text.encode('utf-8')
+                tokens_array = (ctypes.c_int32 * n_max_tokens)()
+                n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
+                
+                if n_tokens > 0:
+                    tokenized_texts.append((n_tokens, tokens_array))
+                    total_tokens += n_tokens
+
+            if total_tokens == 0: return []
+
+            # 2. 核心：清空即将使用的多个序列的记忆，避免上下文污染
+            for seq_id in range(len(tokenized_texts)):
+                self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
+
+            # 3. 构造超级 Batch
+            batch = LlamaBatch()
+            batch.n_tokens = total_tokens
+            batch.token = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
+            batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
+            batch.pos = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
+            batch.n_seq_id = ctypes.cast((ctypes.c_int32 * total_tokens)(), ctypes.POINTER(ctypes.c_int32))
+            
+            # 处理二维指针陷阱
+            seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
+            inner_seqs = []
+            for i in range(total_tokens):
+                inner = (ctypes.c_int32 * 1)(0)
+                inner_seqs.append(inner)
+                seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
+            batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
+            
+            batch.logits = ctypes.cast((ctypes.c_int8 * total_tokens)(), ctypes.POINTER(ctypes.c_int8))
+
+            # 4. 填充超级 Batch 的数据
+            idx = 0
+            for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
+                for i in range(n_tokens):
+                    batch.token[idx] = tokens_array[i]
+                    batch.pos[idx] = i          # 每个文本的相对位置都从 0 开始
+                    batch.n_seq_id[idx] = 1
+                    inner_seqs[idx][0] = seq_id # 💥 赋予它独立的序列 ID (0, 1, 2...)
+                    # 💥 只有每段文本的最后一个 Token，才需要计算并输出 logit (向量)
+                    batch.logits[idx] = 1 if i == n_tokens - 1 else 0 
+                    idx += 1
+
+            # 内存护盾，防止 Python 垃圾回收吃掉 ctypes 数组
+            self._memory_shield = (batch.token, batch.pos, batch.n_seq_id, seq_id_ptrs, inner_seqs, batch.logits)
+
+            # 5. 一次性核爆解码！(真正的 GEMM 矩阵计算在这里发生)
+            res = self.lib.llama_decode(self.ctx, batch)
+            if res != 0: 
+                raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。请检查 UI 的 Batch Size 是否过大导致超出了 n_batch 容量。")
+
+            # 6. 分离并提取每个序列的最终向量
+            embeddings = []
+            for seq_id in range(len(tokenized_texts)):
+                emb_ptr = None
+                if hasattr(self.lib, 'llama_get_embeddings_seq'):
+                    # 精准提取对应序列 ID 的特征向量
+                    emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
+                
+                if not emb_ptr:
+                    raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
+                
+                embeddings.append([emb_ptr[i] for i in range(self.dim)])
+
+            self._memory_shield = None
             return embeddings
 
         def __del__(self):

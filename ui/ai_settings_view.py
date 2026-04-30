@@ -212,8 +212,8 @@ def get_ai_settings_view(app):
         try: batch_size_text.update()
         except Exception: pass
 
-    # min=5, max=100, divisions=19 意味着每档步进为 5
-    batch_size_slider = ft.Slider(min=5, max=100, divisions=19, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
+    # min=2, max=100, divisions=49 意味着每档步进为 (100 - 2) / 49 = 2
+    batch_size_slider = ft.Slider(min=2, max=100, divisions=49, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
 
     # 💥 新增：硬件并发通道数 (Parallelism) 控件
     parallel_val = app.ai_config.get("n_parallel", 8) # 默认甜点并发给 8
