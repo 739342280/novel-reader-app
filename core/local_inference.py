@@ -196,7 +196,7 @@ else:
             ("use_mmap", ctypes.c_bool),
             ("use_mlock", ctypes.c_bool),
             ("check_tensors", ctypes.c_bool),
-            ("_padding", ctypes.c_uint8 * 512), 
+            # 💥 彻底删除 _padding，严格遵守 ARM64 C++ 内存对齐协议
         ]
 
     class LlamaContextParams(ctypes.Structure):
@@ -229,7 +229,7 @@ else:
             ("no_perf", ctypes.c_bool),         
             ("abort_callback", ctypes.c_void_p),
             ("abort_callback_data", ctypes.c_void_p),
-            ("_padding", ctypes.c_uint8 * 512), 
+            # 💥 彻底删除 _padding
         ]
 
     class LlamaBatch(ctypes.Structure):
@@ -307,16 +307,16 @@ else:
             self.dim = self.lib.llama_n_embd(self.model)
 
         def _load_library(self):
-            # 安卓环境必须直接 load ".so"，绝对不能带路径 (安全策略限制)
-            lib_path = "libllama.so"
-            ggml_path = "libggml.so"
+            # 💥 战术抢救：按依赖顺序，强行加载所有被官方拆分出去的 CPU 计算后端
+            # 只要把它们加载进 RTLD_GLOBAL 全局空间，libllama.so 就能认出它们！
+            for lib_name in ["libggml-base.so", "libggml-cpu.so", "libggml.so"]:
+                try:
+                    ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
+                except Exception as e:
+                    print(f"Warning: Failed to load {lib_name}: {e}")
             
-            try:
-                ctypes.CDLL(ggml_path, mode=ctypes.RTLD_GLOBAL)
-            except Exception:
-                pass
-            
-            lib = ctypes.CDLL(lib_path, mode=ctypes.RTLD_GLOBAL)
+            # 最后加载主引擎
+            lib = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             
             lib.llama_backend_init.argtypes = []
             lib.llama_model_default_params.restype = LlamaModelParams
