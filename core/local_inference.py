@@ -270,7 +270,7 @@ else:
             if not os.path.exists(self.model_path):
                 raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
             
-            # 💥 1. 终极文件健康检查：读取文件的“基因序列”
+            # 1. 终极文件健康检查
             try:
                 with open(self.model_path, 'rb') as f:
                     magic = f.read(4)
@@ -280,36 +280,53 @@ else:
                 if "模型损坏" in str(e): raise e
                 raise Exception(f"【权限锁死】Python 无法读取该文件内容: {e}")
 
-            # 先加载所有动态库进内存，并绑定 C++ 函数接口
+            # 2. 加载动态库与接口
             self.lib = self._load_library()
             
-            # 💥 2. 挂载日志拦截器
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
             except Exception:
                 pass
 
-            # 💥 3. 严格遵循 C++ 生命周期：先初始化 backend
+            # 3. 严格遵守 C++ 生命周期：初始化 backend
             self.lib.llama_backend_init()
             
-            # 💥 4. 终极点火指令：跨库唤醒所有 CPU 肌肉后端！
+            # 💥 4. 终极点火指令：强行塞入绝对路径，治好 C++ 的瞎眼症！
             original_cwd = os.getcwd()
             try:
                 native_lib_dir = os.environ.get("GGML_BACKEND_PATH", "")
                 if native_lib_dir:
-                    os.chdir(native_lib_dir) # 强行切入掩体，保证能找到兄弟模块
+                    os.chdir(native_lib_dir) 
                 
                 ggml_path = os.path.join(native_lib_dir, "libggml.so") if native_lib_dir else "libggml.so"
                 ggml_lib = ctypes.CDLL(ggml_path, mode=ctypes.RTLD_GLOBAL)
                 
-                if hasattr(ggml_lib, 'ggml_backend_load_all'):
+                loaded_backend = False
+                
+                # 🚀 核心大招：强行指定坐标进行唤醒
+                if native_lib_dir and hasattr(ggml_lib, 'ggml_backend_load_all_from_path'):
+                    # 必须声明参数类型为 C 的 char 指针
+                    ggml_lib.ggml_backend_load_all_from_path.argtypes = [ctypes.c_char_p]
+                    # 强行塞入绝对路径！
+                    ggml_lib.ggml_backend_load_all_from_path(native_lib_dir.encode('utf-8'))
+                    loaded_backend = True
+                    _llama_internal_logs.append(f"成功使用绝对路径唤醒后端: {native_lib_dir}")
+                
+                # 兜底：如果官方版本过老没有高级 API，则使用旧版盲扫
+                elif hasattr(ggml_lib, 'ggml_backend_load_all'):
                     ggml_lib.ggml_backend_load_all()
+                    loaded_backend = True
                 elif hasattr(self.lib, 'ggml_backend_load_all'): 
                     self.lib.ggml_backend_load_all()
+                    loaded_backend = True
+                
+                if not loaded_backend:
+                    _llama_internal_logs.append("警告：找不到任何 backend_load 函数，C++ 引擎可能未激活。")
+                    
             except Exception as e:
-                _llama_internal_logs.append(f"唤醒计算后端失败: {e}")
+                _llama_internal_logs.append(f"唤醒计算后端发生异常: {e}")
             finally:
-                os.chdir(original_cwd) # 务必撤出，恢复原样
+                os.chdir(original_cwd)
                 
             mparams = self.lib.llama_model_default_params()
             
