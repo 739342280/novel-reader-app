@@ -371,29 +371,37 @@ else:
 
         def _load_library(self):
             global _llama_internal_logs
-            
+
+            # 第一步：仅靠系统 LD_LIBRARY_PATH 加载主引擎
+            try:
+                lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
+                _llama_internal_logs.append("[Python] libllama.so 通过系统路径加载成功")
+            except Exception as e:
+                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
+
+            # 第二步：通过 /proc/self/maps 反查 libllama.so 的真实目录
             native_lib_dir = ""
             try:
-                import glob
-                paths = glob.glob("/data/app/*/com.shoubeier*/lib/arm64*")
-                if paths:
-                    native_lib_dir = paths[0]
+                with open("/proc/self/maps", "r") as f:
+                    maps = f.read()
+                import re
+                match = re.search(r'(/\S+)/libllama\.so', maps)
+                if match:
+                    native_lib_dir = match.group(1)
                     os.environ["GGML_BACKEND_PATH"] = native_lib_dir
+                    _llama_internal_logs.append(f"[Python] 通过 maps 锁定原生库目录: {native_lib_dir}")
             except Exception as e:
-                _llama_internal_logs.append(f"[Python] 寻找原生库路径失败: {e}")
+                _llama_internal_logs.append(f"[Python] 反查路径失败: {e}")
 
+            # 第三步：预热基础库（可选）
             if native_lib_dir:
                 for base_lib in ["libggml-base.so", "libggml.so"]:
                     try:
                         ctypes.CDLL(os.path.join(native_lib_dir, base_lib), mode=ctypes.RTLD_GLOBAL)
-                    except Exception: pass
+                    except Exception:
+                        pass
 
-            main_path = os.path.join(native_lib_dir, "libllama.so") if native_lib_dir else "libllama.so"
-            try:
-                lib_llama = ctypes.CDLL(main_path, mode=ctypes.RTLD_GLOBAL)
-            except Exception as e:
-                raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
-
+            # 接口绑定（与之前完全一致）
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
             lib_llama.llama_context_default_params.restype = LlamaContextParams
