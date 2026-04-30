@@ -295,17 +295,19 @@ else:
             self.vocab = self.lib.llama_model_get_vocab(self.model)
                 
             cparams = self.lib.llama_context_default_params()
-            cparams.embeddings = True            
+            cparams.embeddings = True
+            cparams.pooling_type = 1  # 💥 修复 1：强制开启 MEAN 池化，防止底层找不到序列向量            
 
             import multiprocessing            
             optimal_threads = max(1, multiprocessing.cpu_count() - 2)
             cparams.n_threads = optimal_threads 
-            
+            cparams.n_threads_batch = optimal_threads # 💥 修复 2：让批处理也火力全开用上多核！
+
             # 💥 新增：放大批处理容量！
             # 假设你的 UI 最大 Batch Size 是 16，每段文本切块约 512 token
             # 16 * 512 = 8192。必须让 C++ 提前申请足够大的物理内存。
             cparams.n_batch = 8192
-            cparams.n_ubatch = 8192  # 💥 新增这一行：强制对齐物理吞吐量 
+            cparams.n_ubatch = 512  # 💥 新增这一行：强制对齐物理吞吐量 
             cparams.n_ctx = 8192
 
             # 💥 真正让 UI 的并发通道数生效的地方在这里！
@@ -455,11 +457,10 @@ else:
 
             if total_tokens == 0: return []
 
-            # 2. 核心：清空即将使用的多个序列的记忆，避免上下文污染
-            for seq_id in range(len(tokenized_texts)):
-                self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
+            # 💥 修复 4：无差别屠杀！传入三个 -1，彻底清空整个 KV 缓存中的所有钉子户，永不溢出！
+            self.lib.llama_memory_seq_rm(self.memory, -1, -1, -1)
 
-            # 3. 构造超级 Batch (💥 修复：先用具名变量接住真实内存，防止瞬间被 GC 回收！)
+            # 3. 构造超级 Batch
             token_arr = (ctypes.c_int32 * total_tokens)()
             pos_arr = (ctypes.c_int32 * total_tokens)()
             n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
@@ -482,24 +483,23 @@ else:
                 seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
 
-            # 4. 填充超级 Batch 的数据
+            # 💥 修复 5：直接对内存数组本身(xxx_arr)赋值，避开 ctypes 指针的间接写入漏洞
             idx = 0
             for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
                 for i in range(n_tokens):
-                    batch.token[idx] = tokens_array[i]
-                    batch.pos[idx] = i          # 每个文本的相对位置都从 0 开始
-                    batch.n_seq_id[idx] = 1
-                    inner_seqs[idx][0] = seq_id # 赋予它独立的序列 ID (0, 1, 2...)
-                    batch.logits[idx] = 1 if i == n_tokens - 1 else 0 
+                    token_arr[idx] = tokens_array[i]
+                    pos_arr[idx] = i          
+                    n_seq_id_arr[idx] = 1
+                    inner_seqs[idx][0] = seq_id 
+                    logits_arr[idx] = 1 if i == n_tokens - 1 else 0 
                     idx += 1
 
-            # 💥 终极内存护盾：将真实数组对象存入生命周期，死死锁住物理内存！
             self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
 
             # 5. 一次性核爆解码！
             res = self.lib.llama_decode(self.ctx, batch)
             if res != 0: 
-                raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。请检查 UI 的 Batch Size 是否过大导致超出了 n_batch 容量。")
+                raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
 
             # 6. 分离并提取每个序列的最终向量
             embeddings = []
