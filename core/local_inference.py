@@ -296,23 +296,25 @@ else:
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
-            cparams.pooling_type = 1  # 💥 修复 1：强制开启 MEAN 池化，防止底层找不到序列向量            
+            cparams.pooling_type = 1  # 强制开启 MEAN 池化，防止底层找不到序列向量            
 
             import multiprocessing            
             optimal_threads = max(1, multiprocessing.cpu_count() - 2)
             cparams.n_threads = optimal_threads 
-            cparams.n_threads_batch = optimal_threads # 💥 修复 2：让批处理也火力全开用上多核！
+            cparams.n_threads_batch = optimal_threads 
 
-            # 💥 新增：放大批处理容量！
-            # 假设你的 UI 最大 Batch Size 是 16，每段文本切块约 512 token
-            # 16 * 512 = 8192。必须让 C++ 提前申请足够大的物理内存。
-            cparams.n_batch = 8192
-            cparams.n_ubatch = 512  # 💥 新增这一行：强制对齐物理吞吐量 
-            cparams.n_ctx = 8192
-
-            # 💥 真正让 UI 的并发通道数生效的地方在这里！
-            # 将 Python 接收到的 n_parallel 赋给底层的最大序列数
+            # 💥 绝杀 1：总容量拉升。支持 128 块 × 512 词 = 65536。
+            # 现代手机的运存跑这个级别的 Embedding 游刃有余
+            cparams.n_ctx = 65536
+            
+            # 💥 绝杀 2：将吞吐量放大，彻底避免 ubatch 切片导致的内存碎片化
+            cparams.n_batch = 16384
+            cparams.n_ubatch = 16384  
+            
             cparams.n_seq_max = 128
+            
+            # 💥 绝杀 3：开启全局共享内存池！打破静态隔离，谁需要谁用，永不溢出
+            cparams.kv_unified = True
 
             # 改用新 API: llama_init_from_model
             self.ctx = self.lib.llama_init_from_model(self.model, cparams)
@@ -457,8 +459,9 @@ else:
 
             if total_tokens == 0: return []
 
-            # 💥 修复 4：无差别屠杀！传入三个 -1，彻底清空整个 KV 缓存中的所有钉子户，永不溢出！
-            self.lib.llama_memory_seq_rm(self.memory, -1, -1, -1)
+            # 💥 绝杀 4：地毯式轰炸清理！不管之前跑了多少块，128 个序列槽位全部格式化，永绝后患
+            for seq_id in range(128):
+                self.lib.llama_memory_seq_rm(self.memory, seq_id, -1, -1)
 
             # 3. 构造超级 Batch
             token_arr = (ctypes.c_int32 * total_tokens)()
