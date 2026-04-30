@@ -266,37 +266,24 @@ else:
             if not os.path.exists(self.model_path):
                 raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
             
-            try:
-                with open(self.model_path, 'rb') as f:
-                    magic = f.read(4)
-                    if magic != b'GGUF':
-                        raise Exception(f"【模型损坏】该文件根本不是 GGUF 格式！开头字节: {magic}")
-            except Exception as e:
-                if "模型损坏" in str(e): raise e
-                raise Exception(f"【权限锁死】Python 无法读取该文件: {e}")
-
-            # 💥 第一步：神级操作！提前把主脑、基础库、和所有 CPU 肌肉模块全部加载进内存！
-            # 这一步极其关键，肌肉模块一进内存，它们的 C++ constructor 就会立刻待命，准备自动注册。
+            # 1. 极其清爽的加载 (无需任何多态反射或路径雷达)
             self.lib = self._load_library()
             
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
             except Exception: pass
 
-            # 💥 第二步：初始化引擎大脑！
-            # 此时大脑一启动，就会自动把刚才待命的肌肉模块全部收入麾下，根本不再需要手动寻找注入接口！
             self.lib.llama_backend_init()
-            _llama_internal_logs.append("[Python] llama_backend_init 完成，CPU 后端理论上已被自动收集")
 
-            # ──────── 后续直接加载模型 (完全抛弃手动反射注入) ────────
+            # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
             b_path = self.model_path.encode('utf-8')
             
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                log_details = "\n".join(_llama_internal_logs[-25:])
-                raise Exception(f"【引擎内部报错】加载失败！全链路探测报告如下:\n{log_details}")
+                log_details = "\n".join(_llama_internal_logs[-15:])
+                raise Exception(f"【引擎内部报错】加载失败！底层真实原因:\n{log_details}")
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
@@ -310,54 +297,13 @@ else:
             self.dim = self.lib.llama_n_embd(self.model)
 
         def _load_library(self):
-            global _llama_internal_logs
-
-            # 1. 神级雷达：通过 maps 反查原生库真实物理目录
-            native_lib_dir = ""
-            try:
-                with open("/proc/self/maps", "r") as f:
-                    maps = f.read()
-                import re
-                match = re.search(r'(/[^\s]+/libllama\.so)', maps)
-                if match:
-                    full_path = match.group(1)
-                    native_lib_dir = os.path.dirname(full_path)
-            except Exception as e:
-                _llama_internal_logs.append(f"[Python] 反查路径失败: {e}")
-
-            _llama_internal_logs.append(f"[Python] 原生库目录: {native_lib_dir if native_lib_dir else '未找到'}")
-
-            # 2. 预热基础库
-            for base_lib in ["libggml-base.so", "libggml.so"]:
-                try:
-                    ctypes.CDLL(base_lib, mode=ctypes.RTLD_GLOBAL)
-                except Exception:
-                    pass
-
-            # 💥 3. 核心修复点：在这里（初始化引擎之前）就把所有的 CPU 肌肉全塞进内存！
-            if native_lib_dir and os.path.exists(native_lib_dir):
-                cpu_files = [f for f in os.listdir(native_lib_dir) if f.startswith("libggml-cpu") and f.endswith(".so")]
-                _llama_internal_logs.append(f"[Python] 发现 CPU 后端: {cpu_files}")
-                for file_name in cpu_files:
-                    try:
-                        # 优先短文件名，确保处于同一个内存宇宙
-                        ctypes.CDLL(file_name, mode=ctypes.RTLD_GLOBAL)
-                        _llama_internal_logs.append(f"[Python] 成功预装载肌肉: {file_name}")
-                    except Exception as e1:
-                        try:
-                            # 绝对路径兜底
-                            ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
-                            _llama_internal_logs.append(f"[Python] 成功预装载肌肉(绝对路径): {file_name}")
-                        except Exception as e2:
-                            _llama_internal_logs.append(f"[Python] 肌肉 {file_name} 加载失败")
-
-            # 4. 最后加载主引擎控制句柄
+            # 因为是静态编译的完全体，安卓会自动从自己的沙盒里找到它并一次性加载完毕
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
                 raise Exception(f"主引擎 libllama.so 彻底加载失败: {e}")
 
-            # --- 接口绑定保持雷打不动 ---
+            # --- 下面雷打不动的接口绑定保持原样 ---
             lib_llama.llama_backend_init.argtypes = []
             lib_llama.llama_model_default_params.restype = LlamaModelParams
             lib_llama.llama_context_default_params.restype = LlamaContextParams
