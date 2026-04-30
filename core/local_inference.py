@@ -301,7 +301,9 @@ else:
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                "libggml-cpu.so"
+                "libggml-cpu.so",
+                "libmtmd.so",          # <--- 新增：多模态支持库
+                "libllama-common.so"   # <--- 新增：通用工具库
             ]
             for lib_name in dependencies:
                 try:
