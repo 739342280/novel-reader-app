@@ -195,18 +195,23 @@ else:
 
     class LlamaModelParams(ctypes.Structure):
         _fields_ = [
+            ("devices", ctypes.c_void_p),
+            ("tensor_buft_overrides", ctypes.c_void_p),
             ("n_gpu_layers", ctypes.c_int32),
             ("split_mode", ctypes.c_int32),
             ("main_gpu", ctypes.c_int32),
             ("tensor_split", ctypes.POINTER(ctypes.c_float)),
-            ("rpc_servers", ctypes.c_char_p),
             ("progress_callback", ctypes.c_void_p),
             ("progress_callback_user_data", ctypes.c_void_p),
             ("kv_overrides", ctypes.c_void_p),
             ("vocab_only", ctypes.c_bool),
             ("use_mmap", ctypes.c_bool),
+            ("use_direct_io", ctypes.c_bool),
             ("use_mlock", ctypes.c_bool),
             ("check_tensors", ctypes.c_bool),
+            ("use_extra_bufts", ctypes.c_bool),
+            ("no_host", ctypes.c_bool),
+            ("no_alloc", ctypes.c_bool),
         ]
 
     class LlamaContextParams(ctypes.Structure):
@@ -219,7 +224,8 @@ else:
             ("n_threads_batch", ctypes.c_int32),
             ("rope_scaling_type", ctypes.c_int32),
             ("pooling_type", ctypes.c_int32),
-            ("attention_type", ctypes.c_int32), 
+            ("attention_type", ctypes.c_int32),
+            ("flash_attn_type", ctypes.c_int32),
             ("rope_freq_base", ctypes.c_float),
             ("rope_freq_scale", ctypes.c_float),
             ("yarn_ext_factor", ctypes.c_float),
@@ -232,13 +238,16 @@ else:
             ("cb_eval_user_data", ctypes.c_void_p),
             ("type_k", ctypes.c_int32),
             ("type_v", ctypes.c_int32),
-            ("logits_all", ctypes.c_bool),
-            ("embeddings", ctypes.c_bool),
-            ("offload_kqv", ctypes.c_bool),
-            ("flash_attn", ctypes.c_bool),
-            ("no_perf", ctypes.c_bool),         
             ("abort_callback", ctypes.c_void_p),
             ("abort_callback_data", ctypes.c_void_p),
+            ("embeddings", ctypes.c_bool),
+            ("offload_kqv", ctypes.c_bool),
+            ("no_perf", ctypes.c_bool),
+            ("op_offload", ctypes.c_bool),
+            ("swa_full", ctypes.c_bool),
+            ("kv_unified", ctypes.c_bool),
+            ("samplers", ctypes.c_void_p),
+            ("n_samplers", ctypes.c_size_t),
         ]
 
     class LlamaBatch(ctypes.Structure):
