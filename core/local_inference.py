@@ -176,11 +176,25 @@ if sys.platform == "win32":
 
 else:
     # ---------------------------------------------------------
-    # 【Android / 移动端 NDK 核心】
-    # 使用我们打磨的完美 ctypes 代码，对接你在 Linux/安卓 编译出的 .so 文件
-    # 安卓下统一使用 Clang 编译，绝不会出现 Windows 上的 ABI 错位崩溃！
+    # 【Android / 移动端 NDK 核心】带 C++ 深度日志探针版
     # ---------------------------------------------------------
     import ctypes
+
+    # 💥 全局日志拦截器：用于截获 C++ 哑巴引擎的真实求救信号
+    _llama_internal_logs = []
+    llama_log_cb_func = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
+
+    def _llama_log_callback(level, text, user_data):
+        try:
+            msg = text.decode('utf-8', errors='ignore').strip()
+            if msg:
+                # 过滤掉罗嗦的权重加载进度，只留核心信息
+                if "loading tensor" not in msg and "load_weights" not in msg:
+                    _llama_internal_logs.append(msg)
+        except:
+            pass
+
+    _global_llama_log_cb = llama_log_cb_func(_llama_log_callback)
 
     class LlamaModelParams(ctypes.Structure):
         _fields_ = [
@@ -196,7 +210,6 @@ else:
             ("use_mmap", ctypes.c_bool),
             ("use_mlock", ctypes.c_bool),
             ("check_tensors", ctypes.c_bool),
-            # 💥 彻底删除 _padding，严格遵守 ARM64 C++ 内存对齐协议
         ]
 
     class LlamaContextParams(ctypes.Structure):
@@ -229,7 +242,6 @@ else:
             ("no_perf", ctypes.c_bool),         
             ("abort_callback", ctypes.c_void_p),
             ("abort_callback_data", ctypes.c_void_p),
-            # 💥 彻底删除 _padding
         ]
 
     class LlamaBatch(ctypes.Structure):
@@ -244,24 +256,38 @@ else:
             ("all_pos_0", ctypes.c_int32),
             ("all_pos_1", ctypes.c_int32),
             ("all_seq_id", ctypes.c_int32),
-            ("_padding", ctypes.c_uint8 * 512), 
         ]
 
     class LocalEmbeddingEngine:
-        # 💥 同样接收 n_parallel 占位，防止安卓端报错
         def __init__(self, model_path: str, n_parallel: int = 8):
             self.model_path = model_path
             self.n_parallel = n_parallel
             
-            # 💡 1. 物理层严密侦测：文件到底对不对？
-            if not os.path.exists(self.model_path):
-                raise Exception(f"【引擎报错】系统找不到模型文件！\n路径: {self.model_path}")
+            # 清空上一轮的日志
+            global _llama_internal_logs
+            _llama_internal_logs.clear()
             
-            file_size = os.path.getsize(self.model_path)
-            if file_size < 10 * 1024 * 1024:  # 如果文件小于 10MB，绝对是坏的
-                raise Exception(f"【引擎报错】模型文件严重损坏或未下载完整！当前大小仅: {file_size / 1024 / 1024:.2f} MB")
+            if not os.path.exists(self.model_path):
+                raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
+            
+            # 💥 1. 终极文件健康检查：读取文件的“基因序列”
+            try:
+                with open(self.model_path, 'rb') as f:
+                    magic = f.read(4)
+                    if magic != b'GGUF':
+                        raise Exception(f"【模型损坏】该文件根本不是 GGUF 格式！它的开头字节是: {magic}。文件可能在下载或复制时损坏，请重新下载！")
+            except Exception as e:
+                if "模型损坏" in str(e): raise e
+                raise Exception(f"【权限锁死】Python 无法读取该文件内容: {e}")
 
             self.lib = self._load_library()
+            
+            # 💥 2. 挂载日志拦截器
+            try:
+                self.lib.llama_log_set(_global_llama_log_cb, None)
+            except Exception:
+                pass
+
             self.lib.llama_backend_init()
             
             original_cwd = os.getcwd()
@@ -284,17 +310,13 @@ else:
                 
             mparams = self.lib.llama_model_default_params()
             
-            # 💥 战术撤退：直接注释掉这两行！
-            # 让 C++ 底层自己去判断要不要用 mmap，避免我们在 Python 端因为结构体错位把参数写坏
-            # mparams.use_mmap = False 
-            # mparams.use_mlock = False
-            
-            # 💡 3. 极致稳健的指针传递：强制转换为 C 的 char 指针
             b_path = self.model_path.encode('utf-8')
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                raise Exception(f"【引擎报错】C++ 底层拒绝加载模型！请检查该 GGUF 模型是否兼容当前的 .so 版本 (文件大小: {file_size / 1024 / 1024:.2f} MB)")
+                # 💥 3. 截获并爆出 C++ 底层的最后遗言
+                log_details = "\n".join(_llama_internal_logs[-10:])
+                raise Exception(f"【引擎内部报错】加载失败！C++ 底层真实原因如下:\n{log_details}")
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
@@ -302,20 +324,21 @@ else:
             
             self.ctx = self.lib.llama_new_context_with_model(self.model, cparams)
             if not self.ctx:
-                raise Exception("无法创建本地模型上下文")
+                log_details = "\n".join(_llama_internal_logs[-5:])
+                raise Exception(f"无法创建本地模型上下文！底层原因:\n{log_details}")
             
             self.dim = self.lib.llama_n_embd(self.model)
 
         def _load_library(self):
-            # 💥 战术抢救：按依赖顺序，强行加载所有被官方拆分出去的 CPU 计算后端
-            # 只要把它们加载进 RTLD_GLOBAL 全局空间，libllama.so 就能认出它们！
+            global _llama_internal_logs
+            
+            # 强制加载所有计算后端，并拦截任何缺失错误
             for lib_name in ["libggml-base.so", "libggml-cpu.so", "libggml.so"]:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
                 except Exception as e:
-                    print(f"Warning: Failed to load {lib_name}: {e}")
+                    _llama_internal_logs.append(f"DLL加载警告: {lib_name} 失败 -> {str(e)}")
             
-            # 最后加载主引擎
             lib = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             
             lib.llama_backend_init.argtypes = []
@@ -334,6 +357,11 @@ else:
             lib.llama_get_embeddings.argtypes = [ctypes.c_void_p]
             lib.llama_get_embeddings.restype = ctypes.POINTER(ctypes.c_float)
             
+            try:
+                lib.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
+            except Exception:
+                pass
+                
             try:
                 lib.llama_get_embeddings_seq.argtypes = [ctypes.c_void_p, ctypes.c_int32]
                 lib.llama_get_embeddings_seq.restype = ctypes.POINTER(ctypes.c_float)
