@@ -297,13 +297,11 @@ else:
             self.dim = self.lib.llama_n_embd(self.model)
 
         def _load_library(self):
-            # 1. 它们没被熔炼，所以我们依次点名，拉入全局内存 (RTLD_GLOBAL)
+            # 1. 仅加载最基础的依赖链，绝对不要手动加载 libggml-cpu.so
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                "libggml-cpu.so",
-                "libmtmd.so",          # <--- 新增：多模态支持库
-                "libllama-common.so"   # <--- 新增：通用工具库
+                
             ]
             for lib_name in dependencies:
                 try:
@@ -311,7 +309,7 @@ else:
                 except Exception:
                     pass
 
-            # 2. 兄弟就位，最后唤醒主脑！
+            # 2. 唤醒主脑（此时它内部已经自带了唯一的、正确的 CPU 后端）
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
