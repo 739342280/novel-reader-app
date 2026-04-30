@@ -284,10 +284,10 @@ else:
 
             self.lib.llama_backend_init()
 
-            # ──────── 核心反射注入 (彻底消灭双重加载版) ────────
+            # ──────── 核心反射注入 (修复正则盲区版) ────────
             native_lib_dir = getattr(self, "_native_lib_dir", "")
+            _llama_internal_logs.append(f"[Python] 解析到的底层绝对目录: {native_lib_dir}")
             
-            # 💥 核心修正 1：统一拿短文件名 (SONAME) 的句柄，确保内存宇宙绝对同源！
             lib_ggml = None
             try:
                 lib_ggml = ctypes.CDLL("libggml.so", mode=ctypes.RTLD_GLOBAL)
@@ -304,28 +304,38 @@ else:
             registered_count = 0
             if native_lib_dir and os.path.exists(native_lib_dir):
                 cpu_files = [f for f in os.listdir(native_lib_dir) if f.startswith("libggml-cpu") and f.endswith(".so")]
+                _llama_internal_logs.append(f"[Python] 发现肌肉模块: {cpu_files}")
                 
                 for file_name in cpu_files:
+                    cpu_lib = None
                     try:
-                        # 💥 核心修正 2：必须且只能用 file_name (短名) 加载，绝对不能拼接绝对路径！
+                        # 尝试短文件名 (优先同源)
                         cpu_lib = ctypes.CDLL(file_name, mode=ctypes.RTLD_GLOBAL)
-                        
-                        if hasattr(cpu_lib, "ggml_backend_reg_get"):
-                            cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
-                            reg_ptr = cpu_lib.ggml_backend_reg_get()
+                    except Exception as e1:
+                        try:
+                            # 兜底：如果短文件名失败，强行用绝对路径加载
+                            cpu_lib = ctypes.CDLL(os.path.join(native_lib_dir, file_name), mode=ctypes.RTLD_GLOBAL)
+                        except Exception as e2:
+                            _llama_internal_logs.append(f"[Python] 加载 {file_name} 彻底失败: {e1} | {e2}")
+                            continue
                             
-                            if reg_ptr and lib_ggml and register_func_name:
-                                reg_func = getattr(lib_ggml, register_func_name)
-                                reg_func.argtypes = [ctypes.c_void_p]
-                                reg_func(reg_ptr)
-                                registered_count += 1
-                    except Exception as e:
-                        _llama_internal_logs.append(f"[Python] 注入 {file_name} 失败: {e}")
+                    if cpu_lib and hasattr(cpu_lib, "ggml_backend_reg_get"):
+                        cpu_lib.ggml_backend_reg_get.restype = ctypes.c_void_p
+                        reg_ptr = cpu_lib.ggml_backend_reg_get()
+                        
+                        if reg_ptr and lib_ggml and register_func_name:
+                            reg_func = getattr(lib_ggml, register_func_name)
+                            reg_func.argtypes = [ctypes.c_void_p]
+                            reg_func(reg_ptr)
+                            registered_count += 1
+                            _llama_internal_logs.append(f"[Python] ✅ 成功注入: {file_name}")
 
-            # 💥 核心修正 3：彻底删掉 C++ 的兜底唤醒，防止 C++ 底层手贱用绝对路径破坏同源环境！
-            
+            _llama_internal_logs.append(f"[Python] 总共成功注入肌肉数: {registered_count}")
+
             mparams = self.lib.llama_model_default_params()
             b_path = self.model_path.encode('utf-8')
+            
+            # 这里调用底层的 C++，耗时几秒钟，前端 UI 卡住是正常的！
             self.model = self.lib.llama_load_model_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
@@ -346,29 +356,27 @@ else:
         def _load_library(self):
             global _llama_internal_logs
 
-            # 1. 查找原生库的真实目录 (仅当作雷达，用来扫描恶心的随机后缀文件名)
             native_lib_dir = ""
             try:
                 with open("/proc/self/maps", "r") as f:
                     maps = f.read()
                 import re
-                match = re.search(r'(/[^/]+)+/libllama\.so', maps)
+                # 💥 核心修正：修复正则漏洞！提取以 / 开头并且不含空格的完整路径
+                match = re.search(r'(/[^\s]+/libllama\.so)', maps)
                 if match:
-                    native_lib_dir = match.group(1)
+                    full_path = match.group(1)
+                    native_lib_dir = os.path.dirname(full_path) # 精确提取出绝对目录
             except Exception as e:
                 pass
 
-            # 把目录存起来，供 __init__ 当雷达使用
             self._native_lib_dir = native_lib_dir 
 
-            # 2. 预热基础库（💥 必须用短文件名！）
             for base_lib in ["libggml-base.so", "libggml.so"]:
                 try:
                     ctypes.CDLL(base_lib, mode=ctypes.RTLD_GLOBAL)
                 except Exception:
                     pass
 
-            # 3. 加载主引擎（💥 必须用短文件名！）
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
