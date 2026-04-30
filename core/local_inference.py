@@ -263,9 +263,11 @@ else:
         ]
 
     class LocalEmbeddingEngine:
-        def __init__(self, model_path: str, n_parallel: int = 8):
+        # 💥 修改点：补全安卓端的参数接收口
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
             self.model_path = model_path
             self.n_parallel = n_parallel
+            self.n_ubatch = n_ubatch  # 💥 存为实例变量，供下方使用
             
             global _llama_internal_logs
             _llama_internal_logs.clear()
