@@ -286,6 +286,12 @@ else:
 
             # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
+            
+            # 💥 Vulkan 点火开关：强行将计算层卸载到 GPU
+            # 99 代表“尽可能把所有的网络层都交给 GPU 处理”。
+            # 如果手机 GPU 显存不够，底层会自动把剩下的层放回 CPU（这叫混合计算）。
+            mparams.n_gpu_layers = 99 
+            
             b_path = self.model_path.encode('utf-8')
             
             self.model = self.lib.llama_model_load_from_file(ctypes.c_char_p(b_path), mparams)
@@ -360,19 +366,25 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 1. 仅加载最基础的依赖链，绝对不要手动加载 libggml-cpu.so
+            # 1. 仅加载最基础的依赖链，增加对 ggml-vulkan 的尝试加载
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                
+                "libggml-vulkan.so" # 💥 尝试加载 Vulkan 后端库
             ]
             for lib_name in dependencies:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
                 except Exception:
                     pass
+            
+            # 💥 尝试唤醒安卓系统的原生 Vulkan 驱动层（静默执行，没有也不报错）
+            try:
+                ctypes.CDLL("libvulkan.so", mode=ctypes.RTLD_GLOBAL)
+            except Exception:
+                pass
 
-            # 2. 唤醒主脑（此时它内部已经自带了唯一的、正确的 CPU 后端）
+            # 2. 唤醒主脑
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:

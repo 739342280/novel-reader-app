@@ -126,6 +126,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DGGML_OPENMP=OFF \
+          -DGGML_VULKAN=ON \
           -DGGML_BACKEND_DL=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
