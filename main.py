@@ -317,7 +317,7 @@ class NovelReaderApp:
         data = StorageManager.load_json("ai_config.json")
         if data:
             # 💥 在数组最后加上 "snack_duration"
-            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration"]:
+            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration", "hardware_mode"]:
                 if k in data: self.ai_config[k] = data[k]
             bg_c = data.get("bg_color")
             self.bg_color = bg_c if bg_c else "#FFFFFF"
