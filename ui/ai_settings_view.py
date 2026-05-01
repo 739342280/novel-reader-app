@@ -430,6 +430,15 @@ def get_ai_settings_view(app):
                     first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
                     dim = len(first_emb)
 
+                    # 💥 新增：检测硬件降维打击是否发生（仅在本地+智能模式下才触发提示）
+                    if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "智能模式 (GPU优先)":
+                        engine = getattr(AIService, '_local_engine', None)
+                        # 如果引擎存在，且最终判决是不支持 Vulkan
+                        if engine and not getattr(engine, 'vulkan_available', True):
+                            reason = getattr(engine, 'vulkan_disable_reason', '未知异常')
+                            # 使用你写好的 SnackBar 给用户发出警告
+                            app.show_snack_bar(f"⚠️ 硬件警告：GPU 加速不可用，已自动保活降级为 CPU 模式。\n降级原因: {reason}")
+
                     # 3. 初始化数据库 (显式清除防止叠加)
                     vdb = VectorDB(db_path)
                     vdb.clear_index() 
