@@ -163,11 +163,12 @@ jobs:
         # 使用 4 线程全速编译
         make -j4
         
-        # 💥 架构师级优化：精准白名单拷贝，把惹祸的 libggml-vulkan.so 彻底拒之门外！
+        # 💥 架构师级认错：全员集结，一个都不能少！
         mkdir -p ../../android_native_libs/lib/arm64-v8a
         find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         find . -name "libggml.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
-        find . -name "libggml-cpu.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; # 💥 修复点：必须带上被分离出来的 CPU 后端
+        find . -name "libggml-cpu.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; 
+        find . -name "libggml-vulkan.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; # 💥 修复点：把它请回来！
         find . -name "libllama.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         
         # 阅后即焚，清理源码节省硬盘空间
