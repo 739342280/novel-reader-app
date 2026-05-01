@@ -371,32 +371,42 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 1. 架构师终极版：按照严格的依赖链顺序加载所有器官
-            dependencies = [
-                "libggml-base.so",
-                "libggml.so",
-                "libggml-cpu.so", 
-                "libggml-vulkan.so", # 💥 修复点：预加载 Vulkan 后端，防止 libllama 找不到它
-            ]
-            for lib_name in dependencies:
-                try:
-                    ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
-                except Exception:
-                    pass
-            
-            # 💥 1.1 探测安卓系统是否支持 Vulkan 驱动
+            # 💥 1. 先进行环境探测和护盾部署
             self.system_has_vulkan = False
             try:
                 # 尝试加载安卓系统底层的 Vulkan 驱动入口
                 ctypes.CDLL("libvulkan.so", mode=ctypes.RTLD_GLOBAL)
                 self.system_has_vulkan = True
                 os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
+                
+                # 💥 核心救命护盾：如果 UI 选择了“强制 CPU 模式”
+                # 必须利用底层环境变量，告诉引擎“系统里没有任何 GPU 设备”！
+                # 否则即使层数为 0，调度器在扫描内存图时依然会触发空指针崩溃。
+                if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
+                    os.environ["GGML_VK_VISIBLE_DEVICES"] = "none" 
+                else:
+                    # 如果切回 GPU 模式，必须清理屏蔽规则
+                    if "GGML_VK_VISIBLE_DEVICES" in os.environ:
+                        del os.environ["GGML_VK_VISIBLE_DEVICES"]
+                        
             except Exception:
                 global _llama_internal_logs
                 _llama_internal_logs.append("[Python] 当前手机未提供 Vulkan 驱动，自动降级为纯 CPU 推理。")
             
+            # 💥 2. 再按顺序加载所有的 C++ 器官
+            dependencies = [
+                "libggml-base.so",
+                "libggml.so",
+                "libggml-cpu.so", 
+                "libggml-vulkan.so", 
+            ]
+            for lib_name in dependencies:
+                try:
+                    ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
+                except Exception:
+                    pass
 
-            # 2. 唤醒主脑
+            # 3. 最后唤醒主脑
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
