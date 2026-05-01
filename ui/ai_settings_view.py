@@ -425,19 +425,24 @@ def get_ai_settings_view(app):
                     total = len(all_chunks)
                     if total == 0: raise Exception("提取不到书籍文本内容")
 
-                    # 2. 获取向量维度
-                    safe_update_ui(0.05, f"🔍 正在获取 Embedding 维度 (总块数: {total})...")
+                    # 2. 唤醒底层引擎并进行探针探测
+                    safe_update_ui(0.05, f"🔍 正在初始化推理引擎与探针探测 (总块数: {total})...")
                     first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
                     dim = len(first_emb)
 
-                    # 💥 降维打击探测：如果处于本地智能模式，检查是否发生了底层降级
+                    # 💥 探针结果分析与 UI 互动
                     if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "智能模式 (GPU优先)":
                         engine = getattr(AIService, '_local_engine', None)
                         if engine:
-                            # 直接读取原因。因为成功时原因是 ""，失败时是具体文字
                             reason = getattr(engine, 'vulkan_disable_reason', '')
-                            if reason:  # 字符串不为空，说明真出事了，弹窗警告！
+                            if reason:  
+                                # 探测失败：弹窗警告并静默降级（不延迟，直接用 CPU 开跑）
                                 app.show_snack_bar(f"⚠️ 硬件警告：GPU 加速不可用，已自动降级为 CPU 模式。\n降级原因: {reason}")
+                            else:
+                                # 探测成功：给予炫酷的正面反馈，并延迟 2 秒开搞！
+                                app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
+                                safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
+                                time.sleep(2)  # 线程沉睡 2 秒，给用户留出阅读提示的时间
 
                     # 3. 初始化数据库 (显式清除防止叠加)
                     vdb = VectorDB(db_path)
