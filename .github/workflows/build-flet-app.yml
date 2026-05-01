@@ -112,11 +112,12 @@ jobs:
         repository: ggerganov/llama.cpp
         path: llama.cpp-src
 
-    # 💥 破除 Vulkan 编译大山：安装 glslc 着色器编译器
-    - name: Install Vulkan Shader Compiler
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y glslang-tools
+    # 💥 终极破除 Vulkan 编译大山：使用官方指定的 SDK Action 注入 glslc
+    - name: Setup Vulkan SDK
+      uses: humbletim/setup-vulkan-sdk@v1.2.0
+      with:
+        vulkan-query-version: 1.3.268.0
+        vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, Shaderc
 
     - name: Build Monolithic libllama.so
       run: |
