@@ -132,9 +132,14 @@ jobs:
       run: |
         echo "🚀 开始静态熔炼 llama.cpp..."
         cd llama.cpp-src
+        
+        # 💥 破除跨平台头文件大山：单独拉取纯净的 Vulkan C++ 官方头文件
+        echo "📥 正在获取 Vulkan C++ 头文件..."
+        git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git vulkan-headers
+        
         mkdir build && cd build
         
-        # 💥 核心修复：增加 -DGGML_OPENMP=OFF 彻底切断对 libomp.so 的依赖！
+        # 💥 核心修复：增加 -DVulkan_INCLUDE_DIR 将刚下载的 C++ 头文件喂给安卓编译器
         cmake .. \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
@@ -143,6 +148,7 @@ jobs:
           -DBUILD_SHARED_LIBS=ON \
           -DGGML_OPENMP=OFF \
           -DGGML_VULKAN=ON \
+          -DVulkan_INCLUDE_DIR=../vulkan-headers/include \
           -DGGML_BACKEND_DL=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
