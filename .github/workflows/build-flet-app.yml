@@ -2,11 +2,11 @@ name: Build Flet Android APK and Windows
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, vulkan ]
     tags: 
       - 'v*'
   pull_request:
-    branches: [ master ]
+    branches: [ master, vulkan ]
   workflow_dispatch:          
 
 permissions:
@@ -114,7 +114,7 @@ jobs:
 
     # 💥 终极破除 Vulkan 编译大山：使用官方指定的 SDK Action 注入 glslc
     - name: Setup Vulkan SDK
-      uses: humbletim/setup-vulkan-sdk@v1.2.0
+      uses: humbletim/setup-vulkan-sdk@v1.2.1
       with:
         vulkan-query-version: 1.3.268.0
         vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang, Shaderc
