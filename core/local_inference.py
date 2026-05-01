@@ -291,11 +291,14 @@ else:
             # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
             
-            # 💥 终极点火开关：只有选择了智能模式，且系统支持 Vulkan 时，才动用 GPU
+            # 终极点火开关
             if self.hardware_mode == "智能模式 (GPU优先)" and getattr(self, 'vulkan_available', False):
                 mparams.n_gpu_layers = 99 
+                # 💥 新增死马当活马医策略：关闭 mmap，强迫引擎按块加载内存，有概率绕过安卓底层的内存分配崩溃 Bug
+                mparams.use_mmap = False 
             else:
                 mparams.n_gpu_layers = 0 
+                mparams.use_mmap = True # CPU 模式下保持 mmap 开启，速度更快
             
             b_path = self.model_path.encode('utf-8')
             
@@ -371,15 +374,19 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 修改点 1：提前部署全局护盾，保证在任何分支下都生效
-            os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
+            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU，必须从物理底层彻底屏蔽 GPU 设备！
+            if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
+                os.environ["GGML_VK_VISIBLE_DEVICES"] = "none"
+            else:
+                # 切回 GPU 模式时，解除屏蔽
+                if "GGML_VK_VISIBLE_DEVICES" in os.environ:
+                    del os.environ["GGML_VK_VISIBLE_DEVICES"]
 
-            # 💥 修改点 2：初始化标志，默认 Vulkan 不可用
+            os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
+            
             self.vulkan_available = False
             self.vulkan_disable_reason = "初始化未完成"
-
-            # 💥 修改点 3：依赖列表必须保留 libggml-cpu.so 和 libggml-vulkan.so
-            # 原因：你的 libllama.so 在编译时明确依赖这两个库，删除会导致 dlopen failed
+            
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
@@ -392,35 +399,35 @@ else:
                 except Exception:
                     pass
 
-            # 💥 修改点 4（核心）：主动探测 Vulkan 后端是否真的能初始化成功
-            # 不再依赖“能否加载 libvulkan.so”这种粗略判断
-            try:
-                vk_lib = ctypes.CDLL("libggml-vulkan.so", mode=ctypes.RTLD_GLOBAL)
-                if hasattr(vk_lib, "ggml_backend_vk_reg"):
-                    vk_lib.ggml_backend_vk_reg.restype = ctypes.c_void_p
-                    reg_ptr = vk_lib.ggml_backend_vk_reg()
-                    # 如果返回非空指针，说明 Vulkan 后端初始化成功
-                    if reg_ptr is not None and reg_ptr != 0:
-                        self.vulkan_available = True
-                        self.vulkan_disable_reason = ""
-                        _llama_internal_logs.append("[Python] Vulkan 后端初始化成功，将启用 GPU 加速")
+            # 💥 2. 优化逻辑：如果是强制 CPU 模式，直接跳过探针探测，防止引发意外崩溃
+            if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
+                self.vulkan_available = False
+                self.vulkan_disable_reason = "用户已手动强制使用 CPU"
+            else:
+                # 只有在“智能模式”下，才去探测 Vulkan
+                try:
+                    vk_lib = ctypes.CDLL("libggml-vulkan.so", mode=ctypes.RTLD_GLOBAL)
+                    if hasattr(vk_lib, "ggml_backend_vk_reg"):
+                        vk_lib.ggml_backend_vk_reg.restype = ctypes.c_void_p
+                        reg_ptr = vk_lib.ggml_backend_vk_reg()
+                        if reg_ptr is not None and reg_ptr != 0:
+                            self.vulkan_available = True
+                            self.vulkan_disable_reason = ""
+                            _llama_internal_logs.append("[Python] Vulkan 后端初始化成功，将尝试启用 GPU 加速")
+                        else:
+                            vk_err = "驱动不支持或缺少必要扩展"
+                            if _llama_internal_logs:
+                                for log in reversed(_llama_internal_logs):
+                                    if "vulkan" in log.lower() or "vk" in log.lower() or "error" in log.lower():
+                                        vk_err = log.replace("[C++] ", "")
+                                        break
+                            self.vulkan_disable_reason = f"底层注册被拒 ({vk_err})"
+                            _llama_internal_logs.append(f"[Python] Vulkan 探测失败: {self.vulkan_disable_reason}")
                     else:
-                        # ⚠️ 探测失败：开始从 C++ 底层日志中“验尸”
-                        vk_err = "驱动不支持或缺少必要扩展"
-                        if _llama_internal_logs:
-                            # 倒序查找最后一条跟 vulkan 相关的 C++ 原生报错
-                            for log in reversed(_llama_internal_logs):
-                                if "vulkan" in log.lower() or "vk" in log.lower() or "error" in log.lower():
-                                    vk_err = log.replace("[C++] ", "")
-                                    break
-                        self.vulkan_disable_reason = f"底层注册被拒 ({vk_err})"
-                        _llama_internal_logs.append(f"[Python] Vulkan 探测失败: {self.vulkan_disable_reason}")
-                else:
-                    self.vulkan_disable_reason = "库文件受损，找不到 Vulkan 注册入口"
-            except Exception as e:
-                self.vulkan_disable_reason = f"加载动态库异常: {str(e)}"
+                        self.vulkan_disable_reason = "库文件受损，找不到 Vulkan 注册入口"
+                except Exception as e:
+                    self.vulkan_disable_reason = f"加载动态库异常: {str(e)}"
 
-            # 💥 修改点 5（不变）：唤醒主脑
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
