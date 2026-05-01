@@ -48,15 +48,15 @@ if sys.platform == "win32":
             except urllib.error.URLError as e:
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
-        # 💥 接收 n_parallel 参数
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
+        # 💥 接收 hardware_mode 参数
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)"):
             self.model_path = model_path
             self.n_parallel = n_parallel
-            self.n_ubatch = n_ubatch  # 💥 存为实例变量
+            self.n_ubatch = n_ubatch  
+            self.hardware_mode = hardware_mode # 💥 保存状态
             self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
-            # self.dim = 1024 
             self._start_local_server()
 
         def _start_local_server(self):
@@ -78,6 +78,9 @@ if sys.platform == "win32":
             # 💥 让代码自动计算上下文！每个通道死保 1024 容量
             ctx_size = str(self.n_parallel * 1024)
 
+            # 💥 判断是否使用 CPU 模式
+            ngl_value = "99" if self.hardware_mode == "智能模式 (GPU优先)" else "0"
+
             # 核心启动参数：加载模型，开启向量模式，绑定端口
             cmd = [
                 exe_path,
@@ -88,7 +91,7 @@ if sys.platform == "win32":
                 "-c", ctx_size,                      # 💥 注入算好的总容量
                 "-b", ctx_size,                      # 💥 批处理同步放大
                 "-t", optimal_threads,
-                "-ngl", "99",
+                "-ngl", ngl_value,  # 💥 动态注入 GPU 层数
                 "--pooling", "mean"
             ]
 
@@ -263,11 +266,12 @@ else:
         ]
 
     class LocalEmbeddingEngine:
-        # 💥 修改点：补全安卓端的参数接收口
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
+        # 💥 补全参数
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)"):
             self.model_path = model_path
             self.n_parallel = n_parallel
-            self.n_ubatch = n_ubatch  # 💥 存为实例变量，供下方使用
+            self.n_ubatch = n_ubatch
+            self.hardware_mode = hardware_mode # 💥 保存状态
             
             global _llama_internal_logs
             _llama_internal_logs.clear()
@@ -287,10 +291,11 @@ else:
             # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
             
-            # 💥 Vulkan 点火开关：强行将计算层卸载到 GPU
-            # 99 代表“尽可能把所有的网络层都交给 GPU 处理”。
-            # 如果手机 GPU 显存不够，底层会自动把剩下的层放回 CPU（这叫混合计算）。
-            mparams.n_gpu_layers = 99 
+            # 💥 终极点火开关：只有选择了智能模式，且系统支持 Vulkan 时，才动用 GPU
+            if self.hardware_mode == "智能模式 (GPU优先)" and getattr(self, 'system_has_vulkan', False):
+                mparams.n_gpu_layers = 99 
+            else:
+                mparams.n_gpu_layers = 0 
             
             b_path = self.model_path.encode('utf-8')
             
@@ -366,11 +371,10 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 1. 仅加载最基础的依赖链，增加对 ggml-vulkan 的尝试加载
+            # 💥 1. 核心修复：只加载白名单里的两个核心库
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                "libggml-vulkan.so" # 💥 尝试加载 Vulkan 后端库
             ]
             for lib_name in dependencies:
                 try:
@@ -378,11 +382,17 @@ else:
                 except Exception:
                     pass
             
-            # 💥 尝试唤醒安卓系统的原生 Vulkan 驱动层（静默执行，没有也不报错）
+            # 💥 1.1 探测安卓系统是否支持 Vulkan 驱动
+            self.system_has_vulkan = False
             try:
+                # 尝试加载安卓系统底层的 Vulkan 驱动入口
                 ctypes.CDLL("libvulkan.so", mode=ctypes.RTLD_GLOBAL)
+                self.system_has_vulkan = True
+                os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
             except Exception:
-                pass
+                global _llama_internal_logs
+                _llama_internal_logs.append("[Python] 当前手机未提供 Vulkan 驱动，自动降级为纯 CPU 推理。")
+            
 
             # 2. 唤醒主脑
             try:

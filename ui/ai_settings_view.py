@@ -97,6 +97,14 @@ def get_ai_settings_view(app):
         on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_tf)
     )
 
+    # 💥 新增：硬件加速模式下拉框
+    hardware_mode_dd = ft.Dropdown(
+        label="硬件加速模式", 
+        options=[ft.dropdown.Option("智能模式 (GPU优先)"), ft.dropdown.Option("强制 CPU 模式")], 
+        value=app.ai_config.get("hardware_mode", "智能模式 (GPU优先)"),
+        text_size=13, dense=True, width=INPUT_WIDTH
+    )
+
     embed_mode_dd = ft.Dropdown(
         label="当前生效工作模式", 
         options=[ft.dropdown.Option("云端 API"), ft.dropdown.Option("本地模型")], 
@@ -131,6 +139,8 @@ def get_ai_settings_view(app):
                             spacing=10, 
                             width=INPUT_WIDTH  
                         ),
+                        hardware_mode_dd,
+
                         # 💥 新增的 UI 提示，放在下拉框正下方
                         ft.Divider(height=5, thickness=0.5, color="transparent"),
                         ft.Text(
@@ -667,7 +677,6 @@ def get_ai_settings_view(app):
         app.ai_config["prompt"] = prompt_tf.value.strip()
         app.ai_config["prompt_char"] = prompt_char_tf.value.strip() 
         app.ai_config["prompt_clue"] = prompt_clue_tf.value.strip() 
-
         app.ai_config["embed_mode"] = embed_mode_dd.value
         app.ai_config["embed_url"] = embed_url_tf.value.strip()
         app.ai_config["embed_key"] = embed_key_tf.value.strip()
@@ -675,13 +684,15 @@ def get_ai_settings_view(app):
         # app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
         # 💥 替换为从文本框取值
         app.ai_config["local_model_path"] = local_model_tf.value.strip()
+        # 💥 保存硬件模式
+        app.ai_config["hardware_mode"] = hardware_mode_dd.value
+        app.ai_config["build_batch_size"] = int(batch_size_slider.value)
         # 💥 增加这一行，保存 Batch Size
         app.ai_config["build_batch_size"] = int(batch_size_slider.value)
         # 💥 保存并发数
         app.ai_config["n_parallel"] = int(parallel_slider.value)
         # 💥 新增保存 n_ubatch：将滑块的 1,2,3 档翻译回真实数值
         app.ai_config["n_ubatch"] = ubatch_map[int(ubatch_slider.value)]
-
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
 

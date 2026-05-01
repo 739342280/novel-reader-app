@@ -123,20 +123,23 @@ class AIService:
                 # 💥 获取 UI 配置：顺手把默认值改成 1，并获取刚存好的 n_ubatch
                 n_parallel = config.get("n_parallel", 1)
                 n_ubatch = config.get("n_ubatch", 512)
+                hardware_mode = config.get("hardware_mode", "智能模式 (GPU优先)")
 
-                # 💥 热重载检测：只要并发数或性能模式(切片数)发生改变，就销毁旧引擎
+                # 💥 热重载检测：增加硬件模式变化的检测
                 if cls._local_engine is not None:
                     old_parallel = getattr(cls._local_engine, 'n_parallel', 1)
                     old_ubatch = getattr(cls._local_engine, 'n_ubatch', 512)
-                    if old_parallel != n_parallel or old_ubatch != n_ubatch:
+                    old_hw = getattr(cls._local_engine, 'hardware_mode', "智能模式 (GPU优先)")
+                    if old_parallel != n_parallel or old_ubatch != n_ubatch or old_hw != hardware_mode:
                         cls._local_engine = None # 参数改变，强制销毁旧引擎
 
                 if cls._local_engine is None:
-                    # 💥 关键点：把 n_ubatch 传递给底层的 __init__
+                    # 💥 将硬件模式传递给底层
                     cls._local_engine = LocalEmbeddingEngine(
                         model_path, 
                         n_parallel=n_parallel, 
-                        n_ubatch=n_ubatch
+                        n_ubatch=n_ubatch,
+                        hardware_mode=hardware_mode
                     )
                     
                 return cls._local_engine.get_embedding(text)

@@ -163,9 +163,11 @@ jobs:
         # 使用 4 线程全速编译
         make -j4
         
-        # 💥 把编译出的所有兄弟模块（*.so）全部打包带走，并解开软链接！
+        # 💥 架构师级优化：精准白名单拷贝，把惹祸的 libggml-vulkan.so 彻底拒之门外！
         mkdir -p ../../android_native_libs/lib/arm64-v8a
-        find . -name "*.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libllama.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         
         # 阅后即焚，清理源码节省硬盘空间
         cd ../..
