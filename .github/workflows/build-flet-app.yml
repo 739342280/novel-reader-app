@@ -167,6 +167,7 @@ jobs:
         mkdir -p ../../android_native_libs/lib/arm64-v8a
         find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         find . -name "libggml.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml-cpu.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; # 💥 修复点：必须带上被分离出来的 CPU 后端
         find . -name "libllama.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         
         # 阅后即焚，清理源码节省硬盘空间

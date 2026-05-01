@@ -371,10 +371,11 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 1. 核心修复：只加载白名单里的两个核心库
+            # 💥 1. 核心修复：只加载白名单里的核心库（补充纯 CPU 算子库）
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
+                "libggml-cpu.so", # 💥 修复点：必须提前加载它，否则 libllama.so 唤醒时会报空指针
             ]
             for lib_name in dependencies:
                 try:
