@@ -293,7 +293,7 @@ else:
             
             # 终极点火开关
             if self.hardware_mode == "智能模式 (GPU优先)" and getattr(self, 'vulkan_available', False):
-                mparams.n_gpu_layers = 99 
+                mparams.n_gpu_layers = 14 
                 # 💥 新增死马当活马医策略：关闭 mmap，强迫引擎按块加载内存，有概率绕过安卓底层的内存分配崩溃 Bug
                 mparams.use_mmap = False 
             else:
