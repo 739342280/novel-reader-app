@@ -129,7 +129,9 @@ jobs:
         # 获取 OpenCL 头文件的绝对路径
         OPENCL_INC="$(pwd)/../opencl-headers"
         
-        # 核心修改：关闭 VULKAN，开启 OPENCL
+        # 💥 核心战术：在 Android NDK 交叉编译中，由于编译环境没有真实的手机驱动库，
+        # llama.cpp 的 find_package(OpenCL) 会直接报错。
+        # 我们必须显式地绕过检查，并强制它在运行时动态加载库！
         cmake .. \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
@@ -137,13 +139,15 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DGGML_OPENMP=OFF \
-          -DGGML_OPENCL=ON \
-          -DCMAKE_C_FLAGS="-I${OPENCL_INC}" \
-          -DCMAKE_CXX_FLAGS="-I${OPENCL_INC}" \
           -DGGML_BACKEND_DL=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
-          -DLLAMA_BUILD_SERVER=OFF
+          -DLLAMA_BUILD_SERVER=OFF \
+          -DGGML_OPENCL=ON \
+          -DOpenCL_INCLUDE_DIR="${OPENCL_INC}" \
+          -DOpenCL_LIBRARY="dl" \
+          -DCMAKE_C_FLAGS="-I${OPENCL_INC} -DCL_TARGET_OPENCL_VERSION=200" \
+          -DCMAKE_CXX_FLAGS="-I${OPENCL_INC} -DCL_TARGET_OPENCL_VERSION=200"
         
         # 4 线程全速编译
         make -j4
