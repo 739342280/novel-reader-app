@@ -507,12 +507,7 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            # 💥 终极避坑大法：硬重启上下文
-            if hasattr(self, 'ctx') and self.ctx:
-                self.lib.llama_free(self.ctx)
-            
-            self.ctx = self.lib.llama_init_from_model(self.model, self.cparams)
-            self.memory = self.lib.llama_get_memory(self.ctx)
+            self.lib.llama_memory_clear(self.memory, True)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -543,7 +538,8 @@ else:
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
             
             logits_array = (ctypes.c_int8 * n_tokens)() 
-            for i in range(n_tokens): logits_array[i] = 1
+            for i in range(n_tokens): logits_array[i] = 0
+            logits_array[n_tokens - 1] = 1
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
 
@@ -581,14 +577,7 @@ else:
 
             if total_tokens == 0: return []
 
-            # 💥 终极避坑大法：硬重启上下文
-            # 彻底销毁旧的显存工作区和计算图，然后瞬间重新申请一个干净的。
-            # 完美避开高通 Adreno 驱动在连续复用上下文时的 DeviceLost 崩溃死穴！
-            if hasattr(self, 'ctx') and self.ctx:
-                self.lib.llama_free(self.ctx)
-            
-            self.ctx = self.lib.llama_init_from_model(self.model, self.cparams)
-            self.memory = self.lib.llama_get_memory(self.ctx)
+            self.lib.llama_memory_clear(self.memory, True)
 
             # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
@@ -619,9 +608,8 @@ else:
                     token_arr[idx] = tokens_array[i]
                     pos_arr[idx] = i          
                     n_seq_id_arr[idx] = 1
-                    inner_seqs[idx][0] = seq_id 
-                    # 💥 修复警告：均值池化需要全部标记为 1，让底层顺畅提取所有 Token 的向量
-                    logits_arr[idx] = 1 
+                    inner_seqs[idx][0] = seq_id                     
+                    logits_arr[idx] = 1 if i == n_tokens - 1 else 0
                     idx += 1
 
             self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
