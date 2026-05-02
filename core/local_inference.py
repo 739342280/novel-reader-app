@@ -353,13 +353,13 @@ else:
             # 【功能】决定了引擎能占用多少 RAM，以及最多能同时记住多少个 Token。
             # 【优化】设为 8192 约消耗 1.5GB-2.5GB 运存，对于 8GB/12GB 运存的手机是最安全的甜点值。
             # 如果设得太大（如 65536），极易被安卓低内存杀手（LMK）直接闪退。
-            cparams.n_ctx = 8192
+            cparams.n_ctx = 2048
 
             # 2. cparams.n_batch (逻辑批处理量 / 卸货区大小)
             # 【功能】告诉底层引擎，上层 Python 一次性最多会扔多少个 Token 过来。
             # 【作用】必须大于等于你一次传入的总 Token 数。设为 8192，意味着你 UI 上的 Batch Size 
             # 即使拉到 15 块（15 * 512 = 7680），引擎也愿意接收。
-            cparams.n_batch = 8192
+            cparams.n_batch = 2048
             
             # 3. cparams.n_ubatch (物理吞吐量 / 运算切片大小) —— 💥 手机防爆缸救命参数
             # 【功能】CPU ALU（算术逻辑单元）在一次底层的矩阵乘法（GEMM）中真正吞食的 Token 数量。
@@ -372,13 +372,16 @@ else:
             # 【功能】KV Cache 中最多能同时存放多少个“独立的上下文”。
             # 【作用】你切出来的每一块小说，都是一个独立的序列（需要赋予不同的 seq_id 0, 1, 2...）。
             # 这个数字必须大于等于你 UI 上允许的极限批处理量（Batch Size）。设为 128 绝对够用。
-            cparams.n_seq_max = 128
+            cparams.n_seq_max = 8
             
             # 5. cparams.kv_unified (全局统一内存池)
             # 【功能】打破物理隔离！如果不设为 True，n_ctx(8192) 会被 n_seq_max(128) 静态平分，
             # 导致每个序列只能塞进 64 个 Token（导致大块文本直接报错 Error 1）。
             # 设为 True 后，变成共享大平层，只要总和不超过 8192，内存随便用。
             cparams.kv_unified = True
+
+            # 🔧 关键：强制关闭 Flash Attention，防止驱动因大型着色器崩溃
+            cparams.flash_attn_type = 0 
 
             # =========================================================================
 
@@ -570,7 +573,7 @@ else:
             if total_tokens == 0: return []
 
             # 💥 绝杀 4：地毯式轰炸清理！不管之前跑了多少块，128 个序列槽位全部格式化，永绝后患
-            for seq_id in range(128):
+            for seq_id in range(self.lib.llama_n_seq_max(self.ctx)):
                 self.lib.llama_memory_seq_rm(self.memory, seq_id, -1, -1)
 
             # 3. 构造超级 Batch
