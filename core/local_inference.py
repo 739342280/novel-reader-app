@@ -574,10 +574,7 @@ else:
 
             # 💥 核心修复：地毯式轰炸清理 KV Cache
             # 获取当前上下文支持的最大序列数（通常是 8 或 128）
-            max_seq = self.lib.llama_n_seq_max(self.ctx)
-            for seq_id in range(max_seq):
-                # 强行抹除该序列在显存中的所有残留位置 (p0=0, p1=-1 表示全删)
-                self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
+            self.lib.llama_memory_seq_rm(self.memory, -1, 0, -1)
 
             # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
