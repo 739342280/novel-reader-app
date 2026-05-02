@@ -159,8 +159,12 @@ class NovelReaderApp:
             "embed_key": "",
             "embed_model": "text-embedding-3-small",
             "local_embed_path": "",
+            "local_model_path": "", # 确保本地模型路径也在初始化里
             "top_k": 5,
-            # 💥 新增：气泡提示默认时长
+            "n_gpu_layers": 10,     # 💥 新增：默认 10 层
+            "n_ubatch": 512,        # 💥 新增：默认 512
+            "build_batch_size": 15, # 💥 新增：默认 15
+            "hardware_mode": "强制GPU模式", # 💥 新增：默认硬件模式
             "snack_duration": 3000
         }
 
@@ -317,7 +321,7 @@ class NovelReaderApp:
         data = StorageManager.load_json("ai_config.json")
         if data:
             # 💥 在数组最后加上 "snack_duration"
-            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration", "hardware_mode"]:
+            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch"]: # 💥 加上了最后两个
                 if k in data: self.ai_config[k] = data[k]
             bg_c = data.get("bg_color")
             self.bg_color = bg_c if bg_c else "#FFFFFF"

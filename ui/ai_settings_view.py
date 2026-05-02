@@ -205,7 +205,7 @@ def get_ai_settings_view(app):
     top_k_text = ft.Text(f"检索数量 (top_k): {top_k_val} 段", size=13, color="onSurface")
     
     def on_top_k_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         top_k_text.value = f"检索数量 (top_k): {val} 段"
         try: top_k_text.update()
         except Exception: pass
@@ -217,7 +217,7 @@ def get_ai_settings_view(app):
     gpu_layers_text = ft.Text(f"GPU 物理卸载层数: {gpu_layers_val} 层", size=13, color="onSurface")
 
     def on_gpu_layers_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         gpu_layers_text.value = f"GPU 物理卸载层数: {val} 层"
         try: gpu_layers_text.update()
         except Exception: pass
@@ -229,13 +229,21 @@ def get_ai_settings_view(app):
     batch_size_text = ft.Text(f"建库批处理量 (Batch Size): {batch_size_val} 块", size=13, color="onSurface")
 
     def on_batch_size_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         batch_size_text.value = f"建库批处理量 (Batch Size): {val} 块"
         try: batch_size_text.update()
         except Exception: pass
 
     # min=2, max=100, divisions=49 意味着每档步进为 (100 - 2) / 49 = 2
-    batch_size_slider = ft.Slider(min=2, max=100, divisions=49, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
+    batch_size_slider = ft.Slider(
+        min=1,           # 最小允许到 1
+        max=100,         # 最大到 100
+        divisions=99,    # 严格划分为 99 份，保证每一档刚好是 1
+        value=batch_size_val, 
+        label="{value} 块", 
+        on_change=on_batch_size_change, 
+        width=INPUT_WIDTH
+    )
 
     # 💥新增：物理运算切片 (n_ubatch) 档位滑块
     ubatch_map = {1: 256, 2: 512, 3: 1024}
@@ -263,7 +271,7 @@ def get_ai_settings_view(app):
         except Exception: pass
 
     def on_ubatch_change(e):
-        update_ubatch_label(e.control.value)
+        update_ubatch_label(round(e.control.value)) # 💥 加了 round()
 
     # 设置 min=1, max=3, divisions=2，强制滑块只能停在 1, 2, 3 这三个整档位上
     ubatch_slider = ft.Slider(min=1, max=3, divisions=2, value=ubatch_slider_val, on_change=on_ubatch_change, width=INPUT_WIDTH)
@@ -274,7 +282,7 @@ def get_ai_settings_view(app):
     parallel_text = ft.Text(f"硬件并发通道数 (Parallelism): {parallel_val}", size=13, color="onSurface")
 
     def on_parallel_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         parallel_text.value = f"硬件并发通道数 (Parallelism): {val}"
         try: parallel_text.update()
         except Exception: pass
@@ -729,15 +737,17 @@ def get_ai_settings_view(app):
         app.ai_config["local_model_path"] = local_model_tf.value.strip()
         # 💥 保存硬件模式
         app.ai_config["hardware_mode"] = hardware_mode_dd.value
-        app.ai_config["build_batch_size"] = int(batch_size_slider.value)
-        # 💥 增加这一行，保存 Batch Size
-        app.ai_config["build_batch_size"] = int(batch_size_slider.value)
-        # 💥 保存并发数
-        app.ai_config["n_parallel"] = int(parallel_slider.value)
-        # 💥 新增保存 n_ubatch：将滑块的 1,2,3 档翻译回真实数值
-        app.ai_config["n_ubatch"] = ubatch_map[int(ubatch_slider.value)]
-        # 💥 补上保存 GPU 层数的代码
-        app.ai_config["n_gpu_layers"] = int(gpu_layers_slider.value)
+        
+        # 💥 修复一：安全提取滑块值，防止空指针或类型异常
+        app.ai_config["build_batch_size"] = int(round(float(batch_size_slider.value)))
+        app.ai_config["n_parallel"] = int(round(float(parallel_slider.value)))
+        app.ai_config["n_gpu_layers"] = int(round(float(gpu_layers_slider.value)))
+        app.ai_config["top_k"] = int(round(float(top_k_slider.value)))
+        
+        # 💥 修复二：给脆弱的字典映射加上兜底逻辑，防止它中断整个保存进程
+        app.ai_config["n_ubatch"] = ubatch_map[int(round(ubatch_slider.value))]
+        
+        # 写入硬盘
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
 
