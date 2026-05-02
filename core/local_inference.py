@@ -401,7 +401,7 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU...
+            # 1. 纯 CPU 模式屏蔽逻辑
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
                 os.environ["GGML_OPENCL_VISIBLE_DEVICES"] = "none"
             else:
@@ -410,41 +410,39 @@ else:
             
             self.opencl_available = False
             self.opencl_disable_reason = "初始化未完成"
-            
-            # 💥 2. 暴力破解：全盘地毯式搜索 OpenCL 驱动并强行注入全局内存
-            cl_loaded = False
-            # 针对不同芯片硬编码底层绝对路径
-            opencl_paths = [
-                "/vendor/lib64/libOpenCL.so",          # 小米/高通骁龙主力路径
-                "/system/vendor/lib64/libOpenCL.so",   # 部分老机型路径
-                "/system/lib64/libOpenCL.so",          # 备用路径
-                "/vendor/lib64/egl/libGLES_mali.so"    # 联发科天玑 Mali 驱动客串路径
+
+            # 2. 霸王硬上弓：直接去安卓系统的老巢里揪出原生 OpenCL 驱动！
+            # 绝对不能用相对路径，必须用绝对路径穿透
+            opencl_system_paths = [
+                "/vendor/lib64/libOpenCL.so",          # 小米/高通主力驱动路径 (你的 17 Pro 就是这个)
+                "/system/vendor/lib64/libOpenCL.so",   # 老旧机型路径
+                "/system/lib64/libOpenCL.so"           # 备用路径
             ]
             
-            for path in opencl_paths:
+            for path in opencl_system_paths:
                 try:
-                    # 关键：必须是 RTLD_GLOBAL，提前把 OpenCL 函数暴露在空中
+                    # RTLD_GLOBAL 是关键！它能让驱动函数暴露给后续的 ggml-opencl.so 使用
                     ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
-                    cl_loaded = True
-                    _llama_internal_logs.append(f"[Python] 霸王硬上弓成功！在 {path} 捕获 OpenCL 驱动！")
-                    break
+                    _llama_internal_logs.append(f"[Python] 成功在系统底层捕获驱动: {path}")
+                    break # 抓到一个能用的就行，立刻跳出循环
                 except Exception:
                     continue
 
-            # 无论如何，继续加载后续引擎
+            # 3. 继续加载我们的引擎 (注意：这里面绝对不要再写 libOpenCL.so 了)
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
                 "libggml-cpu.so",       
-                "libggml-opencl.so",    # 当它醒来时，OpenCL 函数已经被上面提前准备好了
+                "libggml-opencl.so",    # 此时它醒来，就能用到上面系统驱动提供的 clGetPlatformIDs 了
             ]
+            
             for lib_name in dependencies:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
                 except Exception as e:
                     _llama_internal_logs.append(f"[Python] 加载 {lib_name} 失败: {e}")
 
-            # 💥 3. OpenCL 探针探测
+            # 4. OpenCL 探针探测
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
                 self.opencl_available = False
                 self.opencl_disable_reason = "用户已手动强制使用 CPU"
@@ -457,22 +455,14 @@ else:
                         if reg_ptr is not None and reg_ptr != 0:
                             self.opencl_available = True
                             self.opencl_disable_reason = ""
-                            _llama_internal_logs.append("[Python] OpenCL 后端初始化成功，将尝试启用 GPU 加速")
                         else:
-                            cl_err = "手机系统未内置 libOpenCL.so 或驱动受限"
-                            if _llama_internal_logs:
-                                for log in reversed(_llama_internal_logs):
-                                    if "opencl" in log.lower() or "cl" in log.lower() or "error" in log.lower():
-                                        cl_err = log.replace("[C++] ", "")
-                                        break
-                            self.opencl_disable_reason = f"底层注册被拒 ({cl_err})"
-                            _llama_internal_logs.append(f"[Python] OpenCL 探测失败: {self.opencl_disable_reason}")
+                            self.opencl_disable_reason = "底层注册被拒 (驱动返回空指针)"
                     else:
                         self.opencl_disable_reason = "库文件受损，找不到 OpenCL 注册入口"
                 except Exception as e:
                     self.opencl_disable_reason = f"加载动态库异常: {str(e)}"
 
-            # 💥 主引擎加载保持不变
+            # 5. 加载主引擎
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
