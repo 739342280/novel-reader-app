@@ -401,24 +401,22 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU，必须从物理底层彻底屏蔽 GPU 设备！
+            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU，从物理底层彻底屏蔽 OpenCL 设备
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
-                os.environ["GGML_VK_VISIBLE_DEVICES"] = "none"
+                os.environ["GGML_OPENCL_VISIBLE_DEVICES"] = "none"
             else:
-                # 切回 GPU 模式时，解除屏蔽
-                if "GGML_VK_VISIBLE_DEVICES" in os.environ:
-                    del os.environ["GGML_VK_VISIBLE_DEVICES"]
-
-            os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
+                if "GGML_OPENCL_VISIBLE_DEVICES" in os.environ:
+                    del os.environ["GGML_OPENCL_VISIBLE_DEVICES"]
             
-            self.vulkan_available = False
-            self.vulkan_disable_reason = "初始化未完成"
+            self.opencl_available = False
+            self.opencl_disable_reason = "初始化未完成"
             
+            # 💥 2. 加载 OpenCL 依赖库
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
                 "libggml-cpu.so",       # 必须保留
-                "libggml-vulkan.so",    # 必须保留
+                "libggml-opencl.so",    # 替换为 OpenCL 后端库
             ]
             for lib_name in dependencies:
                 try:
@@ -426,35 +424,35 @@ else:
                 except Exception:
                     pass
 
-            # 💥 2. 优化逻辑：如果是强制 CPU 模式，直接跳过探针探测，防止引发意外崩溃
+            # 💥 3. OpenCL 探针探测
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
-                self.vulkan_available = False
-                self.vulkan_disable_reason = "用户已手动强制使用 CPU"
+                self.opencl_available = False
+                self.opencl_disable_reason = "用户已手动强制使用 CPU"
             else:
-                # 只有在“智能模式”下，才去探测 Vulkan
                 try:
-                    vk_lib = ctypes.CDLL("libggml-vulkan.so", mode=ctypes.RTLD_GLOBAL)
-                    if hasattr(vk_lib, "ggml_backend_vk_reg"):
-                        vk_lib.ggml_backend_vk_reg.restype = ctypes.c_void_p
-                        reg_ptr = vk_lib.ggml_backend_vk_reg()
+                    cl_lib = ctypes.CDLL("libggml-opencl.so", mode=ctypes.RTLD_GLOBAL)
+                    if hasattr(cl_lib, "ggml_backend_opencl_reg"):
+                        cl_lib.ggml_backend_opencl_reg.restype = ctypes.c_void_p
+                        reg_ptr = cl_lib.ggml_backend_opencl_reg()
                         if reg_ptr is not None and reg_ptr != 0:
-                            self.vulkan_available = True
-                            self.vulkan_disable_reason = ""
-                            _llama_internal_logs.append("[Python] Vulkan 后端初始化成功，将尝试启用 GPU 加速")
+                            self.opencl_available = True
+                            self.opencl_disable_reason = ""
+                            _llama_internal_logs.append("[Python] OpenCL 后端初始化成功，将尝试启用 GPU 加速")
                         else:
-                            vk_err = "驱动不支持或缺少必要扩展"
+                            cl_err = "手机系统未内置 libOpenCL.so 或驱动受限"
                             if _llama_internal_logs:
                                 for log in reversed(_llama_internal_logs):
-                                    if "vulkan" in log.lower() or "vk" in log.lower() or "error" in log.lower():
-                                        vk_err = log.replace("[C++] ", "")
+                                    if "opencl" in log.lower() or "cl" in log.lower() or "error" in log.lower():
+                                        cl_err = log.replace("[C++] ", "")
                                         break
-                            self.vulkan_disable_reason = f"底层注册被拒 ({vk_err})"
-                            _llama_internal_logs.append(f"[Python] Vulkan 探测失败: {self.vulkan_disable_reason}")
+                            self.opencl_disable_reason = f"底层注册被拒 ({cl_err})"
+                            _llama_internal_logs.append(f"[Python] OpenCL 探测失败: {self.opencl_disable_reason}")
                     else:
-                        self.vulkan_disable_reason = "库文件受损，找不到 Vulkan 注册入口"
+                        self.opencl_disable_reason = "库文件受损，找不到 OpenCL 注册入口"
                 except Exception as e:
-                    self.vulkan_disable_reason = f"加载动态库异常: {str(e)}"
+                    self.opencl_disable_reason = f"加载动态库异常: {str(e)}"
 
+            # 💥 主引擎加载保持不变
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
@@ -514,8 +512,7 @@ else:
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
             
-            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。
-            # 完美避开高通驱动物理填零的 10 秒死锁！
+            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。            
             self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)
 
             text_bytes = text.encode('utf-8')

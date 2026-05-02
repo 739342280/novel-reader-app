@@ -112,39 +112,24 @@ jobs:
         repository: ggerganov/llama.cpp
         path: llama.cpp-src
 
-    # 💥 终极破除 Vulkan 编译大山：直接从 LunarG 官方源安装最纯正的 Vulkan SDK
-    - name: Install Official Vulkan SDK
+    # 💥 1. 拉取 Khronos 官方纯净版 OpenCL 头文件
+    - name: Fetch OpenCL Headers
       run: |
-        echo "🚀 开始配置 LunarG 官方 Vulkan 源..."
-        # 1. 导入 LunarG 的官方签名密钥
-        wget -qO- https://packages.lunarg.com/lunarg-signing-key-pub.asc | sudo tee /etc/apt/trusted.gpg.d/lunarg.asc
-        # 2. 动态获取当前 Github Ubuntu 服务器的代号 (比如 jammy 或 noble)
-        . /etc/os-release
-        # 3. 添加对应的官方软件源
-        sudo wget -qO /etc/apt/sources.list.d/lunarg-vulkan-${UBUNTU_CODENAME}.list http://packages.lunarg.com/vulkan/lunarg-vulkan-${UBUNTU_CODENAME}.list
-        # 4. 更新源并安装完整 SDK (自带原装 glslc)
-        sudo apt-get update
-        sudo apt-get install -y vulkan-sdk
-        echo "✅ Vulkan SDK 安装完成！检查 glslc 路径："
-        which glslc
+        echo "🚀 获取 Khronos 官方 OpenCL 头文件..."
+        git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git opencl-headers
 
-    - name: Build Monolithic libllama.so
+    # 💥 2. 编译 OpenCL 版的单体 libllama.so
+    - name: Build Monolithic libllama.so (OpenCL)
       run: |
-        echo "🚀 开始静态熔炼 llama.cpp..."
+        echo "🚀 开始静态熔炼 llama.cpp (OpenCL版)..."
         cd llama.cpp-src
-        
-        # 💥 破除跨平台头文件大山：拉取纯净的官方头文件
-        echo "📥 正在获取 Vulkan 与 SPIR-V 头文件..."
-        git clone --depth 1 https://github.com/KhronosGroup/Vulkan-Headers.git vulkan-headers
-        git clone --depth 1 https://github.com/KhronosGroup/SPIRV-Headers.git spirv-headers
         
         mkdir build && cd build
         
-        # 💥 获取绝对路径，准备注入 CMake
-        VULKAN_INC="$(pwd)/../vulkan-headers/include"
-        SPIRV_INC="$(pwd)/../spirv-headers/include"
+        # 获取 OpenCL 头文件的绝对路径
+        OPENCL_INC="$(pwd)/../opencl-headers"
         
-        # 💥 核心修复：直接通过 CMake 参数强行追加 -I 标志，绕过工具链的环境变量屏蔽
+        # 核心修改：关闭 VULKAN，开启 OPENCL
         cmake .. \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
@@ -152,29 +137,28 @@ jobs:
           -DCMAKE_BUILD_TYPE=Release \
           -DBUILD_SHARED_LIBS=ON \
           -DGGML_OPENMP=OFF \
-          -DGGML_VULKAN=ON \
-          -DCMAKE_C_FLAGS="-I${VULKAN_INC} -I${SPIRV_INC}" \
-          -DCMAKE_CXX_FLAGS="-I${VULKAN_INC} -I${SPIRV_INC}" \
+          -DGGML_OPENCL=ON \
+          -DCMAKE_C_FLAGS="-I${OPENCL_INC}" \
+          -DCMAKE_CXX_FLAGS="-I${OPENCL_INC}" \
           -DGGML_BACKEND_DL=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
           -DLLAMA_BUILD_SERVER=OFF
         
-        # 使用 4 线程全速编译
+        # 4 线程全速编译
         make -j4
         
-        # 💥 架构师级认错：全员集结，一个都不能少！
         mkdir -p ../../android_native_libs/lib/arm64-v8a
         find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         find . -name "libggml.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         find . -name "libggml-cpu.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; 
-        find . -name "libggml-vulkan.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; # 💥 修复点：把它请回来！
+        # 💥 提取编译出的 OpenCL 动态库
+        find . -name "libggml-opencl.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         find . -name "libllama.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         
-        # 阅后即焚，清理源码节省硬盘空间
         cd ../..
         rm -rf llama.cpp-src
-        echo "✅ 纯血版静态单体 libllama.so 编译就绪！"
+        echo "✅ OpenCL 版静态单体 libllama.so 编译就绪！"
         
     - name: Cache Flet templates
       uses: actions/cache@v4
