@@ -49,11 +49,12 @@ if sys.platform == "win32":
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
         # 💥 接收 hardware_mode 参数
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)"):
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
             self.n_ubatch = n_ubatch  
             self.hardware_mode = hardware_mode # 💥 保存状态
+            self.target_gpu_layers = n_gpu_layers # 保存 UI 传来的目标层数
             self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
@@ -185,13 +186,21 @@ else:
     import ctypes
 
     _llama_internal_logs = []
+    _debug_log_path = None
     llama_log_cb_func = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
     def _llama_log_callback(level, text, user_data):
         try:
             msg = text.decode('utf-8', errors='ignore').strip()
-            if msg and "loading tensor" not in msg and "load_weights" not in msg:
+            if msg: # 💥 测试阶段：不要过滤 "loading tensor" 了，全量输出！看看死在第几个张量！
                 _llama_internal_logs.append(f"[C++] {msg}")
+                # 💥 核心绝杀：一旦有日志，立刻、强行写入物理硬盘！不用管性能损耗，只求留住遗言！
+                global _debug_log_path
+                if _debug_log_path:
+                    with open(_debug_log_path, 'a', encoding='utf-8') as f:
+                        f.write(f"[C++] {msg}\n")
+                        f.flush() # 强制刷入硬盘，防止系统缓存还没落地就崩溃了
+                        os.fsync(f.fileno()) 
         except:
             pass
 
@@ -266,66 +275,73 @@ else:
         ]
 
     class LocalEmbeddingEngine:
-        # 💥 补全参数
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)"):
+        
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
             self.n_ubatch = n_ubatch
-            self.hardware_mode = hardware_mode # 💥 保存状态
+            self.hardware_mode = hardware_mode 
+            self.target_gpu_layers = n_gpu_layers # 保存 UI 传来的目标层数
             
-            global _llama_internal_logs
-            _llama_internal_logs.clear()
+            # 💥 1. 初始化黑匣子文件（和你的 Qwen 模型放在同一个目录下）
+            global _debug_log_path
+            _debug_log_path = self.model_path + ".vk_debug_blackbox.txt"
             
-            if not os.path.exists(self.model_path):
-                raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
-            
-            # 1. 极其清爽的加载 (无需任何多态反射或路径雷达)
+            # 每次初始化，清空旧的日志，开始新的记录
+            with open(_debug_log_path, 'w', encoding='utf-8') as f:
+                f.write("========== VULKAN 极限测试黑匣子日志启动 ==========\n")
+                f.flush()
+
+            def log_milestone(step_msg):
+                """写 Python 里程碑的辅助函数"""
+                with open(_debug_log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"\n[Python 哨兵] ---> {step_msg} <---\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+
+            log_milestone("开始执行 _load_library (加载动态库)")
             self.lib = self._load_library()
             
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
             except Exception: pass
 
+            log_milestone("执行 llama_backend_init")
             self.lib.llama_backend_init()
 
-            # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
             
-            # 终极点火开关
-            if self.hardware_mode == "智能模式 (GPU优先)" and getattr(self, 'vulkan_available', False):
-                mparams.n_gpu_layers = 14 
-                # 💥 新增死马当活马医策略：关闭 mmap，强迫引擎按块加载内存，有概率绕过安卓底层的内存分配崩溃 Bug
-                mparams.use_mmap = False 
+            # 💥 2. 贯彻你的意志：只要是智能模式，无视一切阻碍，强上 GPU 层数！不降级！
+            if self.hardware_mode == "智能模式 (GPU优先)":
+                mparams.n_gpu_layers = self.target_gpu_layers
+                log_milestone(f"已强制设定 GPU 层数为: {mparams.n_gpu_layers}")
             else:
                 mparams.n_gpu_layers = 0 
-                mparams.use_mmap = True # CPU 模式下保持 mmap 开启，速度更快
+                
+            mparams.use_mmap = True 
             
             b_path = self.model_path.encode('utf-8')
             
+            # 💥 3. 死亡雷区前瞻
+            log_milestone("【高危操作】准备执行 llama_model_load_from_file (向显卡塞入模型权重)")
             self.model = self.lib.llama_model_load_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                log_details = "\n".join(_llama_internal_logs[-15:])
-                raise Exception(f"【引擎内部报错】加载失败！底层真实原因:\n{log_details}")
+                raise Exception("模型加载失败，返回了空指针。")
+                
+            log_milestone("【存活确认】llama_model_load_from_file 成功通过！模型权重已进入显存。")
             
-            # 💥 新增：获取 vocab 对象
             self.vocab = self.lib.llama_model_get_vocab(self.model)
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
-
-            # 【修复 1】：强制开启 MEAN (平均) 池化。
-            # 这是因为我们采用了一次性发入超级大 Batch 的做法。如果不开启池化，
-            # 底层引擎在提取向量时，可能会搞混 Token 之间的归属，导致报错找不到槽位。
             cparams.pooling_type = 1            
 
             import multiprocessing
-            # 【动态线程分配】
-            # 骁龙芯片为异构架构。减去 2 个核心，留给 Android 系统底层运转和 Python 宿主进程。
-            # 防止满载导致系统卡顿，进而触发 OOM（内存杀手）强杀 App。            
-            optimal_threads = max(1, multiprocessing.cpu_count() - 2)
+            cpu_cores = multiprocessing.cpu_count()
+            optimal_threads = min(4, max(1, cpu_cores - 2)) 
             cparams.n_threads = optimal_threads 
-            cparams.n_threads_batch = optimal_threads 
+            cparams.n_threads_batch = optimal_threads
 
             # ---------------------------------------------------------
             # 🎯 内存与吞吐量核心调优区 (黄金参数)
@@ -364,11 +380,14 @@ else:
 
             # =========================================================================
 
-            # 改用新 API: llama_init_from_model
+            # 💥 4. 第二死亡雷区前瞻
+            log_milestone("【高危操作】准备执行 llama_init_from_model (向显卡申请 KV Cache 和计算缓存)")
             self.ctx = self.lib.llama_init_from_model(self.model, cparams)
+            
             if not self.ctx:
-                log_details = "\n".join(_llama_internal_logs[-5:])
-                raise Exception(f"无法创建本地模型上下文！底层原因:\n{log_details}")
+                raise Exception(f"无法创建本地模型上下文！")
+                
+            log_milestone("【存活确认】llama_init_from_model 成功通过！全部初始化完毕。")
             
             self.dim = self.lib.llama_n_embd(self.model)
             self.memory = self.lib.llama_get_memory(self.ctx)

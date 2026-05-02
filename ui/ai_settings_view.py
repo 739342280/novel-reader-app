@@ -212,6 +212,18 @@ def get_ai_settings_view(app):
 
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change)
     
+    # 💥 新增 GPU 层数滑块
+    gpu_layers_val = app.ai_config.get("n_gpu_layers", 10)
+    gpu_layers_text = ft.Text(f"GPU 物理卸载层数: {gpu_layers_val} 层", size=13, color="onSurface")
+
+    def on_gpu_layers_change(e):
+        val = int(e.control.value)
+        gpu_layers_text.value = f"GPU 物理卸载层数: {val} 层"
+        try: gpu_layers_text.update()
+        except Exception: pass
+
+    gpu_layers_slider = ft.Slider(min=0, max=32, divisions=32, value=gpu_layers_val, label="{value} 层", on_change=on_gpu_layers_change, width=INPUT_WIDTH)
+    
     # 新增的 Batch Size 控件
     batch_size_val = app.ai_config.get("build_batch_size", 15) # 默认值给 15
     batch_size_text = ft.Text(f"建库批处理量 (Batch Size): {batch_size_val} 块", size=13, color="onSurface")
@@ -651,6 +663,15 @@ def get_ai_settings_view(app):
                         size=11, color="grey", text_align=ft.TextAlign.CENTER
                     ),
 
+                    # 💥 插入 GPU 层数滑块
+                    ft.Divider(height=5, thickness=0.5, color="transparent"),
+                    gpu_layers_text,
+                    gpu_layers_slider,
+                    ft.Text(
+                        "💡 GPU 卸载层数：决定将多少层神经网络交由显卡计算。若建库时发生闪退，请尝试降低此数值（如 10 或 14）。", 
+                        size=11, color="grey", text_align=ft.TextAlign.CENTER
+                    ),
+
                     ft.Divider(height=5, thickness=0.5, color="transparent"),
                     batch_size_text,
                     batch_size_slider,
@@ -707,6 +728,8 @@ def get_ai_settings_view(app):
         app.ai_config["n_parallel"] = int(parallel_slider.value)
         # 💥 新增保存 n_ubatch：将滑块的 1,2,3 档翻译回真实数值
         app.ai_config["n_ubatch"] = ubatch_map[int(ubatch_slider.value)]
+        # 💥 补上保存 GPU 层数的代码
+        app.ai_config["n_gpu_layers"] = int(gpu_layers_slider.value)
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
 
