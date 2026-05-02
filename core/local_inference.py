@@ -480,6 +480,8 @@ else:
             lib_llama.llama_get_memory.restype = ctypes.c_void_p        
             lib_llama.llama_memory_seq_rm.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
             lib_llama.llama_memory_seq_rm.restype = ctypes.c_bool
+            lib_llama.llama_n_seq_max.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_n_seq_max.restype = ctypes.c_uint32
 
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
@@ -556,27 +558,28 @@ else:
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
             if not self.ctx: return []
 
-            # 1. 批量分词 (Tokenization)
+            # 1. 批量分词 (保持不变)
             tokenized_texts = []
             total_tokens = 0
             n_max_tokens = 512
-            
             for text in texts:
                 text_bytes = text.encode('utf-8')
                 tokens_array = (ctypes.c_int32 * n_max_tokens)()
                 n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
-                
                 if n_tokens > 0:
                     tokenized_texts.append((n_tokens, tokens_array))
                     total_tokens += n_tokens
 
             if total_tokens == 0: return []
 
-            # 💥 绝杀 4：地毯式轰炸清理！不管之前跑了多少块，128 个序列槽位全部格式化，永绝后患
-            for seq_id in range(self.lib.llama_n_seq_max(self.ctx)):
-                self.lib.llama_memory_seq_rm(self.memory, seq_id, -1, -1)
+            # 💥 核心修复：地毯式轰炸清理 KV Cache
+            # 获取当前上下文支持的最大序列数（通常是 8 或 128）
+            max_seq = self.lib.llama_n_seq_max(self.ctx)
+            for seq_id in range(max_seq):
+                # 强行抹除该序列在显存中的所有残留位置 (p0=0, p1=-1 表示全删)
+                self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
 
-            # 3. 构造超级 Batch
+            # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
             pos_arr = (ctypes.c_int32 * total_tokens)()
             n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
@@ -590,7 +593,6 @@ else:
             batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
             batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
             
-            # 处理二维指针陷阱
             seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
             inner_seqs = []
             for i in range(total_tokens):
@@ -599,12 +601,12 @@ else:
                 seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
 
-            # 💥 修复 5：直接对内存数组本身(xxx_arr)赋值，避开 ctypes 指针的间接写入漏洞
+            # 💥 关键点：每个独立分块分配一个独立的 Sequence ID，且位置都从 0 开始
             idx = 0
             for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
                 for i in range(n_tokens):
                     token_arr[idx] = tokens_array[i]
-                    pos_arr[idx] = i          
+                    pos_arr[idx] = i          # ✅ 每个序列内部从 0 开始，绝不冲突
                     n_seq_id_arr[idx] = 1
                     inner_seqs[idx][0] = seq_id 
                     logits_arr[idx] = 1 if i == n_tokens - 1 else 0 
@@ -612,21 +614,17 @@ else:
 
             self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
 
-            # 5. 一次性核爆解码！
+            # 5. 一次性解码
             res = self.lib.llama_decode(self.ctx, batch)
             if res != 0: 
                 raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
 
-            # 6. 分离并提取每个序列的最终向量
+            # 6. 分离并提取向量 (保持不变)
             embeddings = []
             for seq_id in range(len(tokenized_texts)):
-                emb_ptr = None
-                if hasattr(self.lib, 'llama_get_embeddings_seq'):
-                    emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
-                
+                emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
                 if not emb_ptr:
                     raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
-                
                 embeddings.append([emb_ptr[i] for i in range(self.dim)])
 
             self._memory_shield = None
