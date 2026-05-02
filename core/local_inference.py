@@ -401,7 +401,7 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU，从物理底层彻底屏蔽 OpenCL 设备
+            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU...
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
                 os.environ["GGML_OPENCL_VISIBLE_DEVICES"] = "none"
             else:
@@ -411,19 +411,38 @@ else:
             self.opencl_available = False
             self.opencl_disable_reason = "初始化未完成"
             
-            # 💥 2. 加载 OpenCL 依赖库
+            # 💥 2. 暴力破解：全盘地毯式搜索 OpenCL 驱动并强行注入全局内存
+            cl_loaded = False
+            # 针对不同芯片硬编码底层绝对路径
+            opencl_paths = [
+                "/vendor/lib64/libOpenCL.so",          # 小米/高通骁龙主力路径
+                "/system/vendor/lib64/libOpenCL.so",   # 部分老机型路径
+                "/system/lib64/libOpenCL.so",          # 备用路径
+                "/vendor/lib64/egl/libGLES_mali.so"    # 联发科天玑 Mali 驱动客串路径
+            ]
+            
+            for path in opencl_paths:
+                try:
+                    # 关键：必须是 RTLD_GLOBAL，提前把 OpenCL 函数暴露在空中
+                    ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+                    cl_loaded = True
+                    _llama_internal_logs.append(f"[Python] 霸王硬上弓成功！在 {path} 捕获 OpenCL 驱动！")
+                    break
+                except Exception:
+                    continue
+
+            # 无论如何，继续加载后续引擎
             dependencies = [
-                "libOpenCL.so",         # 💥 必须排在第一位！先把安卓系统底层自带的高通驱动装载进全局内存
                 "libggml-base.so",
                 "libggml.so",
                 "libggml-cpu.so",       
-                "libggml-opencl.so",    # 这样它加载时，就能找到前面装好的 OpenCL 函数了
+                "libggml-opencl.so",    # 当它醒来时，OpenCL 函数已经被上面提前准备好了
             ]
             for lib_name in dependencies:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _llama_internal_logs.append(f"[Python] 加载 {lib_name} 失败: {e}")
 
             # 💥 3. OpenCL 探针探测
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
@@ -493,7 +512,6 @@ else:
                 lib_llama.llama_synchronize.restype = None
             except Exception:
                 pass
-
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
             except Exception: pass
