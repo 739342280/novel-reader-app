@@ -383,6 +383,9 @@ else:
             # 🔧 关键：强制关闭 Flash Attention，防止驱动因大型着色器崩溃
             cparams.flash_attn_type = 0 
 
+            # 💥 新增这行代码：把配置参数保存下来
+            self.cparams = cparams
+
             # =========================================================================
 
             # 💥 4. 第二死亡雷区前瞻
@@ -504,8 +507,12 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            # 💥 关键：每次计算前清除序列 0 的全部记忆，避免上下文污染
-            self.lib.llama_memory_clear(self.memory, False)
+            # 💥 终极避坑大法：硬重启上下文
+            if hasattr(self, 'ctx') and self.ctx:
+                self.lib.llama_free(self.ctx)
+            
+            self.ctx = self.lib.llama_init_from_model(self.model, self.cparams)
+            self.memory = self.lib.llama_get_memory(self.ctx)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -574,9 +581,14 @@ else:
 
             if total_tokens == 0: return []
 
-            # 💥 核心修复：地毯式轰炸清理 KV Cache
-            # 获取当前上下文支持的最大序列数（通常是 8 或 128）
-            self.lib.llama_memory_clear(self.memory, False)
+            # 💥 终极避坑大法：硬重启上下文
+            # 彻底销毁旧的显存工作区和计算图，然后瞬间重新申请一个干净的。
+            # 完美避开高通 Adreno 驱动在连续复用上下文时的 DeviceLost 崩溃死穴！
+            if hasattr(self, 'ctx') and self.ctx:
+                self.lib.llama_free(self.ctx)
+            
+            self.ctx = self.lib.llama_init_from_model(self.model, self.cparams)
+            self.memory = self.lib.llama_get_memory(self.ctx)
 
             # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
