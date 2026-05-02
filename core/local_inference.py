@@ -482,6 +482,9 @@ else:
             lib_llama.llama_memory_seq_rm.restype = ctypes.c_bool
             lib_llama.llama_n_seq_max.argtypes = [ctypes.c_void_p]
             lib_llama.llama_n_seq_max.restype = ctypes.c_uint32
+            # 💥 新增的物理重置接口绑定
+            lib_llama.llama_memory_clear.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+            lib_llama.llama_memory_clear.restype = None
 
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
@@ -502,7 +505,7 @@ else:
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
             # 💥 关键：每次计算前清除序列 0 的全部记忆，避免上下文污染
-            self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)  # seq_id=0, p0=0, p1=-1
+            self.lib.llama_memory_clear(self.memory, False)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -533,8 +536,7 @@ else:
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
             
             logits_array = (ctypes.c_int8 * n_tokens)() 
-            for i in range(n_tokens): logits_array[i] = 0
-            logits_array[n_tokens - 1] = 1 
+            for i in range(n_tokens): logits_array[i] = 1
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
 
@@ -574,7 +576,7 @@ else:
 
             # 💥 核心修复：地毯式轰炸清理 KV Cache
             # 获取当前上下文支持的最大序列数（通常是 8 或 128）
-            self.lib.llama_memory_seq_rm(self.memory, -1, 0, -1)
+            self.lib.llama_memory_clear(self.memory, False)
 
             # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
@@ -603,10 +605,11 @@ else:
             for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
                 for i in range(n_tokens):
                     token_arr[idx] = tokens_array[i]
-                    pos_arr[idx] = i          # ✅ 每个序列内部从 0 开始，绝不冲突
+                    pos_arr[idx] = i          
                     n_seq_id_arr[idx] = 1
                     inner_seqs[idx][0] = seq_id 
-                    logits_arr[idx] = 1 if i == n_tokens - 1 else 0 
+                    # 💥 修复警告：均值池化需要全部标记为 1，让底层顺畅提取所有 Token 的向量
+                    logits_arr[idx] = 1 
                     idx += 1
 
             self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
