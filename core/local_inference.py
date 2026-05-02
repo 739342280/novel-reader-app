@@ -315,10 +315,12 @@ else:
             if self.hardware_mode == "强制GPU模式":
                 mparams.n_gpu_layers = self.target_gpu_layers
                 log_milestone(f"已强制设定 GPU 层数为: {mparams.n_gpu_layers}")
+                # 💥 核心修复一：在 GPU 模式下，必须彻底关闭 mmap！
+                # 只有关闭它，才能避免 Vulkan_Host 拷贝时的内存越界崩溃
+                mparams.use_mmap = False
             else:
-                mparams.n_gpu_layers = 0 
-                
-            mparams.use_mmap = True
+                mparams.n_gpu_layers = 0                 
+                mparams.use_mmap = True
             
             b_path = self.model_path.encode('utf-8')
             
