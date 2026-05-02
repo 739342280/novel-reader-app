@@ -488,6 +488,12 @@ else:
             # 💥 新增的物理重置接口绑定
             lib_llama.llama_memory_clear.argtypes = [ctypes.c_void_p, ctypes.c_bool]
             lib_llama.llama_memory_clear.restype = None
+            # 💥 新增：官方的上下文强制同步接口
+            try:
+                lib_llama.llama_synchronize.argtypes = [ctypes.c_void_p]
+                lib_llama.llama_synchronize.restype = None
+            except Exception:
+                pass
 
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
@@ -507,7 +513,7 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            self.lib.llama_memory_clear(self.memory, False)
+            self.lib.llama_memory_clear(self.memory, True)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -561,74 +567,105 @@ else:
         
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
             if not self.ctx: return []
-
-            # 1. 批量分词 (保持不变)
-            tokenized_texts = []
-            total_tokens = 0
-            n_max_tokens = 512
-            for text in texts:
-                text_bytes = text.encode('utf-8')
-                tokens_array = (ctypes.c_int32 * n_max_tokens)()
-                n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
-                if n_tokens > 0:
-                    tokenized_texts.append((n_tokens, tokens_array))
-                    total_tokens += n_tokens
-
-            if total_tokens == 0: return []
-
-            self.lib.llama_memory_clear(self.memory, False)
-
-            # 3. 构造超级 Batch (保持不变)
-            token_arr = (ctypes.c_int32 * total_tokens)()
-            pos_arr = (ctypes.c_int32 * total_tokens)()
-            n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
-            logits_arr = (ctypes.c_int8 * total_tokens)()
-
-            batch = LlamaBatch()
-            batch.n_tokens = total_tokens
-            batch.token = ctypes.cast(token_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
-            batch.pos = ctypes.cast(pos_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
             
-            seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
-            inner_seqs = []
-            for i in range(total_tokens):
-                inner = (ctypes.c_int32 * 1)(0)
-                inner_seqs.append(inner)
-                seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
-            batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
-
-            # 💥 关键点：每个独立分块分配一个独立的 Sequence ID，且位置都从 0 开始
-            idx = 0
-            for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
-                for i in range(n_tokens):
-                    token_arr[idx] = tokens_array[i]
-                    pos_arr[idx] = i          
-                    n_seq_id_arr[idx] = 1
-                    inner_seqs[idx][0] = seq_id 
-                    # 💥 必须全部给 1，防止底层 override 撕裂计算图！
-                    logits_arr[idx] = 1
-                    idx += 1
-
-            self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
-
-            # 5. 一次性解码
-            res = self.lib.llama_decode(self.ctx, batch)
-            if res != 0: 
-                raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
-
-            # 6. 分离并提取向量 (保持不变)
+            # 经过多轮测试，当前 Adreno 840 Vulkan 驱动在多序列批量解码时存在缺陷。
+            # 因此，这里通过逐条调用已加固的 get_embedding 来保证稳定，同时对外保持批量接口不变。
             embeddings = []
-            for seq_id in range(len(tokenized_texts)):
-                emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
-                if not emb_ptr:
-                    raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
-                embeddings.append([emb_ptr[i] for i in range(self.dim)])
-
-            self._memory_shield = None
+            for text in texts:
+                emb = self.get_embedding(text)
+                embeddings.append(emb)
             return embeddings
+        
+        # def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        #     if not self.ctx: return []
+
+        #     # 1. 批量分词 (保持不变)
+        #     tokenized_texts = []
+        #     total_tokens = 0
+        #     n_max_tokens = 512
+        #     for text in texts:
+        #         text_bytes = text.encode('utf-8')
+        #         tokens_array = (ctypes.c_int32 * n_max_tokens)()
+        #         n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
+        #         if n_tokens > 0:
+        #             tokenized_texts.append((n_tokens, tokens_array))
+        #             total_tokens += n_tokens
+
+        #     if total_tokens == 0: return []
+
+        #     # 1. 精准定向清除：只清理本次建库实际用到的 seq_id
+        #     for seq_id in range(len(tokenized_texts)):
+        #         self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
+
+        #     # 2. 逻辑级清空：重置指针，但不触发物理零填充死锁
+        #     self.lib.llama_memory_clear(self.memory, False)
+
+        #     # 3. 强制同步：强迫 Vulkan 驱动执行完刚才所有内存指令，排空队列
+        #     try:
+        #         self.lib.llama_synchronize(self.ctx)
+        #     except Exception:
+        #         pass
+
+        #     # 4. 物理休眠：给 Android 系统看门狗 0.1 秒时间重置 TDR 计时器
+        #     time.sleep(0.1)
+
+        #     # 3. 构造超级 Batch (保持不变)
+        #     token_arr = (ctypes.c_int32 * total_tokens)()
+        #     pos_arr = (ctypes.c_int32 * total_tokens)()
+        #     n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
+        #     logits_arr = (ctypes.c_int8 * total_tokens)()
+
+        #     batch = LlamaBatch()
+        #     batch.n_tokens = total_tokens
+        #     batch.token = ctypes.cast(token_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
+        #     batch.pos = ctypes.cast(pos_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
+            
+        #     seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
+        #     inner_seqs = []
+        #     for i in range(total_tokens):
+        #         inner = (ctypes.c_int32 * 1)(0)
+        #         inner_seqs.append(inner)
+        #         seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
+        #     batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
+
+        #     # 💥 关键点：每个独立分块分配一个独立的 Sequence ID，且位置都从 0 开始
+        #     idx = 0
+        #     for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
+        #         for i in range(n_tokens):
+        #             token_arr[idx] = tokens_array[i]
+        #             pos_arr[idx] = i          
+        #             n_seq_id_arr[idx] = 1
+        #             inner_seqs[idx][0] = seq_id 
+        #             # 💥 经典输出：只有该切块的最后一个 Token 给 1
+        #             logits_arr[idx] = 1 if i == n_tokens - 1 else 0
+        #             idx += 1
+
+        #     self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
+
+        #     # 5. 一次性解码
+        #     res = self.lib.llama_decode(self.ctx, batch)
+        #     if res != 0: 
+        #         raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
+            
+        #     # 强制同步：在提取向量前，确保 GPU 已经算完了
+        #     try:
+        #         self.lib.llama_synchronize(self.ctx)
+        #     except Exception:
+        #         pass
+
+        #     # 6. 分离并提取向量 (保持不变)
+        #     embeddings = []
+        #     for seq_id in range(len(tokenized_texts)):
+        #         emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
+        #         if not emb_ptr:
+        #             raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
+        #         embeddings.append([emb_ptr[i] for i in range(self.dim)])
+
+        #     self._memory_shield = None
+        #     return embeddings
         
         def __del__(self):
             if hasattr(self, 'ctx') and self.ctx: self.lib.llama_free(self.ctx)
