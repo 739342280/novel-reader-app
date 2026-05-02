@@ -513,7 +513,10 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            self.lib.llama_memory_clear(self.memory, True)
+            
+            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。
+            # 完美避开高通驱动物理填零的 10 秒死锁！
+            self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -544,10 +547,14 @@ else:
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
             
             logits_array = (ctypes.c_int8 * n_tokens)() 
-            for i in range(n_tokens): logits_array[i] = 1
+            
+            # 💥 2. 只有最后一个 Token 赋 1！
+            # 彻底终结 "1024 个结果塞进 8 个空位" 的显存越界大爆炸！
+            for i in range(n_tokens): logits_array[i] = 0
+            logits_array[n_tokens - 1] = 1
+            
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
-
             self._memory_shield = (pos_array, n_seq_id_array, seq_id_ptrs, inner_seqs, logits_array)
 
             res = self.lib.llama_decode(self.ctx, batch)
