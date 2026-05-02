@@ -49,7 +49,7 @@ if sys.platform == "win32":
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
         # 💥 接收 hardware_mode 参数
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)", n_gpu_layers: int = 0):
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "强制GPU模式", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
             self.n_ubatch = n_ubatch  
@@ -80,7 +80,7 @@ if sys.platform == "win32":
             ctx_size = str(self.n_parallel * 1024)
 
             # 💥 判断是否使用 CPU 模式
-            ngl_value = "99" if self.hardware_mode == "智能模式 (GPU优先)" else "0"
+            ngl_value = "99" if self.hardware_mode == "强制GPU模式" else "0"
 
             # 核心启动参数：加载模型，开启向量模式，绑定端口
             cmd = [
@@ -276,7 +276,7 @@ else:
 
     class LocalEmbeddingEngine:
         
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "智能模式 (GPU优先)", n_gpu_layers: int = 0):
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "强制GPU模式", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
             self.n_ubatch = n_ubatch
@@ -311,14 +311,14 @@ else:
 
             mparams = self.lib.llama_model_default_params()
             
-            # 💥 2. 贯彻你的意志：只要是智能模式，无视一切阻碍，强上 GPU 层数！不降级！
-            if self.hardware_mode == "智能模式 (GPU优先)":
+            # 💥 2. 贯彻测试意志：只要是智能模式，无视探针的 vulkan_available 结果，强上 GPU 层数！
+            if self.hardware_mode == "强制GPU模式":
                 mparams.n_gpu_layers = self.target_gpu_layers
                 log_milestone(f"已强制设定 GPU 层数为: {mparams.n_gpu_layers}")
             else:
                 mparams.n_gpu_layers = 0 
                 
-            mparams.use_mmap = True 
+            mparams.use_mmap = True
             
             b_path = self.model_path.encode('utf-8')
             

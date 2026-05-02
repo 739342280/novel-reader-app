@@ -100,8 +100,8 @@ def get_ai_settings_view(app):
     # 💥 新增：硬件加速模式下拉框
     hardware_mode_dd = ft.Dropdown(
         label="硬件加速模式", 
-        options=[ft.dropdown.Option("智能模式 (GPU优先)"), ft.dropdown.Option("强制 CPU 模式")], 
-        value=app.ai_config.get("hardware_mode", "智能模式 (GPU优先)"),
+        options=[ft.dropdown.Option("强制GPU模式"), ft.dropdown.Option("强制 CPU 模式")], 
+        value=app.ai_config.get("hardware_mode", "强制GPU模式"),
         text_size=13, dense=True, width=INPUT_WIDTH
     )
 
@@ -443,18 +443,26 @@ def get_ai_settings_view(app):
                     dim = len(first_emb)
 
                     # 💥 探针结果分析与 UI 互动
-                    if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "智能模式 (GPU优先)":
+                    if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "强制GPU模式":
                         engine = getattr(AIService, '_local_engine', None)
                         if engine:
-                            reason = getattr(engine, 'vulkan_disable_reason', '')
-                            if reason:  
-                                # 探测失败：弹窗警告并静默降级（不延迟，直接用 CPU 开跑）
-                                app.show_snack_bar(f"⚠️ 硬件警告：GPU 加速不可用，已自动降级为 CPU 模式。\n降级原因: {reason}")
+                            import sys
+                            if sys.platform == "win32":
+                                # 💻 电脑端独立子进程架构，无探针，直接秒进全速建库
+                                safe_update_ui(0.05, "⚡ 桌面端 GPU 引擎就绪，全速建库中...")
                             else:
-                                # 探测成功：给予炫酷的正面反馈，并延迟 2 秒开搞！
-                                app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
-                                safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
-                                time.sleep(2)  # 线程沉睡 2 秒，给用户留出阅读提示的时间
+                                # 📱 安卓端原生探针逻辑
+                                reason = getattr(engine, 'vulkan_disable_reason', '')
+                                if reason:  
+                                    # 💥 测试阶段：无视探针报错，头铁硬上 GPU！
+                                    app.show_snack_bar(f"⚠️ 探针报错: {reason}\n(已开启极限测试，将无视报错强行调用 GPU)")
+                                    safe_update_ui(0.05, "⚡ 强行 GPU 点火，2秒后开始突围...")
+                                    time.sleep(2) # 留 2 秒时间给你看清提示
+                                else:
+                                    # 探测成功：正常流程
+                                    app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
+                                    safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
+                                    time.sleep(2)
 
                     # 3. 初始化数据库 (显式清除防止叠加)
                     vdb = VectorDB(db_path)
