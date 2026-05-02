@@ -507,7 +507,7 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            self.lib.llama_memory_clear(self.memory, True)
+            self.lib.llama_memory_clear(self.memory, False)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -538,8 +538,7 @@ else:
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
             
             logits_array = (ctypes.c_int8 * n_tokens)() 
-            for i in range(n_tokens): logits_array[i] = 0
-            logits_array[n_tokens - 1] = 1
+            for i in range(n_tokens): logits_array[i] = 1
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
 
@@ -577,7 +576,7 @@ else:
 
             if total_tokens == 0: return []
 
-            self.lib.llama_memory_clear(self.memory, True)
+            self.lib.llama_memory_clear(self.memory, False)
 
             # 3. 构造超级 Batch (保持不变)
             token_arr = (ctypes.c_int32 * total_tokens)()
@@ -608,8 +607,9 @@ else:
                     token_arr[idx] = tokens_array[i]
                     pos_arr[idx] = i          
                     n_seq_id_arr[idx] = 1
-                    inner_seqs[idx][0] = seq_id                     
-                    logits_arr[idx] = 1 if i == n_tokens - 1 else 0
+                    inner_seqs[idx][0] = seq_id 
+                    # 💥 必须全部给 1，防止底层 override 撕裂计算图！
+                    logits_arr[idx] = 1
                     idx += 1
 
             self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
