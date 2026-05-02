@@ -413,10 +413,11 @@ else:
             
             # 💥 2. 加载 OpenCL 依赖库
             dependencies = [
+                "libOpenCL.so",         # 💥 必须排在第一位！先把安卓系统底层自带的高通驱动装载进全局内存
                 "libggml-base.so",
                 "libggml.so",
-                "libggml-cpu.so",       # 必须保留
-                "libggml-opencl.so",    # 替换为 OpenCL 后端库
+                "libggml-cpu.so",       
+                "libggml-opencl.so",    # 这样它加载时，就能找到前面装好的 OpenCL 函数了
             ]
             for lib_name in dependencies:
                 try:

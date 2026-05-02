@@ -117,6 +117,12 @@ jobs:
       run: |
         echo "🚀 获取 Khronos 官方 OpenCL 头文件..."
         git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git opencl-headers
+        
+        # 💥 暴力植入 1：直接把 OpenCL 头文件扔进系统的标准 include 目录
+        sudo cp -r opencl-headers/CL /usr/include/
+        
+        # 💥 暴力植入 2：为了防止 NDK 交叉编译工具链不认系统目录，再扔一份到工具链的标准目录里！
+        sudo cp -r opencl-headers/CL $ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/
 
     # 💥 2. 编译 OpenCL 版的单体 libllama.so
     - name: Build Monolithic libllama.so (OpenCL)
@@ -126,12 +132,7 @@ jobs:
         
         mkdir build && cd build
         
-        # 获取 OpenCL 头文件的绝对路径
-        OPENCL_INC="$(pwd)/../opencl-headers"
-        
-        # 💥 核心战术：在 Android NDK 交叉编译中，由于编译环境没有真实的手机驱动库，
-        # llama.cpp 的 find_package(OpenCL) 会直接报错。
-        # 我们必须显式地绕过检查，并强制它在运行时动态加载库！
+        # 因为头文件已经强行塞进标准库了，我们连 -I 参数都不需要写了！
         cmake .. \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
@@ -144,10 +145,8 @@ jobs:
           -DLLAMA_BUILD_EXAMPLES=OFF \
           -DLLAMA_BUILD_SERVER=OFF \
           -DGGML_OPENCL=ON \
-          -DOpenCL_INCLUDE_DIR="${OPENCL_INC}" \
           -DOpenCL_LIBRARY="dl" \
-          -DCMAKE_C_FLAGS="-I${OPENCL_INC} -DCL_TARGET_OPENCL_VERSION=200" \
-          -DCMAKE_CXX_FLAGS="-I${OPENCL_INC} -DCL_TARGET_OPENCL_VERSION=200"
+          -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--allow-shlib-undefined"
         
         # 4 线程全速编译
         make -j4
