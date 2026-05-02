@@ -151,7 +151,7 @@ jobs:
           -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,undefs -Wl,--unresolved-symbols=ignore-all"
         
         # 4 线程全速编译
-        make -j4
+        make -j4 llama
         
         mkdir -p ../../android_native_libs/lib/arm64-v8a
         find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
