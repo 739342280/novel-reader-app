@@ -2,11 +2,11 @@ name: Build Flet Android APK and Windows
 
 on:
   push:
-    branches: [ master, vulkan ]
+    branches: [ master, Flash-Attention ]
     tags: 
       - 'v*'
   pull_request:
-    branches: [ master, vulkan ]
+    branches: [ master, Flash-Attention ]
   workflow_dispatch:          
 
 permissions:
