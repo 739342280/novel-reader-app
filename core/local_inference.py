@@ -399,8 +399,9 @@ else:
             # 设为 True 后，变成共享大平层，只要总和不超过 8192，内存随便用。
             cparams.kv_unified = True
 
-            # 🔧 关键：强制关闭 Flash Attention，防止驱动因大型着色器崩溃
-            cparams.flash_attn_type = 0 
+            # ⚡ 解封：强行开启 Flash Attention (闪电注意力机制)
+            # 注意：若开启后发生瞬间闪退，说明当前手机的 Vulkan 驱动过旧，无法承受该着色器指令。
+            cparams.flash_attn_type = 1
 
             # 💥 新增这行代码：把配置参数保存下来
             self.cparams = cparams
