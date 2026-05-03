@@ -720,7 +720,7 @@ def get_ai_settings_view(app):
                     parallel_text,
                     parallel_slider,
                     ft.Text(
-                        "💡 物理算力限制：受显存大小制约。核显/老显卡建议设为 1~4，中高端独显建议 8~16。\n若建库时频繁瞬间崩溃或报 500 错误，请务必调低此值！", 
+                        "💡 物理算力限制：受显存大小制约。核显/老显卡建议设为 1~4，中高端独显建议 8~16。\n若建库时频繁瞬间崩溃或报 500 错误，请务必调低此值！\n(注：此参数仅在电脑端生效。移动端底层引擎会自动接管最佳并发数。)", 
                         size=11, color="grey", text_align=ft.TextAlign.CENTER
                     ),
 

@@ -65,7 +65,7 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.4.12"  
+        self.version = "0.5.0"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
         
