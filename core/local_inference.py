@@ -37,8 +37,24 @@ if sys.platform == "win32":
             try:
                 with urllib.request.urlopen(req, timeout=120) as response:
                     res_body = json.loads(response.read().decode('utf-8'))
-                    # 提取返回的多个向量，并严格按照原数组的索引顺序排列
-                    embeddings = [item["embedding"] for item in sorted(res_body["data"], key=lambda x: x["index"])]
+                    
+                    data_list = res_body.get("data", [])
+                    
+                    # 1. 防御性检查：返回的数据条数是否与请求的条数一致
+                    if len(data_list) != len(texts):
+                        raise Exception(f"数据丢失！发送了 {len(texts)} 条文本，但引擎只返回了 {len(data_list)} 条结果。")
+
+                    # 2. 安全提取：不使用脆弱的列表推导式
+                    embeddings = []
+                    # 先按照引擎返回的 index 排序（兼容 OpenAI 规范）
+                    sorted_data = sorted(data_list, key=lambda x: x.get("index", 0))
+                    
+                    for i, item in enumerate(sorted_data):
+                        emb = item.get("embedding")
+                        if not emb:
+                            raise Exception(f"批处理失败！第 {i} 条返回的数据中缺失 'embedding' 字段。")
+                        embeddings.append(emb)
+
                     return embeddings
                     
             except urllib.error.HTTPError as e:

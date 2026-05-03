@@ -87,12 +87,19 @@ class VectorDB:
     def insert_chunks(self, chunks_data: list[tuple[int, str, list[float]]]):
         with self.conn:
             if self.use_pure_python:
-                for chapter_idx, chunk_text, embedding in chunks_data:
-                    self.conn.execute(
-                        "INSERT INTO chunks_fallback (chapter_idx, chunk_text, embedding) VALUES (?, ?, ?)",
-                        (chapter_idx, chunk_text, self._serialize_float32(embedding))
-                    )
+                # 【优化】预先在 Python 层面把数据组装好
+                batch_data = [
+                    (ch_idx, text, self._serialize_float32(emb)) 
+                    for ch_idx, text, emb in chunks_data
+                ]
+                # 【优化】使用 executemany 进行底层的极速批量插入
+                self.conn.executemany(
+                    "INSERT INTO chunks_fallback (chapter_idx, chunk_text, embedding) VALUES (?, ?, ?)",
+                    batch_data
+                )
             else:
+                # C 扩展模式：建立虚拟表
+                # (这里的 virtual table 插入比较特殊，需要先获取 row_id，所以维持原样或参考 sqlite-vec 官方批量操作说明)
                 for chapter_idx, chunk_text, embedding in chunks_data:
                     cursor = self.conn.execute(
                         "INSERT INTO chunks_meta (chapter_idx, chunk_text) VALUES (?, ?)",
