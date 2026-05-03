@@ -43,6 +43,8 @@ class ConfigStateMixin:
             ),
             # 人物提示词默认值
             "prompt_char": "提取本章出现的所有人物，写出一段深度的人物梳理。用一句话标明他们的阵营、当前状态、以及与主角的关系。严禁脑补未发生的情节。",
+            # 人物+ 专属提示词
+            "prompt_char_pro": "你现在拥有上帝视角（仅限已读章节）。请结合【历史档案】与【本章表现】，对本章核心人物进行深度剖析。\n\n**【输出要求：拒绝长篇大论，追求极致精炼与深刻】**\n请按以下结构输出，每个角色单独成段，总字数严格控制在800字以内：\n\n1. **[人物姓名]：【一句话定调其本章命运或状态】**\n2. **命运轨迹（历史呼应）**：精简指出其本章行为与过往档案的联系。\n3. **核心动机与心理**：一针见血地指出其隐藏在行为背后的真正欲望或恐惧。\n\n最后，用一段不超过150字的**【群像暗流】**，总结本章这几个人物交锋背后的政治本质或时代缩影。",
             # 伏笔提示词默认值
             "prompt_clue": "找出本章看似不起眼的环境描写、对话停顿或异常行为，推测作者可能埋下的伏笔与线索。尽量精简干练。",
             "embed_mode": "云端 API",
@@ -62,7 +64,7 @@ class ConfigStateMixin:
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
-            keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", 
+            keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_char_pro", "prompt_clue", 
                             "embed_mode", "embed_url", "embed_key", "embed_model", 
                             "local_embed_path", "local_model_path", "top_k", "build_batch_size", 
                             "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch"]

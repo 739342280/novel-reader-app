@@ -56,8 +56,11 @@ def get_ai_chat_view(app):
     def get_sys_prompt():
         if state["mode"] == "main": 
             return app.ai_config.get("prompt", "")
-        if state["mode"] in ["characters", "characters_pro"]: 
+        if state["mode"] == "characters": 
             return app.ai_config.get("prompt_char", "")
+        if state["mode"] == "characters_pro": 
+            # 👇 让 characters_pro 使用我们刚才新建的专属提示词
+            return app.ai_config.get("prompt_char_pro", "")
         if state["mode"] == "clues": 
             return app.ai_config.get("prompt_clue", "")
         
@@ -175,9 +178,9 @@ def get_ai_chat_view(app):
                 saved_data[state["mode"]] = "✨ [1/3] 盲眼读心：正在飞速阅读本章，提取出场人物名单...\n\n"
                 render_chat()
 
-                chapter_text = app.engine.get_chapter_text(target_idx)[:8000]
+                chapter_text = app.engine.get_chapter_text(target_idx)[:15000]
                 
-                extract_msg = [{"role": "system", "content": f"请提取以下章节文本中出现的关键人物名字。仅返回名字本身，用逗号分隔，不要返回其他任何说明、问候或多余符号。如果没有人物，返回'无'。\n\n文本：\n{chapter_text}"}]
+                extract_msg = [{"role": "system", "content": f"请阅读以下文本，提取对本章情节推动最关键的 3-5 个人物名字。过滤掉只被提及、没有实际戏份的龙套配角。仅返回名字本身，用逗号分隔，不要返回任何说明或多余符号。如果没有人物，返回'无'。\n\n文本：\n{chapter_text}"}]
                 names_result = [""]
                 evt = threading.Event()
                 def on_c(d): names_result[0] += d
@@ -221,7 +224,7 @@ def get_ai_chat_view(app):
                                 vdb = VectorDB(db_path)
                                 for name in names:
                                     query_emb = AIService.get_embedding(app.ai_config, f"{name}的背景设定与经历")
-                                    results = vdb.search(query_emb, top_k=2, max_chapter_idx=target_idx)
+                                    results = vdb.search(query_emb, top_k=5, max_chapter_idx=target_idx)
                                     if results:
                                         rag_context += f"\n【人物 '{name}' 的档案线索】:\n"
                                         for r in results:
@@ -396,10 +399,20 @@ def get_ai_chat_view(app):
                 prev_summary = saved_data.get(state["mode"], "")
                 summary_context = f"\n\n【参考资料 C：初步分析】\n{prev_summary}\n(注：以上是你之前生成的初步总结，仅供参考，若与原文冲突，请坚决以原文为准。)" if prev_summary else ""
 
-                system_content = f"{get_sys_prompt()}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
+                # 为追问环节增加一个适配层，告诉 AI 现在是对话模式，可以参考历史
+                base_prompt = get_sys_prompt()
+                rag_instruction = ""
+                if rag_context:
+                    rag_instruction = (
+                        "\n\n【重要指令：全书关联】\n"
+                        "当前用户正在进行追问。虽然你的基本职责由上方系统提示词定义，但现在请你打破'仅限本章'的限制，"
+                        "充分利用下方提供的【全书知识库检索片段】来回答。如果用户问及之前的剧情或人物背景，请以检索到的档案为准。"
+                    )
+                    
+                # 👇 这里是核心修复：把 {get_sys_prompt()} 替换成了 {base_prompt}{rag_instruction}
+                system_content = f"{base_prompt}{rag_instruction}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
                 messages = [{"role": "system", "content": system_content}]
                 
-                # 💥 彻底删除了原有的 if saved_data... append("assistant"...) 的逻辑
                 
                 for msg in state["chats"][state["mode"]][:-1]: 
                     messages.append(msg)

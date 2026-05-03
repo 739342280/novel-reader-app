@@ -132,7 +132,7 @@ class LibraryStateMixin:
             model_name = "Qwen3-Embedding-0.6B-q4_k_m.gguf"
             model_size = "385 MB"
             model_desc = "高精度满血版 (专为电脑端优化，语义理解极强)"
-            model_url = "https://github.com/739342280/novel-reader-app/releases/download/dependencies/Qwen3-Embedding-0.6B-q4_k_m.gguf"
+            model_url = "https://hf-mirror.com/doggge/Qwen3-Embedding-0.6B-q4_k_m/resolve/main/Qwen3-Embedding-0.6B-q4_k_m.gguf"
 
         prog_bar = ft.ProgressBar(value=0, color="green", height=8, expand=True, visible=False)
         prog_text = ft.Text(f"准备下载... (大小: {model_size})", size=13, color="grey")
