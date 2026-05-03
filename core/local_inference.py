@@ -37,24 +37,8 @@ if sys.platform == "win32":
             try:
                 with urllib.request.urlopen(req, timeout=120) as response:
                     res_body = json.loads(response.read().decode('utf-8'))
-                    
-                    data_list = res_body.get("data", [])
-                    
-                    # 1. 防御性检查：返回的数据条数是否与请求的条数一致
-                    if len(data_list) != len(texts):
-                        raise Exception(f"数据丢失！发送了 {len(texts)} 条文本，但引擎只返回了 {len(data_list)} 条结果。")
-
-                    # 2. 安全提取：不使用脆弱的列表推导式
-                    embeddings = []
-                    # 先按照引擎返回的 index 排序（兼容 OpenAI 规范）
-                    sorted_data = sorted(data_list, key=lambda x: x.get("index", 0))
-                    
-                    for i, item in enumerate(sorted_data):
-                        emb = item.get("embedding")
-                        if not emb:
-                            raise Exception(f"批处理失败！第 {i} 条返回的数据中缺失 'embedding' 字段。")
-                        embeddings.append(emb)
-
+                    # 提取返回的多个向量，并严格按照原数组的索引顺序排列
+                    embeddings = [item["embedding"] for item in sorted(res_body["data"], key=lambda x: x["index"])]
                     return embeddings
                     
             except urllib.error.HTTPError as e:
@@ -369,7 +353,7 @@ else:
             # 【功能】决定了引擎能占用多少 RAM，以及最多能同时记住多少个 Token。
             # 【优化】设为 8192 约消耗 1.5GB-2.5GB 运存，对于 8GB/12GB 运存的手机是最安全的甜点值。
             # 如果设得太大（如 65536），极易被安卓低内存杀手（LMK）直接闪退。
-            cparams.n_ctx = 8192
+            cparams.n_ctx = 2048
 
             # 2. cparams.n_batch (逻辑批处理量 / 卸货区大小)
             # 【功能】告诉底层引擎，上层 Python 一次性最多会扔多少个 Token 过来。
@@ -417,68 +401,60 @@ else:
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 1. 纯 CPU 模式屏蔽逻辑
+            # 💥 1. 恢复丢失的核心护盾：如果用户选了纯 CPU，必须从物理底层彻底屏蔽 GPU 设备！
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
-                os.environ["GGML_OPENCL_VISIBLE_DEVICES"] = "none"
+                os.environ["GGML_VK_VISIBLE_DEVICES"] = "none"
             else:
-                if "GGML_OPENCL_VISIBLE_DEVICES" in os.environ:
-                    del os.environ["GGML_OPENCL_VISIBLE_DEVICES"]
-            
-            self.opencl_available = False
-            self.opencl_disable_reason = "初始化未完成"
+                # 切回 GPU 模式时，解除屏蔽
+                if "GGML_VK_VISIBLE_DEVICES" in os.environ:
+                    del os.environ["GGML_VK_VISIBLE_DEVICES"]
 
-            # 2. 霸王硬上弓：直接去安卓系统的老巢里揪出原生 OpenCL 驱动！
-            # 绝对不能用相对路径，必须用绝对路径穿透
-            opencl_system_paths = [
-                "/vendor/lib64/libOpenCL.so",          # 小米/高通主力驱动路径 (你的 17 Pro 就是这个)
-                "/system/vendor/lib64/libOpenCL.so",   # 老旧机型路径
-                "/system/lib64/libOpenCL.so"           # 备用路径
-            ]
+            os.environ["GGML_VULKAN_DISABLE_BAD_DEVICES"] = "1"
             
-            for path in opencl_system_paths:
-                try:
-                    # RTLD_GLOBAL 是关键！它能让驱动函数暴露给后续的 ggml-opencl.so 使用
-                    ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
-                    _llama_internal_logs.append(f"[Python] 成功在系统底层捕获驱动: {path}")
-                    break # 抓到一个能用的就行，立刻跳出循环
-                except Exception:
-                    continue
-
-            # 3. 继续加载我们的引擎 (注意：这里面绝对不要再写 libOpenCL.so 了)
+            self.vulkan_available = False
+            self.vulkan_disable_reason = "初始化未完成"
+            
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                "libggml-cpu.so",       
-                "libggml-opencl.so",    # 此时它醒来，就能用到上面系统驱动提供的 clGetPlatformIDs 了
+                "libggml-cpu.so",       # 必须保留
+                "libggml-vulkan.so",    # 必须保留
             ]
-            
             for lib_name in dependencies:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
-                except Exception as e:
-                    _llama_internal_logs.append(f"[Python] 加载 {lib_name} 失败: {e}")
+                except Exception:
+                    pass
 
-            # 4. OpenCL 探针探测
+            # 💥 2. 优化逻辑：如果是强制 CPU 模式，直接跳过探针探测，防止引发意外崩溃
             if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
-                self.opencl_available = False
-                self.opencl_disable_reason = "用户已手动强制使用 CPU"
+                self.vulkan_available = False
+                self.vulkan_disable_reason = "用户已手动强制使用 CPU"
             else:
+                # 只有在“智能模式”下，才去探测 Vulkan
                 try:
-                    cl_lib = ctypes.CDLL("libggml-opencl.so", mode=ctypes.RTLD_GLOBAL)
-                    if hasattr(cl_lib, "ggml_backend_opencl_reg"):
-                        cl_lib.ggml_backend_opencl_reg.restype = ctypes.c_void_p
-                        reg_ptr = cl_lib.ggml_backend_opencl_reg()
+                    vk_lib = ctypes.CDLL("libggml-vulkan.so", mode=ctypes.RTLD_GLOBAL)
+                    if hasattr(vk_lib, "ggml_backend_vk_reg"):
+                        vk_lib.ggml_backend_vk_reg.restype = ctypes.c_void_p
+                        reg_ptr = vk_lib.ggml_backend_vk_reg()
                         if reg_ptr is not None and reg_ptr != 0:
-                            self.opencl_available = True
-                            self.opencl_disable_reason = ""
+                            self.vulkan_available = True
+                            self.vulkan_disable_reason = ""
+                            _llama_internal_logs.append("[Python] Vulkan 后端初始化成功，将尝试启用 GPU 加速")
                         else:
-                            self.opencl_disable_reason = "底层注册被拒 (驱动返回空指针)"
+                            vk_err = "驱动不支持或缺少必要扩展"
+                            if _llama_internal_logs:
+                                for log in reversed(_llama_internal_logs):
+                                    if "vulkan" in log.lower() or "vk" in log.lower() or "error" in log.lower():
+                                        vk_err = log.replace("[C++] ", "")
+                                        break
+                            self.vulkan_disable_reason = f"底层注册被拒 ({vk_err})"
+                            _llama_internal_logs.append(f"[Python] Vulkan 探测失败: {self.vulkan_disable_reason}")
                     else:
-                        self.opencl_disable_reason = "库文件受损，找不到 OpenCL 注册入口"
+                        self.vulkan_disable_reason = "库文件受损，找不到 Vulkan 注册入口"
                 except Exception as e:
-                    self.opencl_disable_reason = f"加载动态库异常: {str(e)}"
+                    self.vulkan_disable_reason = f"加载动态库异常: {str(e)}"
 
-            # 5. 加载主引擎
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
@@ -518,6 +494,7 @@ else:
                 lib_llama.llama_synchronize.restype = None
             except Exception:
                 pass
+
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
             except Exception: pass
@@ -537,7 +514,8 @@ else:
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
             
-            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。            
+            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。
+            # 完美避开高通驱动物理填零的 10 秒死锁！
             self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)
 
             text_bytes = text.encode('utf-8')
@@ -597,15 +575,12 @@ else:
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
             if not self.ctx: return []
             
-            import time # 💥 引入 time 模块
-            
             # 经过多轮测试，当前 Adreno 840 Vulkan 驱动在多序列批量解码时存在缺陷。
             # 因此，这里通过逐条调用已加固的 get_embedding 来保证稳定，同时对外保持批量接口不变。
             embeddings = []
             for text in texts:
                 emb = self.get_embedding(text)
                 embeddings.append(emb)
-                time.sleep(0.01) # 💥 救命的 10 毫秒休眠，必须加在这里！让 Vulkan 喘口气！
             return embeddings
         
         # def get_embeddings(self, texts: list[str]) -> list[list[float]]:
