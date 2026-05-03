@@ -694,10 +694,8 @@ def get_ai_settings_view(app):
         app.page.update()
             
     btn_build.on_click = on_build_click
-    btn_clear.on_click = on_clear_click
+    btn_clear.on_click = on_clear_click    
     
-    # 💥 把这行直接删掉！不要了！
-    # prog_bar = ft.ProgressBar(value=init_prog_val, visible=is_building, color="blue", height=8, width=INPUT_WIDTH)
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change, width=INPUT_WIDTH)
     
     # 将 status_card 也加上宽度限制

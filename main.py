@@ -18,6 +18,8 @@ from ui.reader_view import get_reader_view
 from ui.stats_view import get_statistics_view 
 from ui.ai_settings_view import get_ai_settings_view
 from ui.ai_chat_view import get_ai_chat_view
+from core.config_state import ConfigStateMixin
+from core.library_state import LibraryStateMixin
 
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
@@ -62,7 +64,7 @@ sys.excepthook = global_crash_catcher
 # ==========================================
 # 控制器层 (App Controller & Router) 
 # ==========================================
-class NovelReaderApp:
+class NovelReaderApp(ConfigStateMixin, LibraryStateMixin):
     def __init__(self, page: ft.Page):
         self.page = page
         self.version = "0.5.0"  
@@ -99,78 +101,18 @@ class NovelReaderApp:
         self.page.padding = 0
 
         # --- 2. 核心业务状态 ---
-        self.bookshelf = []
-        self.current_book_summaries = {}
-        self.current_book_path = ""
-        self.current_book_name = ""
-        self.current_chapter_idx = 0
-        self.current_scroll_offset = 0.0  
-        self.current_max_scroll_extent = 0.0 
-        self.last_reported_pct = -1.0 
-        self.filtered_toc_mapping = []
-        self.last_search_query = None  
-        self.is_immersive = False  
-
-        # --- 3. UI 样式默认配置 ---
-        self.font_size = 18
-        self.line_height = 1.5           
-        self.paragraph_spacing = 10      
-        self.letter_spacing = 0.0  
-        self.bg_color = "#FFFFFF"
-        self.bg_image = None  
-        self.reader_text_color = "#212121"
-        self.font_family = None
-        self.follow_system_theme = True
-        self.manual_theme_mode = "light" 
-
+        self.init_config_state()   # 初始化 UI 与 AI 字典
+        self.init_library_state()  # 初始化书架进度变量 
+        
         # --- 4. 弹窗管控 ---
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0
         self._last_dismiss_time = 0
-        self.active_dialogs = []
+        self.active_dialogs = []        
         
-        self.ai_config = {
-            "url": "https://api.deepseek.com/v1/chat/completions",
-            "key": "",
-            "model": "deepseek-chat",
-            "prompt": (
-                "请对以下小说章节内容进行深度总结。\n\n"
-                "# 角色设定\n"
-                "你是一个细心的“追文助手”，擅长捕捉作者的文字留白和情绪张力。\n\n"
-                "# 总结维度\n"
-                "1. **一句话概括**：用一句话说清这章讲了什么。\n"
-                "2. **情节脉络**：\n"
-                "   - 起因：\n"
-                "   - 经过（转折点）：\n"
-                "   - 结果：\n"
-                "3. **人物弧光**：主角在这一章的心态变化曲线（例如：从愤怒 -> 冷静 -> 下定决心）。\n"
-                "4. **文笔赏析**：指出本章最精彩的一句描写或对话。\n"
-                "5. **悬疑/钩子**：本章结尾留下的悬念是什么？\n\n"
-                "# 输出限制\n"
-                "- 字数控制在300字以内。\n"
-                "- 严禁评价剧情“好不好看”，只做客观梳理。"
-            ),
-            # 💥 新增：人物提示词默认值
-            "prompt_char": "提取本章出现的所有人物，写出一段深度的人物梳理。用一句话标明他们的阵营、当前状态、以及与主角的关系。严禁脑补未发生的情节。",
-            # 💥 新增：伏笔提示词默认值
-            "prompt_clue": "找出本章看似不起眼的环境描写、对话停顿或异常行为，推测作者可能埋下的伏笔与线索。尽量精简干练。",
-            "embed_mode": "云端 API",
-            "embed_url": "https://api.deepseek.com/v1/embeddings",
-            "embed_key": "",
-            "embed_model": "text-embedding-3-small",
-            "local_embed_path": "",
-            "local_model_path": "", # 确保本地模型路径也在初始化里
-            "top_k": 5,
-            "n_gpu_layers": 10,     # 💥 新增：默认 10 层
-            "n_ubatch": 512,        # 💥 新增：默认 512
-            "build_batch_size": 15, # 💥 新增：默认 15
-            "hardware_mode": "强制GPU模式", # 💥 新增：默认硬件模式
-            "snack_duration": 3000
-        }
-
         # --- 5. 生命周期拉起与路由挂载 ---
-        self._load_config_from_appdata()
-        self._load_bookshelf()
+        self._load_config_from_appdata() # 这个方法现在由 ConfigStateMixin 提供
+        self._load_bookshelf()           # 这个方法现在由 LibraryStateMixin 提供
         
         self.page.on_keyboard_event = self._on_keyboard_control
         self.page.on_platform_brightness_change = self._on_os_theme_change
@@ -316,112 +258,7 @@ class NovelReaderApp:
                 self.page.run_task(self.text_scroll_col.scroll_to, delta=-200, duration=100)
     # endregion
 
-    # region 2. 数据持久化与存储总线
-    def _load_config_from_appdata(self):
-        data = StorageManager.load_json("ai_config.json")
-        if data:
-            # 💥 在数组最后加上 "snack_duration"
-            for k in ["url", "key", "model", "prompt", "prompt_char", "prompt_clue", "embed_mode", "embed_url", "embed_key", "embed_model", "local_embed_path", "local_model_path", "top_k", "build_batch_size", "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch"]: # 💥 加上了最后两个
-                if k in data: self.ai_config[k] = data[k]
-            bg_c = data.get("bg_color")
-            self.bg_color = bg_c if bg_c else "#FFFFFF"
-            self.bg_image = data.get("bg_image")  
-            self.reader_text_color = data.get("reader_text_color", "#212121")
-            self.font_family = data.get("font_family")
-            self.letter_spacing = data.get("letter_spacing", 0.0)
-            
-            self.follow_system_theme = data.get("follow_system_theme", True)
-            self.manual_theme_mode = str(data.get("theme_mode", "light")).lower()
-            
-            if self.follow_system_theme:
-                self.page.theme_mode = ft.ThemeMode.SYSTEM
-            else:
-                if "dark" in self.manual_theme_mode:
-                    self.page.theme_mode = ft.ThemeMode.DARK
-                else:
-                    self.page.theme_mode = ft.ThemeMode.LIGHT
-        else:
-            self.page.theme_mode = ft.ThemeMode.SYSTEM
-
-    def _save_config_to_appdata(self):
-        data_to_save = self.ai_config.copy()
-        data_to_save["bg_color"] = self.bg_color
-        data_to_save["bg_image"] = self.bg_image  
-        data_to_save["reader_text_color"] = self.reader_text_color
-        data_to_save["font_family"] = self.font_family
-        data_to_save["letter_spacing"] = self.letter_spacing
-        
-        data_to_save["follow_system_theme"] = self.follow_system_theme
-        
-        theme_str = str(self.page.theme_mode).lower()
-        if "dark" in theme_str:
-            data_to_save["theme_mode"] = "dark"
-        elif "light" in theme_str:
-            data_to_save["theme_mode"] = "light"
-        else:
-            data_to_save["theme_mode"] = "system"
-        
-        StorageManager.save_json("ai_config.json", data_to_save)
-
-    def _load_bookshelf(self):
-        self.bookshelf = StorageManager.load_json("bookshelf.json", default=[])
-
-    def _save_bookshelf(self):
-        StorageManager.save_json("bookshelf.json", self.bookshelf)
-
-    def _load_book_summaries(self):
-        self.current_book_summaries = StorageManager.load_book_summaries(self.current_book_path)
-
-    def _save_book_summaries(self):
-        StorageManager.save_book_summaries(self.current_book_path, self.current_book_summaries)    
-
-    def save_current_progress(self):
-        if getattr(self, "current_book_path", "") == "":
-            return
-        if not hasattr(self, "engine") or not self.engine.chapters_info:
-            return
-            
-        current_idx = getattr(self, "current_chapter_idx", 0)
-        if current_idx < 0 or current_idx >= len(self.engine.chapters_info):
-            return
-            
-        title = self.engine.chapters_info[current_idx]['title']
-        volume = self.engine.chapters_info[current_idx].get('volume', '')
-        offset = getattr(self, "current_scroll_offset", 0.0)
-        
-        for book in self.bookshelf:
-            if book['path'] == self.current_book_path:
-                if book.get('last_chapter_idx') == current_idx and book.get('last_scroll_offset') == offset:
-                    break
-                    
-                book['last_chapter_idx'] = current_idx
-                book['last_chapter_title'] = title
-                book['last_volume_title'] = volume 
-                book['last_scroll_offset'] = offset  
-                self._save_bookshelf()
-                break
-
-    async def _pc_auto_save_task(self):
-        if sys.platform == "win32":
-            while True:
-                await asyncio.sleep(5)
-                try:
-                    self.save_current_progress()
-                except Exception:
-                    pass
-
-    def rename_book(self, path, new_name):
-        for book in self.bookshelf:
-            if book['path'] == path:
-                book['name'] = new_name
-                break
-        self._save_bookshelf()
-        self.route_change(None)
-
-    def remove_from_bookshelf(self, path):
-        self.bookshelf = [b for b in self.bookshelf if b['path'] != path]
-        self._save_bookshelf()
-        self.route_change(None)
+    
 
     # ==========================================
     # --- 新版 Flet 0.84.0 适配代码：直接读取本地绝对路径 ---
