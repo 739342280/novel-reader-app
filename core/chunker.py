@@ -1,7 +1,7 @@
 # core/chunker.py
 
 class NovelChunker:
-    def __init__(self, chunk_size=500, overlap=50):
+    def __init__(self, chunk_size=350, overlap=50):
         """
         滑动窗口分块算法
         :param chunk_size: 每个文本块的最大字符数

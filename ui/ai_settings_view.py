@@ -405,7 +405,7 @@ def get_ai_settings_view(app):
 
                     # 1. 文本分块
                     safe_update_ui(0, "✂️ 正在进行滑动窗口分块...")
-                    chunker = NovelChunker(chunk_size=500, overlap=50)
+                    chunker = NovelChunker(chunk_size=350, overlap=50)
                     all_chunks = []
                     for idx, ch in enumerate(chapters):
                         chunks = chunker.chunk_text(app.engine.get_chapter_text(idx))
