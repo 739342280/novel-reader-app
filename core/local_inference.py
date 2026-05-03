@@ -201,7 +201,10 @@ else:
     # ---------------------------------------------------------
     import ctypes
 
-    _llama_internal_logs = []
+    from collections import deque
+    # 设置最大长度 500，当装满 500 条时，再 append 新数据，最老的数据会自动被挤出丢弃
+    _llama_internal_logs = deque(maxlen=500)
+
     _debug_log_path = None
     llama_log_cb_func = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 

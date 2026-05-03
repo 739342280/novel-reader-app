@@ -354,7 +354,8 @@ def get_ai_settings_view(app):
                     if status.get("status") == "building":
                         status_text.value = f"当前阅读：《{book_name}》\n⚠️ 索引中断：仅完成 {status['chunk_count']} / {status.get('total_chunks', '?')} 块"
                         status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.ORANGE) 
-                        btn_build.content.value = "⚠️ 重新建库"
+                        # 💥 变成继续建库！
+                        btn_build.content.value = "▶️ 继续建库"
                     else:
                         status_text.value = f"当前阅读：《{book_name}》\n索引状态：已建库 ({status['chunk_count']} 个切块)"
                         status_card.bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.GREEN) 
@@ -472,11 +473,28 @@ def get_ai_settings_view(app):
                                     safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
                                     time.sleep(2)
 
-                    # 3. 初始化数据库 (显式清除防止叠加)
+                    # 3. 断点续传与数据库初始化逻辑
                     vdb = VectorDB(db_path)
-                    vdb.clear_index() 
+                    start_chunk_idx = 0 # 默认从 0 开始
+                    
+                    status_info = vdb.get_index_status()
+                    # 判断是不是“继续建库”（UI 按钮上的字或者状态是 building）
+                    is_resuming = status_info.get("status") == "building"
+
+                    if is_resuming:
+                        safe_update_ui(0.1, "🔄 检测到历史记录，正在恢复断点...")
+                        # 获取已经存进去的切块数量
+                        start_chunk_idx = status_info.get("chunk_count", 0)
+                        # 如果某种原因越界了，重头来
+                        if start_chunk_idx >= total:
+                            start_chunk_idx = 0
+                            is_resuming = False
+                            vdb.clear_index()
+                    else:
+                        # 全新或者强制重新建库
+                        vdb.clear_index() 
+                        
                     vdb.init_tables(dim)
-                    # 💥 开工前打钢印：状态设为"正在建库"，并写入你算好的 total
                     vdb.set_meta("status", "building")
                     vdb.set_meta("total_chunks", str(total))
 
@@ -484,21 +502,37 @@ def get_ai_settings_view(app):
                     batch_size = app.ai_config.get("build_batch_size", 15)
                     total_batches = (total + batch_size - 1) // batch_size
                     
-                    for batch_idx in range(0, total, batch_size):
+                    # 💥 根据 start_chunk_idx 计算我们需要从第几个 batch 开始循环
+                    start_batch_idx = (start_chunk_idx // batch_size) * batch_size
+                    
+                    for batch_idx in range(start_batch_idx, total, batch_size):
                         batch = all_chunks[batch_idx:batch_idx+batch_size]
+                        
+                        # 💥 因为批次可能是从中间截断的，我们需要剔除掉这个 batch 里已经建过库的块
+                        # 例如：batch_size=15，但数据库里已经有了 18 块。
+                        # 那么当前 batch 是 [15:30]，我们需要剔除掉 15, 16, 17，只处理 [18:30]
+                        filtered_batch = []
+                        for i_b, (ch_idx, text) in enumerate(batch):
+                            absolute_idx = batch_idx + i_b
+                            if absolute_idx >= start_chunk_idx:
+                                filtered_batch.append((ch_idx, text))
+                        
+                        if not filtered_batch:
+                            continue # 这个 batch 的内容全存过了，直接跳过
+
                         current_batch_num = batch_idx // batch_size + 1
                         percent = batch_idx / total
                         current_end = min(batch_idx + batch_size, total)
                         
                         safe_update_ui(percent, f"🧠 推理中 (批次 {current_batch_num}/{total_batches} | 第 {batch_idx+1}-{current_end}/{total} 块)")
 
-                        batch_texts = [c[1] for c in batch]
+                        batch_texts = [c[1] for c in filtered_batch]
                         start_time = time.time()
                         batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
                         cost = time.time() - start_time
 
                         db_data = []
-                        for i_b, (ch_idx, text) in enumerate(batch):
+                        for i_b, (ch_idx, text) in enumerate(filtered_batch):
                             db_data.append((ch_idx, text, batch_embs[i_b]))
 
                         safe_update_ui(percent + (0.1 / total_batches), f"💾 写入索引 (本批次耗时 {cost:.1f}s)...")
@@ -587,9 +621,19 @@ def get_ai_settings_view(app):
                 ]
             )
         else:
+            # 💥 判断如果是继续建库，修改一下文案
+            is_resume = "继续建库" in btn_build.content.value
+            title_text = "继续建库确认" if is_resume else "建库确认"
+            body_text = "即将接着之前的进度继续建库。" if is_resume else "即将调用大模型 API 对全书进行向量化切块，可能需要消耗一定的时间和 Token 额度。是否开始？"
+            
             confirm_dlg = ft.AlertDialog(
-                title=ft.Text("建库确认", weight=ft.FontWeight.BOLD),
-                content=ft.Text("即将调用大模型 API 对全书进行向量化切块，可能需要消耗一定的时间和 Token 额度。是否开始？\n\n(提示：开始后您可以关闭此弹窗继续阅读，系统会在后台静默完成并通知您)"),
+                title=ft.Text(title_text, weight=ft.FontWeight.BOLD),
+                content=ft.Text(
+                    f"{body_text}\n\n"
+                    "(提示：开始后您可以关闭此弹窗继续阅读，系统会在后台静默完成并通知您。)\n\n"
+                    "⚠️ 强烈建议：安卓系统内存管理极其严格，建库期间请尽量保持本软件在屏幕前台运行，切勿息屏或切换至其他应用（如微信），以防被系统强制杀后台导致建库中断！",
+                
+                ),
                 actions=[
                     ft.TextButton(content=ft.Text("取消"), on_click=close_confirm),
                     ft.TextButton(content=ft.Text("开始建库"), on_click=confirm_action)
