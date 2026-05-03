@@ -511,12 +511,20 @@ def get_ai_settings_view(app):
                     # 💥 完工后修改钢印：状态改为"已完成"
                     vdb.set_meta("status", "completed")
 
-                    # 5. 完成：通知监控器停止，并进行最后的大清洗式刷新
-                    app.is_building_index = False
-
+                    # 5. 完成前夕：让监控器显示最后的信息
                     safe_update_ui(1.0, f"🎉 建库大功告成！总耗时: {cost_str}")
                     
-                    # 此时后台重算结束，主线程完全空闲，可以直接安全地 update
+                    # 给监控器 1 秒钟的时间，去把那句 100% 的话印在屏幕上！
+                    import time
+                    time.sleep(1)
+                    
+                    # 拔掉监控器的电源
+                    app.is_building_index = False
+                    
+                    # 再给 0.5 秒，确保那个 async 循环死透了
+                    time.sleep(0.5)
+
+                    # 现在，工作线程独占了 UI 刷新权，可以尽情修改了！
                     if hasattr(app, '_active_ui'):
                         try:
                             ui = app._active_ui
@@ -526,20 +534,13 @@ def get_ai_settings_view(app):
                             ui['btn_build'].disabled = False
                             ui['btn_clear'].disabled = False
                             
-                            # 💥 核心修复：强行隐藏进度条和文字
                             ui['prog_bar'].visible = False
                             ui['prog_text'].visible = False
 
-                            ui['status_text'].update()
-                            ui['status_card'].update()
-                            ui['btn_build'].update()
-                            ui['btn_clear'].update()
-                            ui['prog_bar'].update() # 💥 推送隐藏状态
-                            ui['prog_text'].update() # 💥 推送隐藏状态
-                            
-                            # 给监控器一点时间渲染最后一条文字，然后收尾
-                            time.sleep(0.5)
+                            # 不要再去单独 update 它们了！太容易出错！
+                            # 直接召唤最高神，一键刷新整个页面！
                             app.page.update()
+                            
                         except Exception: pass
                         
                     app.show_snack_bar(f"✅ 《{name}》全书建库已完成！总耗时: {cost_str}")
