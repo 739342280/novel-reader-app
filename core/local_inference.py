@@ -48,15 +48,16 @@ if sys.platform == "win32":
             except urllib.error.URLError as e:
                 raise Exception(f"请求本地引擎发生网络错误: {e}")
         
-        # 💥 接收 n_parallel 参数
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
+        # 💥 接收 hardware_mode 参数
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "强制GPU模式", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
-            self.n_ubatch = n_ubatch  # 💥 存为实例变量
+            self.n_ubatch = n_ubatch  
+            self.hardware_mode = hardware_mode # 💥 保存状态
+            self.target_gpu_layers = n_gpu_layers # 保存 UI 传来的目标层数
             self.port = 18080 
             self.server_url = f"http://127.0.0.1:{self.port}/v1/embeddings"
             self.process = None
-            # self.dim = 1024 
             self._start_local_server()
 
         def _start_local_server(self):
@@ -78,6 +79,9 @@ if sys.platform == "win32":
             # 💥 让代码自动计算上下文！每个通道死保 1024 容量
             ctx_size = str(self.n_parallel * 1024)
 
+            # 💥 判断是否使用 CPU 模式
+            ngl_value = "99" if self.hardware_mode == "强制GPU模式" else "0"
+
             # 核心启动参数：加载模型，开启向量模式，绑定端口
             cmd = [
                 exe_path,
@@ -88,7 +92,7 @@ if sys.platform == "win32":
                 "-c", ctx_size,                      # 💥 注入算好的总容量
                 "-b", ctx_size,                      # 💥 批处理同步放大
                 "-t", optimal_threads,
-                "-ngl", "99",
+                "-ngl", ngl_value,  # 💥 动态注入 GPU 层数
                 "--pooling", "mean"
             ]
 
@@ -182,13 +186,21 @@ else:
     import ctypes
 
     _llama_internal_logs = []
+    _debug_log_path = None
     llama_log_cb_func = ctypes.CFUNCTYPE(None, ctypes.c_int, ctypes.c_char_p, ctypes.c_void_p)
 
     def _llama_log_callback(level, text, user_data):
         try:
             msg = text.decode('utf-8', errors='ignore').strip()
-            if msg and "loading tensor" not in msg and "load_weights" not in msg:
+            if msg: # 💥 测试阶段：不要过滤 "loading tensor" 了，全量输出！看看死在第几个张量！
                 _llama_internal_logs.append(f"[C++] {msg}")
+                # 💥 核心绝杀：一旦有日志，立刻、强行写入物理硬盘！不用管性能损耗，只求留住遗言！
+                global _debug_log_path
+                if _debug_log_path:
+                    with open(_debug_log_path, 'a', encoding='utf-8') as f:
+                        f.write(f"[C++] {msg}\n")
+                        f.flush() # 强制刷入硬盘，防止系统缓存还没落地就崩溃了
+                        os.fsync(f.fileno()) 
         except:
             pass
 
@@ -263,55 +275,75 @@ else:
         ]
 
     class LocalEmbeddingEngine:
-        # 💥 修改点：补全安卓端的参数接收口
-        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512):
+        
+        def __init__(self, model_path: str, n_parallel: int = 1, n_ubatch: int = 512, hardware_mode: str = "强制GPU模式", n_gpu_layers: int = 0):
             self.model_path = model_path
             self.n_parallel = n_parallel
-            self.n_ubatch = n_ubatch  # 💥 存为实例变量，供下方使用
+            self.n_ubatch = n_ubatch
+            self.hardware_mode = hardware_mode 
+            self.target_gpu_layers = n_gpu_layers # 保存 UI 传来的目标层数
             
-            global _llama_internal_logs
-            _llama_internal_logs.clear()
+            # 💥 1. 初始化黑匣子文件（和你的 Qwen 模型放在同一个目录下）
+            global _debug_log_path
+            _debug_log_path = self.model_path + ".vk_debug_blackbox.txt"
             
-            if not os.path.exists(self.model_path):
-                raise Exception(f"系统找不到模型文件！\n路径: {self.model_path}")
-            
-            # 1. 极其清爽的加载 (无需任何多态反射或路径雷达)
+            # 每次初始化，清空旧的日志，开始新的记录
+            with open(_debug_log_path, 'w', encoding='utf-8') as f:
+                f.write("========== VULKAN 极限测试黑匣子日志启动 ==========\n")
+                f.flush()
+
+            def log_milestone(step_msg):
+                """写 Python 里程碑的辅助函数"""
+                with open(_debug_log_path, 'a', encoding='utf-8') as f:
+                    f.write(f"\n[Python 哨兵] ---> {step_msg} <---\n")
+                    f.flush()
+                    os.fsync(f.fileno())
+
+            log_milestone("开始执行 _load_library (加载动态库)")
             self.lib = self._load_library()
             
             try:
                 self.lib.llama_log_set(_global_llama_log_cb, None)
             except Exception: pass
 
+            log_milestone("执行 llama_backend_init")
             self.lib.llama_backend_init()
 
-            # 2. 直接加载模型
             mparams = self.lib.llama_model_default_params()
+            
+            # 💥 2. 贯彻测试意志：只要是智能模式，无视探针的 vulkan_available 结果，强上 GPU 层数！
+            if self.hardware_mode == "强制GPU模式":
+                mparams.n_gpu_layers = self.target_gpu_layers
+                log_milestone(f"已强制设定 GPU 层数为: {mparams.n_gpu_layers}")
+                # 💥 核心修复一：在 GPU 模式下，必须彻底关闭 mmap！
+                # 只有关闭它，才能避免 Vulkan_Host 拷贝时的内存越界崩溃
+                mparams.use_mmap = False
+            else:
+                mparams.n_gpu_layers = 0                 
+                mparams.use_mmap = True
+            
             b_path = self.model_path.encode('utf-8')
             
+            # 💥 3. 死亡雷区前瞻
+            log_milestone("【高危操作】准备执行 llama_model_load_from_file (向显卡塞入模型权重)")
             self.model = self.lib.llama_model_load_from_file(ctypes.c_char_p(b_path), mparams)
             
             if not self.model:
-                log_details = "\n".join(_llama_internal_logs[-15:])
-                raise Exception(f"【引擎内部报错】加载失败！底层真实原因:\n{log_details}")
+                raise Exception("模型加载失败，返回了空指针。")
+                
+            log_milestone("【存活确认】llama_model_load_from_file 成功通过！模型权重已进入显存。")
             
-            # 💥 新增：获取 vocab 对象
             self.vocab = self.lib.llama_model_get_vocab(self.model)
                 
             cparams = self.lib.llama_context_default_params()
             cparams.embeddings = True
-
-            # 【修复 1】：强制开启 MEAN (平均) 池化。
-            # 这是因为我们采用了一次性发入超级大 Batch 的做法。如果不开启池化，
-            # 底层引擎在提取向量时，可能会搞混 Token 之间的归属，导致报错找不到槽位。
             cparams.pooling_type = 1            
 
             import multiprocessing
-            # 【动态线程分配】
-            # 骁龙芯片为异构架构。减去 2 个核心，留给 Android 系统底层运转和 Python 宿主进程。
-            # 防止满载导致系统卡顿，进而触发 OOM（内存杀手）强杀 App。            
-            optimal_threads = max(1, multiprocessing.cpu_count() - 2)
+            cpu_cores = multiprocessing.cpu_count()
+            optimal_threads = min(4, max(1, cpu_cores - 2)) 
             cparams.n_threads = optimal_threads 
-            cparams.n_threads_batch = optimal_threads 
+            cparams.n_threads_batch = optimal_threads
 
             # ---------------------------------------------------------
             # 🎯 内存与吞吐量核心调优区 (黄金参数)
@@ -321,13 +353,13 @@ else:
             # 【功能】决定了引擎能占用多少 RAM，以及最多能同时记住多少个 Token。
             # 【优化】设为 8192 约消耗 1.5GB-2.5GB 运存，对于 8GB/12GB 运存的手机是最安全的甜点值。
             # 如果设得太大（如 65536），极易被安卓低内存杀手（LMK）直接闪退。
-            cparams.n_ctx = 8192
+            cparams.n_ctx = 2048
 
             # 2. cparams.n_batch (逻辑批处理量 / 卸货区大小)
             # 【功能】告诉底层引擎，上层 Python 一次性最多会扔多少个 Token 过来。
             # 【作用】必须大于等于你一次传入的总 Token 数。设为 8192，意味着你 UI 上的 Batch Size 
             # 即使拉到 15 块（15 * 512 = 7680），引擎也愿意接收。
-            cparams.n_batch = 8192
+            cparams.n_batch = 2048
             
             # 3. cparams.n_ubatch (物理吞吐量 / 运算切片大小) —— 💥 手机防爆缸救命参数
             # 【功能】CPU ALU（算术逻辑单元）在一次底层的矩阵乘法（GEMM）中真正吞食的 Token 数量。
@@ -340,7 +372,7 @@ else:
             # 【功能】KV Cache 中最多能同时存放多少个“独立的上下文”。
             # 【作用】你切出来的每一块小说，都是一个独立的序列（需要赋予不同的 seq_id 0, 1, 2...）。
             # 这个数字必须大于等于你 UI 上允许的极限批处理量（Batch Size）。设为 128 绝对够用。
-            cparams.n_seq_max = 128
+            cparams.n_seq_max = 8
             
             # 5. cparams.kv_unified (全局统一内存池)
             # 【功能】打破物理隔离！如果不设为 True，n_ctx(8192) 会被 n_seq_max(128) 静态平分，
@@ -348,31 +380,89 @@ else:
             # 设为 True 后，变成共享大平层，只要总和不超过 8192，内存随便用。
             cparams.kv_unified = True
 
+            # 🔧 关键：强制关闭 Flash Attention，防止驱动因大型着色器崩溃
+            cparams.flash_attn_type = 0 
+
+            # 💥 新增这行代码：把配置参数保存下来
+            self.cparams = cparams
+
             # =========================================================================
 
-            # 改用新 API: llama_init_from_model
+            # 💥 4. 第二死亡雷区前瞻
+            log_milestone("【高危操作】准备执行 llama_init_from_model (向显卡申请 KV Cache 和计算缓存)")
             self.ctx = self.lib.llama_init_from_model(self.model, cparams)
+            
             if not self.ctx:
-                log_details = "\n".join(_llama_internal_logs[-5:])
-                raise Exception(f"无法创建本地模型上下文！底层原因:\n{log_details}")
+                raise Exception(f"无法创建本地模型上下文！")
+                
+            log_milestone("【存活确认】llama_init_from_model 成功通过！全部初始化完毕。")
             
             self.dim = self.lib.llama_n_embd(self.model)
             self.memory = self.lib.llama_get_memory(self.ctx)
 
         def _load_library(self):
-            # 1. 仅加载最基础的依赖链，绝对不要手动加载 libggml-cpu.so
+            # 1. 纯 CPU 模式屏蔽逻辑
+            if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
+                os.environ["GGML_OPENCL_VISIBLE_DEVICES"] = "none"
+            else:
+                if "GGML_OPENCL_VISIBLE_DEVICES" in os.environ:
+                    del os.environ["GGML_OPENCL_VISIBLE_DEVICES"]
+            
+            self.opencl_available = False
+            self.opencl_disable_reason = "初始化未完成"
+
+            # 2. 霸王硬上弓：直接去安卓系统的老巢里揪出原生 OpenCL 驱动！
+            # 绝对不能用相对路径，必须用绝对路径穿透
+            opencl_system_paths = [
+                "/vendor/lib64/libOpenCL.so",          # 小米/高通主力驱动路径 (你的 17 Pro 就是这个)
+                "/system/vendor/lib64/libOpenCL.so",   # 老旧机型路径
+                "/system/lib64/libOpenCL.so"           # 备用路径
+            ]
+            
+            for path in opencl_system_paths:
+                try:
+                    # RTLD_GLOBAL 是关键！它能让驱动函数暴露给后续的 ggml-opencl.so 使用
+                    ctypes.CDLL(path, mode=ctypes.RTLD_GLOBAL)
+                    _llama_internal_logs.append(f"[Python] 成功在系统底层捕获驱动: {path}")
+                    break # 抓到一个能用的就行，立刻跳出循环
+                except Exception:
+                    continue
+
+            # 3. 继续加载我们的引擎 (注意：这里面绝对不要再写 libOpenCL.so 了)
             dependencies = [
                 "libggml-base.so",
                 "libggml.so",
-                
+                "libggml-cpu.so",       
+                "libggml-opencl.so",    # 此时它醒来，就能用到上面系统驱动提供的 clGetPlatformIDs 了
             ]
+            
             for lib_name in dependencies:
                 try:
                     ctypes.CDLL(lib_name, mode=ctypes.RTLD_GLOBAL)
-                except Exception:
-                    pass
+                except Exception as e:
+                    _llama_internal_logs.append(f"[Python] 加载 {lib_name} 失败: {e}")
 
-            # 2. 唤醒主脑（此时它内部已经自带了唯一的、正确的 CPU 后端）
+            # 4. OpenCL 探针探测
+            if getattr(self, 'hardware_mode', "") == "强制 CPU 模式":
+                self.opencl_available = False
+                self.opencl_disable_reason = "用户已手动强制使用 CPU"
+            else:
+                try:
+                    cl_lib = ctypes.CDLL("libggml-opencl.so", mode=ctypes.RTLD_GLOBAL)
+                    if hasattr(cl_lib, "ggml_backend_opencl_reg"):
+                        cl_lib.ggml_backend_opencl_reg.restype = ctypes.c_void_p
+                        reg_ptr = cl_lib.ggml_backend_opencl_reg()
+                        if reg_ptr is not None and reg_ptr != 0:
+                            self.opencl_available = True
+                            self.opencl_disable_reason = ""
+                        else:
+                            self.opencl_disable_reason = "底层注册被拒 (驱动返回空指针)"
+                    else:
+                        self.opencl_disable_reason = "库文件受损，找不到 OpenCL 注册入口"
+                except Exception as e:
+                    self.opencl_disable_reason = f"加载动态库异常: {str(e)}"
+
+            # 5. 加载主引擎
             try:
                 lib_llama = ctypes.CDLL("libllama.so", mode=ctypes.RTLD_GLOBAL)
             except Exception as e:
@@ -401,7 +491,17 @@ else:
             lib_llama.llama_get_memory.restype = ctypes.c_void_p        
             lib_llama.llama_memory_seq_rm.argtypes = [ctypes.c_void_p, ctypes.c_int32, ctypes.c_int32, ctypes.c_int32]
             lib_llama.llama_memory_seq_rm.restype = ctypes.c_bool
-
+            lib_llama.llama_n_seq_max.argtypes = [ctypes.c_void_p]
+            lib_llama.llama_n_seq_max.restype = ctypes.c_uint32
+            # 💥 新增的物理重置接口绑定
+            lib_llama.llama_memory_clear.argtypes = [ctypes.c_void_p, ctypes.c_bool]
+            lib_llama.llama_memory_clear.restype = None
+            # 💥 新增：官方的上下文强制同步接口
+            try:
+                lib_llama.llama_synchronize.argtypes = [ctypes.c_void_p]
+                lib_llama.llama_synchronize.restype = None
+            except Exception:
+                pass
             
             try: lib_llama.llama_log_set.argtypes = [llama_log_cb_func, ctypes.c_void_p]
             except Exception: pass
@@ -420,8 +520,9 @@ else:
         
         def get_embedding(self, text: str) -> list[float]:
             if not self.ctx: return []
-            # 💥 关键：每次计算前清除序列 0 的全部记忆，避免上下文污染
-            self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)  # seq_id=0, p0=0, p1=-1
+            
+            # 💥 1. 彻底干掉 llama_memory_clear，用定向清理 0 号车道代替。            
+            self.lib.llama_memory_seq_rm(self.memory, 0, 0, -1)
 
             text_bytes = text.encode('utf-8')
             n_max_tokens = 512
@@ -452,11 +553,14 @@ else:
             batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
             
             logits_array = (ctypes.c_int8 * n_tokens)() 
+            
+            # 💥 2. 只有最后一个 Token 赋 1！
+            # 彻底终结 "1024 个结果塞进 8 个空位" 的显存越界大爆炸！
             for i in range(n_tokens): logits_array[i] = 0
-            logits_array[n_tokens - 1] = 1 
+            logits_array[n_tokens - 1] = 1
+            
             batch.logits = ctypes.cast(logits_array, ctypes.POINTER(ctypes.c_int8))
             
-
             self._memory_shield = (pos_array, n_seq_id_array, seq_id_ptrs, inner_seqs, logits_array)
 
             res = self.lib.llama_decode(self.ctx, batch)
@@ -476,82 +580,105 @@ else:
         
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
             if not self.ctx: return []
-
-            # 1. 批量分词 (Tokenization)
-            tokenized_texts = []
-            total_tokens = 0
-            n_max_tokens = 512
             
-            for text in texts:
-                text_bytes = text.encode('utf-8')
-                tokens_array = (ctypes.c_int32 * n_max_tokens)()
-                n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
-                
-                if n_tokens > 0:
-                    tokenized_texts.append((n_tokens, tokens_array))
-                    total_tokens += n_tokens
-
-            if total_tokens == 0: return []
-
-            # 💥 绝杀 4：地毯式轰炸清理！不管之前跑了多少块，128 个序列槽位全部格式化，永绝后患
-            for seq_id in range(128):
-                self.lib.llama_memory_seq_rm(self.memory, seq_id, -1, -1)
-
-            # 3. 构造超级 Batch
-            token_arr = (ctypes.c_int32 * total_tokens)()
-            pos_arr = (ctypes.c_int32 * total_tokens)()
-            n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
-            logits_arr = (ctypes.c_int8 * total_tokens)()
-
-            batch = LlamaBatch()
-            batch.n_tokens = total_tokens
-            batch.token = ctypes.cast(token_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
-            batch.pos = ctypes.cast(pos_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
-            batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
-            
-            # 处理二维指针陷阱
-            seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
-            inner_seqs = []
-            for i in range(total_tokens):
-                inner = (ctypes.c_int32 * 1)(0)
-                inner_seqs.append(inner)
-                seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
-            batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
-
-            # 💥 修复 5：直接对内存数组本身(xxx_arr)赋值，避开 ctypes 指针的间接写入漏洞
-            idx = 0
-            for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
-                for i in range(n_tokens):
-                    token_arr[idx] = tokens_array[i]
-                    pos_arr[idx] = i          
-                    n_seq_id_arr[idx] = 1
-                    inner_seqs[idx][0] = seq_id 
-                    logits_arr[idx] = 1 if i == n_tokens - 1 else 0 
-                    idx += 1
-
-            self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
-
-            # 5. 一次性核爆解码！
-            res = self.lib.llama_decode(self.ctx, batch)
-            if res != 0: 
-                raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
-
-            # 6. 分离并提取每个序列的最终向量
+            # 经过多轮测试，当前 Adreno 840 Vulkan 驱动在多序列批量解码时存在缺陷。
+            # 因此，这里通过逐条调用已加固的 get_embedding 来保证稳定，同时对外保持批量接口不变。
             embeddings = []
-            for seq_id in range(len(tokenized_texts)):
-                emb_ptr = None
-                if hasattr(self.lib, 'llama_get_embeddings_seq'):
-                    emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
-                
-                if not emb_ptr:
-                    raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
-                
-                embeddings.append([emb_ptr[i] for i in range(self.dim)])
-
-            self._memory_shield = None
+            for text in texts:
+                emb = self.get_embedding(text)
+                embeddings.append(emb)
             return embeddings
+        
+        # def get_embeddings(self, texts: list[str]) -> list[list[float]]:
+        #     if not self.ctx: return []
+
+        #     # 1. 批量分词 (保持不变)
+        #     tokenized_texts = []
+        #     total_tokens = 0
+        #     n_max_tokens = 512
+        #     for text in texts:
+        #         text_bytes = text.encode('utf-8')
+        #         tokens_array = (ctypes.c_int32 * n_max_tokens)()
+        #         n_tokens = self.lib.llama_tokenize(self.vocab, text_bytes, len(text_bytes), tokens_array, n_max_tokens, ctypes.c_bool(True), ctypes.c_bool(True))
+        #         if n_tokens > 0:
+        #             tokenized_texts.append((n_tokens, tokens_array))
+        #             total_tokens += n_tokens
+
+        #     if total_tokens == 0: return []
+
+        #     # 1. 精准定向清除：只清理本次建库实际用到的 seq_id
+        #     for seq_id in range(len(tokenized_texts)):
+        #         self.lib.llama_memory_seq_rm(self.memory, seq_id, 0, -1)
+
+        #     # 2. 逻辑级清空：重置指针，但不触发物理零填充死锁
+        #     self.lib.llama_memory_clear(self.memory, False)
+
+        #     # 3. 强制同步：强迫 Vulkan 驱动执行完刚才所有内存指令，排空队列
+        #     try:
+        #         self.lib.llama_synchronize(self.ctx)
+        #     except Exception:
+        #         pass
+
+        #     # 4. 物理休眠：给 Android 系统看门狗 0.1 秒时间重置 TDR 计时器
+        #     time.sleep(0.1)
+
+        #     # 3. 构造超级 Batch (保持不变)
+        #     token_arr = (ctypes.c_int32 * total_tokens)()
+        #     pos_arr = (ctypes.c_int32 * total_tokens)()
+        #     n_seq_id_arr = (ctypes.c_int32 * total_tokens)()
+        #     logits_arr = (ctypes.c_int8 * total_tokens)()
+
+        #     batch = LlamaBatch()
+        #     batch.n_tokens = total_tokens
+        #     batch.token = ctypes.cast(token_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.embd = ctypes.cast(None, ctypes.POINTER(ctypes.c_float))
+        #     batch.pos = ctypes.cast(pos_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.n_seq_id = ctypes.cast(n_seq_id_arr, ctypes.POINTER(ctypes.c_int32))
+        #     batch.logits = ctypes.cast(logits_arr, ctypes.POINTER(ctypes.c_int8))
+            
+        #     seq_id_ptrs = (ctypes.POINTER(ctypes.c_int32) * total_tokens)()
+        #     inner_seqs = []
+        #     for i in range(total_tokens):
+        #         inner = (ctypes.c_int32 * 1)(0)
+        #         inner_seqs.append(inner)
+        #         seq_id_ptrs[i] = ctypes.cast(inner, ctypes.POINTER(ctypes.c_int32))
+        #     batch.seq_id = ctypes.cast(seq_id_ptrs, ctypes.POINTER(ctypes.POINTER(ctypes.c_int32)))
+
+        #     # 💥 关键点：每个独立分块分配一个独立的 Sequence ID，且位置都从 0 开始
+        #     idx = 0
+        #     for seq_id, (n_tokens, tokens_array) in enumerate(tokenized_texts):
+        #         for i in range(n_tokens):
+        #             token_arr[idx] = tokens_array[i]
+        #             pos_arr[idx] = i          
+        #             n_seq_id_arr[idx] = 1
+        #             inner_seqs[idx][0] = seq_id 
+        #             # 💥 经典输出：只有该切块的最后一个 Token 给 1
+        #             logits_arr[idx] = 1 if i == n_tokens - 1 else 0
+        #             idx += 1
+
+        #     self._memory_shield = (token_arr, pos_arr, n_seq_id_arr, logits_arr, seq_id_ptrs, inner_seqs)
+
+        #     # 5. 一次性解码
+        #     res = self.lib.llama_decode(self.ctx, batch)
+        #     if res != 0: 
+        #         raise Exception(f"批量向量计算失败，llama_decode 返回错误码: {res}。")
+            
+        #     # 强制同步：在提取向量前，确保 GPU 已经算完了
+        #     try:
+        #         self.lib.llama_synchronize(self.ctx)
+        #     except Exception:
+        #         pass
+
+        #     # 6. 分离并提取向量 (保持不变)
+        #     embeddings = []
+        #     for seq_id in range(len(tokenized_texts)):
+        #         emb_ptr = self.lib.llama_get_embeddings_seq(self.ctx, seq_id)
+        #         if not emb_ptr:
+        #             raise Exception(f"未能成功获取序列 {seq_id} 的 Embedding 指针")
+        #         embeddings.append([emb_ptr[i] for i in range(self.dim)])
+
+        #     self._memory_shield = None
+        #     return embeddings
         
         def __del__(self):
             if hasattr(self, 'ctx') and self.ctx: self.lib.llama_free(self.ctx)

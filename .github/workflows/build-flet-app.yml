@@ -2,11 +2,11 @@ name: Build Flet Android APK and Windows
 
 on:
   push:
-    branches: [ master ]
+    branches: [ master, vulkan ]
     tags: 
       - 'v*'
   pull_request:
-    branches: [ master ]
+    branches: [ master, vulkan ]
   workflow_dispatch:          
 
 permissions:
@@ -112,13 +112,29 @@ jobs:
         repository: ggerganov/llama.cpp
         path: llama.cpp-src
 
-    - name: Build Monolithic libllama.so
+    # 💥 1. 拉取 Khronos 官方纯净版 OpenCL 头文件
+    - name: Fetch OpenCL Headers
       run: |
-        echo "🚀 开始静态熔炼 llama.cpp..."
+        echo "🚀 获取 Khronos 官方 OpenCL 头文件..."
+        git clone --depth 1 https://github.com/KhronosGroup/OpenCL-Headers.git opencl-headers
+        
+        # 💥 暴力植入 1：直接把 OpenCL 头文件扔进系统的标准 include 目录
+        sudo cp -r opencl-headers/CL /usr/include/
+        
+        # 💥 暴力植入 2：为了防止 NDK 交叉编译工具链不认系统目录，再扔一份到工具链的标准目录里！
+        sudo cp -r opencl-headers/CL $ANDROID_NDK_LATEST_HOME/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/include/
+
+    # 💥 2. 编译 OpenCL 版的单体 libllama.so
+    - name: Build Monolithic libllama.so (OpenCL)
+      run: |
+        echo "🚀 开始静态熔炼 llama.cpp (OpenCL版)..."
         cd llama.cpp-src
+        
         mkdir build && cd build
         
-        # 💥 核心修复：增加 -DGGML_OPENMP=OFF 彻底切断对 libomp.so 的依赖！
+        # 💥 核心补丁：我上次漏掉了这极其关键的一行！
+        # -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,undefs -Wl,--unresolved-symbols=ignore-all"
+        # 强行命令安卓的 NDK 链接器：闭嘴，忽略所有未定义的 OpenCL 函数，立刻打包！
         cmake .. \
           -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
           -DANDROID_ABI=arm64-v8a \
@@ -129,20 +145,25 @@ jobs:
           -DGGML_BACKEND_DL=OFF \
           -DLLAMA_BUILD_TESTS=OFF \
           -DLLAMA_BUILD_EXAMPLES=OFF \
-          -DLLAMA_BUILD_SERVER=OFF
+          -DLLAMA_BUILD_SERVER=OFF \
+          -DGGML_OPENCL=ON \
+          -DOpenCL_LIBRARY="dl" \
+          -DCMAKE_SHARED_LINKER_FLAGS="-Wl,-z,undefs -Wl,--unresolved-symbols=ignore-all"
         
-        # 使用 4 线程全速编译
-        make -j4
+        # 4 线程全速编译
+        make -j4 llama
         
-        # 💥 把编译出的所有兄弟模块（*.so）全部打包带走，并解开软链接！
         mkdir -p ../../android_native_libs/lib/arm64-v8a
-        find . -name "*.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml-base.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libggml-cpu.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \; 
+        # 💥 提取编译出的 OpenCL 动态库
+        find . -name "libggml-opencl.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
+        find . -name "libllama.so" -exec cp -L {} ../../android_native_libs/lib/arm64-v8a/ \;
         
-        # 阅后即焚，清理源码节省硬盘空间
         cd ../..
         rm -rf llama.cpp-src
-        echo "✅ 纯血版静态单体 libllama.so 编译就绪！"
-
+        echo "✅ OpenCL 版静态单体 libllama.so 编译就绪！"
         
     - name: Cache Flet templates
       uses: actions/cache@v4

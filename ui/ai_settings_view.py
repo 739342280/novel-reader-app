@@ -97,6 +97,14 @@ def get_ai_settings_view(app):
         on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_tf)
     )
 
+    # 💥 新增：硬件加速模式下拉框
+    hardware_mode_dd = ft.Dropdown(
+        label="硬件加速模式", 
+        options=[ft.dropdown.Option("强制GPU模式"), ft.dropdown.Option("强制 CPU 模式")], 
+        value=app.ai_config.get("hardware_mode", "强制GPU模式"),
+        text_size=13, dense=True, width=INPUT_WIDTH
+    )
+
     embed_mode_dd = ft.Dropdown(
         label="当前生效工作模式", 
         options=[ft.dropdown.Option("云端 API"), ft.dropdown.Option("本地模型")], 
@@ -131,6 +139,8 @@ def get_ai_settings_view(app):
                             spacing=10, 
                             width=INPUT_WIDTH  
                         ),
+                        hardware_mode_dd,
+
                         # 💥 新增的 UI 提示，放在下拉框正下方
                         ft.Divider(height=5, thickness=0.5, color="transparent"),
                         ft.Text(
@@ -195,25 +205,45 @@ def get_ai_settings_view(app):
     top_k_text = ft.Text(f"检索数量 (top_k): {top_k_val} 段", size=13, color="onSurface")
     
     def on_top_k_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         top_k_text.value = f"检索数量 (top_k): {val} 段"
         try: top_k_text.update()
         except Exception: pass
 
     top_k_slider = ft.Slider(min=1, max=10, divisions=9, value=top_k_val, label="{value} 段", on_change=on_top_k_change)
     
+    # 💥 新增 GPU 层数滑块
+    gpu_layers_val = app.ai_config.get("n_gpu_layers", 10)
+    gpu_layers_text = ft.Text(f"GPU 物理卸载层数: {gpu_layers_val} 层", size=13, color="onSurface")
+
+    def on_gpu_layers_change(e):
+        val = int(round(e.control.value)) # 💥 加了 round()
+        gpu_layers_text.value = f"GPU 物理卸载层数: {val} 层"
+        try: gpu_layers_text.update()
+        except Exception: pass
+
+    gpu_layers_slider = ft.Slider(min=0, max=32, divisions=32, value=gpu_layers_val, label="{value} 层", on_change=on_gpu_layers_change, width=INPUT_WIDTH)
+    
     # 新增的 Batch Size 控件
     batch_size_val = app.ai_config.get("build_batch_size", 15) # 默认值给 15
     batch_size_text = ft.Text(f"建库批处理量 (Batch Size): {batch_size_val} 块", size=13, color="onSurface")
 
     def on_batch_size_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         batch_size_text.value = f"建库批处理量 (Batch Size): {val} 块"
         try: batch_size_text.update()
         except Exception: pass
 
     # min=2, max=100, divisions=49 意味着每档步进为 (100 - 2) / 49 = 2
-    batch_size_slider = ft.Slider(min=2, max=100, divisions=49, value=batch_size_val, label="{value} 块", on_change=on_batch_size_change, width=INPUT_WIDTH)
+    batch_size_slider = ft.Slider(
+        min=1,           # 最小允许到 1
+        max=100,         # 最大到 100
+        divisions=99,    # 严格划分为 99 份，保证每一档刚好是 1
+        value=batch_size_val, 
+        label="{value} 块", 
+        on_change=on_batch_size_change, 
+        width=INPUT_WIDTH
+    )
 
     # 💥新增：物理运算切片 (n_ubatch) 档位滑块
     ubatch_map = {1: 256, 2: 512, 3: 1024}
@@ -241,7 +271,7 @@ def get_ai_settings_view(app):
         except Exception: pass
 
     def on_ubatch_change(e):
-        update_ubatch_label(e.control.value)
+        update_ubatch_label(round(e.control.value)) # 💥 加了 round()
 
     # 设置 min=1, max=3, divisions=2，强制滑块只能停在 1, 2, 3 这三个整档位上
     ubatch_slider = ft.Slider(min=1, max=3, divisions=2, value=ubatch_slider_val, on_change=on_ubatch_change, width=INPUT_WIDTH)
@@ -252,7 +282,7 @@ def get_ai_settings_view(app):
     parallel_text = ft.Text(f"硬件并发通道数 (Parallelism): {parallel_val}", size=13, color="onSurface")
 
     def on_parallel_change(e):
-        val = int(e.control.value)
+        val = int(round(e.control.value)) # 💥 加了 round()
         parallel_text.value = f"硬件并发通道数 (Parallelism): {val}"
         try: parallel_text.update()
         except Exception: pass
@@ -405,7 +435,7 @@ def get_ai_settings_view(app):
 
                     # 1. 文本分块
                     safe_update_ui(0, "✂️ 正在进行滑动窗口分块...")
-                    chunker = NovelChunker(chunk_size=350, overlap=50)
+                    chunker = NovelChunker(chunk_size=500, overlap=50)
                     all_chunks = []
                     for idx, ch in enumerate(chapters):
                         chunks = chunker.chunk_text(app.engine.get_chapter_text(idx))
@@ -415,10 +445,32 @@ def get_ai_settings_view(app):
                     total = len(all_chunks)
                     if total == 0: raise Exception("提取不到书籍文本内容")
 
-                    # 2. 获取向量维度
-                    safe_update_ui(0.05, f"🔍 正在获取 Embedding 维度 (总块数: {total})...")
+                    # 2. 唤醒底层引擎并进行探针探测
+                    safe_update_ui(0.05, f"🔍 正在初始化推理引擎与探针探测 (总块数: {total})...")
                     first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
                     dim = len(first_emb)
+
+                    # 💥 探针结果分析与 UI 互动
+                    if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "强制GPU模式":
+                        engine = getattr(AIService, '_local_engine', None)
+                        if engine:
+                            import sys
+                            if sys.platform == "win32":
+                                # 💻 电脑端独立子进程架构，无探针，直接秒进全速建库
+                                safe_update_ui(0.05, "⚡ 桌面端 GPU 引擎就绪，全速建库中...")
+                            else:
+                                # 📱 安卓端原生探针逻辑
+                                reason = getattr(engine, 'vulkan_disable_reason', '')
+                                if reason:  
+                                    # 💥 测试阶段：无视探针报错，头铁硬上 GPU！
+                                    app.show_snack_bar(f"⚠️ 探针报错: {reason}\n(已开启极限测试，将无视报错强行调用 GPU)")
+                                    safe_update_ui(0.05, "⚡ 强行 GPU 点火，2秒后开始突围...")
+                                    time.sleep(2) # 留 2 秒时间给你看清提示
+                                else:
+                                    # 探测成功：正常流程
+                                    app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
+                                    safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
+                                    time.sleep(2)
 
                     # 3. 初始化数据库 (显式清除防止叠加)
                     vdb = VectorDB(db_path)
@@ -627,6 +679,15 @@ def get_ai_settings_view(app):
                         size=11, color="grey", text_align=ft.TextAlign.CENTER
                     ),
 
+                    # 💥 插入 GPU 层数滑块
+                    ft.Divider(height=5, thickness=0.5, color="transparent"),
+                    gpu_layers_text,
+                    gpu_layers_slider,
+                    ft.Text(
+                        "💡 GPU 卸载层数：决定将多少层神经网络交由显卡计算。若建库时发生闪退，请尝试降低此数值（如 10 或 14）。", 
+                        size=11, color="grey", text_align=ft.TextAlign.CENTER
+                    ),
+
                     ft.Divider(height=5, thickness=0.5, color="transparent"),
                     batch_size_text,
                     batch_size_slider,
@@ -667,7 +728,6 @@ def get_ai_settings_view(app):
         app.ai_config["prompt"] = prompt_tf.value.strip()
         app.ai_config["prompt_char"] = prompt_char_tf.value.strip() 
         app.ai_config["prompt_clue"] = prompt_clue_tf.value.strip() 
-
         app.ai_config["embed_mode"] = embed_mode_dd.value
         app.ai_config["embed_url"] = embed_url_tf.value.strip()
         app.ai_config["embed_key"] = embed_key_tf.value.strip()
@@ -675,13 +735,19 @@ def get_ai_settings_view(app):
         # app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
         # 💥 替换为从文本框取值
         app.ai_config["local_model_path"] = local_model_tf.value.strip()
-        # 💥 增加这一行，保存 Batch Size
-        app.ai_config["build_batch_size"] = int(batch_size_slider.value)
-        # 💥 保存并发数
-        app.ai_config["n_parallel"] = int(parallel_slider.value)
-        # 💥 新增保存 n_ubatch：将滑块的 1,2,3 档翻译回真实数值
-        app.ai_config["n_ubatch"] = ubatch_map[int(ubatch_slider.value)]
-
+        # 💥 保存硬件模式
+        app.ai_config["hardware_mode"] = hardware_mode_dd.value
+        
+        # 💥 修复一：安全提取滑块值，防止空指针或类型异常
+        app.ai_config["build_batch_size"] = int(round(float(batch_size_slider.value)))
+        app.ai_config["n_parallel"] = int(round(float(parallel_slider.value)))
+        app.ai_config["n_gpu_layers"] = int(round(float(gpu_layers_slider.value)))
+        app.ai_config["top_k"] = int(round(float(top_k_slider.value)))
+        
+        # 💥 修复二：给脆弱的字典映射加上兜底逻辑，防止它中断整个保存进程
+        app.ai_config["n_ubatch"] = ubatch_map[int(round(ubatch_slider.value))]
+        
+        # 写入硬盘
         app._save_config_to_appdata()
         app.show_snack_bar("✅ AI 配置已保存")
 

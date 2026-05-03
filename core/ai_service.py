@@ -123,20 +123,25 @@ class AIService:
                 # 💥 获取 UI 配置：顺手把默认值改成 1，并获取刚存好的 n_ubatch
                 n_parallel = config.get("n_parallel", 1)
                 n_ubatch = config.get("n_ubatch", 512)
-
-                # 💥 热重载检测：只要并发数或性能模式(切片数)发生改变，就销毁旧引擎
+                hardware_mode = config.get("hardware_mode", "强制GPU模式")
+                n_gpu_layers = config.get("n_gpu_layers", 10) # 💥 新增读取
+                
                 if cls._local_engine is not None:
                     old_parallel = getattr(cls._local_engine, 'n_parallel', 1)
                     old_ubatch = getattr(cls._local_engine, 'n_ubatch', 512)
-                    if old_parallel != n_parallel or old_ubatch != n_ubatch:
+                    old_hw = getattr(cls._local_engine, 'hardware_mode', "强制GPU模式")
+                    old_layers = getattr(cls._local_engine, 'target_gpu_layers', 10)
+                    if old_parallel != n_parallel or old_ubatch != n_ubatch or old_hw != hardware_mode or old_layers != n_gpu_layers:
                         cls._local_engine = None # 参数改变，强制销毁旧引擎
 
                 if cls._local_engine is None:
-                    # 💥 关键点：把 n_ubatch 传递给底层的 __init__
+                    # 💥 将硬件模式传递给底层
                     cls._local_engine = LocalEmbeddingEngine(
                         model_path, 
                         n_parallel=n_parallel, 
-                        n_ubatch=n_ubatch
+                        n_ubatch=n_ubatch,
+                        hardware_mode=hardware_mode,
+                        n_gpu_layers=n_gpu_layers # 💥 传给底层
                     )
                     
                 return cls._local_engine.get_embedding(text)
@@ -252,20 +257,26 @@ class AIService:
                 # 💥 获取参数
                 n_parallel = config.get("n_parallel", 1)
                 n_ubatch = config.get("n_ubatch", 512)
+                hardware_mode = config.get("hardware_mode", "强制GPU模式")
+                n_gpu_layers = config.get("n_gpu_layers", 10)
 
                 # 💥 热重载检测
                 if cls._local_engine is not None:
                     old_parallel = getattr(cls._local_engine, 'n_parallel', 1)
                     old_ubatch = getattr(cls._local_engine, 'n_ubatch', 512)
-                    if old_parallel != n_parallel or old_ubatch != n_ubatch:
+                    old_hw = getattr(cls._local_engine, 'hardware_mode', "强制GPU模式")
+                    old_layers = getattr(cls._local_engine, 'target_gpu_layers', 10)
+                    if old_parallel != n_parallel or old_ubatch != n_ubatch or old_hw != hardware_mode or old_layers != n_gpu_layers:
                         cls._local_engine = None
 
                 if cls._local_engine is None:
-                    # 💥 关键点：把 n_ubatch 传递给底层的 __init__
+                    # 💥 关键点：把所有参数完整传递给底层的 __init__
                     cls._local_engine = LocalEmbeddingEngine(
                         model_path, 
                         n_parallel=n_parallel, 
-                        n_ubatch=n_ubatch
+                        n_ubatch=n_ubatch,
+                        hardware_mode=hardware_mode,
+                        n_gpu_layers=n_gpu_layers
                     )
                     
                 return cls._local_engine.get_embeddings(texts)
