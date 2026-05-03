@@ -591,12 +591,15 @@ else:
         def get_embeddings(self, texts: list[str]) -> list[list[float]]:
             if not self.ctx: return []
             
+            import time # 💥 引入 time 模块
+            
             # 经过多轮测试，当前 Adreno 840 Vulkan 驱动在多序列批量解码时存在缺陷。
             # 因此，这里通过逐条调用已加固的 get_embedding 来保证稳定，同时对外保持批量接口不变。
             embeddings = []
             for text in texts:
                 emb = self.get_embedding(text)
                 embeddings.append(emb)
+                time.sleep(0.01) # 💥 救命的 10 毫秒休眠，必须加在这里！让 Vulkan 喘口气！
             return embeddings
         
         # def get_embeddings(self, texts: list[str]) -> list[list[float]]:
