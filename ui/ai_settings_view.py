@@ -97,7 +97,13 @@ def get_ai_settings_view(app):
         on_click=lambda _: app.page.run_task(app.trigger_model_picker, local_model_tf)
     )
 
-    # 💥 新增：硬件加速模式下拉框
+    # 一键下载按钮
+    download_btn = ft.IconButton(
+        icon=ft.Icons.CLOUD_DOWNLOAD, icon_color="green", tooltip="一键获取官方推荐模型",
+        on_click=lambda _: app.page.run_task(app.trigger_official_model_download, local_model_tf)
+    )
+
+    # 硬件加速模式下拉框
     hardware_mode_dd = ft.Dropdown(
         label="硬件加速模式", 
         options=[ft.dropdown.Option("强制GPU模式"), ft.dropdown.Option("强制 CPU 模式")], 
@@ -134,7 +140,7 @@ def get_ai_settings_view(app):
                     content=ft.Column([
                         ft.Row([ft.Icon(ft.Icons.COMPUTER, size=16), ft.Text("本地模型设定", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
                         ft.Row(
-                            controls=[local_model_tf, import_btn], # 💥 变量名修改
+                            controls=[local_model_tf, import_btn, download_btn], 
                             alignment=ft.MainAxisAlignment.CENTER, 
                             spacing=10, 
                             width=INPUT_WIDTH  
