@@ -70,7 +70,7 @@ sys.excepthook = global_crash_catcher
 class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, ReaderActionMixin, OverlayManagerMixin):
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.5.0"  
+        self.version = "0.5.1"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
         
