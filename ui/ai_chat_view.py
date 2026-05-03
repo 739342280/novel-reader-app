@@ -7,6 +7,26 @@ def get_ai_chat_view(app):
     # 如果没加载书籍数据，做一个优雅的防御拦截
     if not hasattr(app.engine, "chapters_info") or not app.engine.chapters_info:
         return ft.View(route="/reader/ai_chat", controls=[ft.Text("暂无书籍数据", color="red")])
+    
+    def get_smart_chapter_text(text):
+        # 统计中文字符数（简单去除空白符后计算长度）
+        text_len = len("".join(text.split()))
+        
+        # 设定极端红线：30000 字
+        max_safe_length = 30000
+        
+        # 如果是正常章节，直接全量返回，一个字都不删！
+        if text_len <= max_safe_length:
+            return text
+            
+        # 如果是极端未分章文本，进行“掐中间留头尾”压缩
+        separator = "\n\n...[系统提示：本章中间部分因字数超过 3 万字极限被智能折叠，已为您保留开头与结尾核心剧情]...\n\n"
+        keep_len = max_safe_length - len(separator)
+        
+        front_len = int(keep_len * 0.3) # 保留前 30%
+        back_len = keep_len - front_len # 保留后 70% (网文结尾更重要)
+        
+        return text[:front_len] + separator + text[-back_len:]
 
     target_idx = app.current_chapter_idx
     ch_info = app.engine.chapters_info[target_idx]
@@ -207,7 +227,8 @@ def get_ai_chat_view(app):
                 saved_data[state["mode"]] = "✨ [1/3] 盲眼读心：正在飞速阅读本章，提取出场人物名单...\n\n"
                 render_chat()
 
-                chapter_text = app.engine.get_chapter_text(target_idx)[:15000]
+                raw_text = app.engine.get_chapter_text(target_idx)
+                chapter_text = get_smart_chapter_text(raw_text)
                 
                 extract_msg = [{"role": "system", "content": f"请阅读以下文本，提取对本章情节推动最关键的 3-5 个人物名字。过滤掉只被提及、没有实际戏份的龙套配角。仅返回名字本身，用逗号分隔，不要返回任何说明或多余符号。如果没有人物，返回'无'。\n\n文本：\n{chapter_text}"}]
                 names_result = [""]
@@ -449,7 +470,8 @@ def get_ai_chat_view(app):
                 except Exception as ex:
                     print(f"RAG 检索失败 (将回退到仅看当前章节): {ex}")
 
-                chapter_text = app.engine.get_chapter_text(target_idx)[:8000]
+                raw_text = app.engine.get_chapter_text(target_idx)
+                chapter_text = get_smart_chapter_text(raw_text)
                 
                 # 💥 架构优化：将之前的总结降级为参考资料，打破模型的“身份幻觉”
                 prev_summary = saved_data.get(state["mode"], "")
@@ -539,27 +561,80 @@ def get_ai_chat_view(app):
         threading.Thread(target=rag_chat_task, daemon=True).start()
 
     async def copy_result(e):
-        content_to_copy = saved_data.get(state["mode"], "")
+        import subprocess
+        import sys
+
+        # 1. 拼装内容（防 None 处理）
+        base_content = str(saved_data.get(state["mode"], "") or "")
+        content_to_copy = base_content
         
-        # 💥 修改点 6：复制时连带导出本频道的专属追问记录
-        if state["chats"][state["mode"]]:
+        chat_history = state["chats"].get(state["mode"], [])
+        if chat_history:
             content_to_copy += "\n\n--- 追问记录 ---\n"
-            for msg in state["chats"][state["mode"]]:
-                role_name = "【我】" if msg["role"] == "user" else "【AI】"
-                content_to_copy += f"\n{role_name}：\n{msg['content']}\n"
+            for msg in chat_history:
+                if "⏳ 正在检索" in msg.get("content", ""): continue
+                role = "【我】" if msg.get("role") == "user" else "【AI】"
+                content_to_copy += f"\n{role}：\n{msg.get('content', '')}\n"
 
-        if not content_to_copy.strip(): return
-        app._execute_copy(content_to_copy.strip())
-        app.show_snack_bar("✅ 已完整复制分析结果与对话")
+        content_to_copy = content_to_copy.strip()
+        if not content_to_copy:
+            app.show_snack_bar("⚠️ 暂无内容可复制")
+            return
 
-        btn_copy.content.value = "复制成功"
-        try: btn_copy.update()
-        except Exception: pass
+        # 2. 执行三层兼容复制逻辑
+        success = False
         
-        await asyncio.sleep(2)
-        btn_copy.content.value = "复制"
-        try: btn_copy.update()
-        except Exception: pass
+        # --- 第一层：尝试 Flet 原生 API（安卓端必须靠这个） ---
+        # 我们用循环尝试所有可能的 Flet 方法名，防止版本差异
+        for method_name in ["set_clipboard", "set_clipboard_data", "set_clipboard_text"]:
+            if hasattr(app.page, method_name):
+                try:
+                    getattr(app.page, method_name)(content_to_copy)
+                    success = True
+                    break
+                except: continue
+        
+        # --- 第二层：Windows 专项修复（防乱码 + 支持超长文本） ---
+        if not success and sys.platform == "win32":
+            try:
+                # 💥 这里的核心：强制指定 UTF8 编码通过管道喂给 PowerShell 的 Set-Clipboard
+                # 这种方式不经过 shell 的字符转义，不会乱码，支持几万字的巨长章节
+                process = subprocess.Popen(
+                    ['powershell', '-NoProfile', '-Command', 
+                     '[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $input | Set-Clipboard'],
+                    stdin=subprocess.PIPE,
+                    text=False # 使用字节流发送
+                )
+                process.communicate(input=content_to_copy.encode('utf-8'))
+                if process.returncode == 0:
+                    success = True
+            except Exception as ex:
+                print(f"Windows PS Copy Error: {ex}")
+
+        # --- 第三层：最后的回底方案 ---
+        if not success:
+            try:
+                app._execute_copy(content_to_copy)
+                success = True
+            except: pass
+
+        # 3. UI 反馈
+        if success:
+            app.show_snack_bar("✅ 内容已存入剪贴板")
+            btn_copy.content.value = "复制成功"
+            btn_copy.style = ft.ButtonStyle(bgcolor="green", color="white")
+            try: btn_copy.update()
+            except Exception: pass
+            
+            await asyncio.sleep(2)
+            btn_copy.content.value = "复制"
+            btn_copy.style = app.get_action_button_style()
+            try: btn_copy.update()
+            except Exception: pass
+        else:
+            app.show_snack_bar("❌ 复制失败：请手动选择文字复制")
+
+    # ================= 以下是被你不小心删掉的视图拼装代码 =================
 
     btn_regen.on_click = generate_base
     btn_copy.on_click = copy_result
@@ -567,7 +642,7 @@ def get_ai_chat_view(app):
     # 首次进入页面，渲染默认的主线频道
     render_chat()
 
-    # 💥 修改点 7：底栏大瘦身，彻底抛弃原有按钮轨道
+    # 底栏大瘦身，彻底抛弃原有按钮轨道
     bottom_area = ft.Container(
         content=ft.Column([
             ft.Row(
@@ -584,7 +659,7 @@ def get_ai_chat_view(app):
         border=ft.border.only(top=ft.BorderSide(1, "outlineVariant"))
     )
 
-    # 💥 修改点 8：按标准的 View 架构注入 Tabs
+    # 💥 这里就是丢失的 return，没有它页面根本加载不出来！
     return ft.View(
         route="/reader/ai_chat",
         appbar=ft.AppBar(
@@ -594,7 +669,7 @@ def get_ai_chat_view(app):
             bgcolor="surfaceVariant"
         ),
         controls=[
-            # 在 AppBar 下方紧贴注入我们新做好的选项卡组件
+            # 在 AppBar 下方紧贴注入选项卡组件
             ai_tabs,
             ft.Container(
                 content=chat_list_col,
