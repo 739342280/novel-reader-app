@@ -16,8 +16,7 @@ def get_ai_chat_view(app):
     if isinstance(saved_data, str):
         saved_data = {"main": saved_data}
         app.current_book_summaries[target_idx_str] = saved_data
-
-    # 💥 修改点 1：将 chat 升级为独立的多频道字典，保留各模式追问记录
+    
     state = {
         "mode": "main",         
         "chats": {
@@ -26,7 +25,8 @@ def get_ai_chat_view(app):
             "characters_pro": [],
             "clues": []
         },             
-        "is_streaming": False
+        "is_streaming": False,
+        "cancel_flag": False # 💥 新增：用于拦截大模型输出的开关
     }
 
     # 聊天列表区（拉伸铺满）
@@ -51,7 +51,35 @@ def get_ai_chat_view(app):
 
     # 核心判定锁：通过路由判断当前视图是否存活
     def is_active():
-        return app.page.route == "/reader/ai_chat"
+        return app.page.route == "/reader/ai_chat" and not state.get("cancel_flag", False)
+    
+    def stop_generation(e):
+        if state["is_streaming"]:
+            state["cancel_flag"] = True
+            btn_regen.content.value = "停止中..."
+            btn_regen.disabled = True
+            try: btn_regen.update()
+            except Exception: pass
+
+    def set_btn_streaming():
+        state["cancel_flag"] = False
+        btn_regen.content.value = "⏹ 停止输出"
+        # 💥 安全替换：直接赋全新的 ButtonStyle 对象，杜绝 Flet 样式静默崩溃
+        btn_regen.style = ft.ButtonStyle(bgcolor=ft.Colors.RED_400, color=ft.Colors.WHITE) 
+        btn_regen.on_click = stop_generation
+        btn_regen.disabled = False
+        try: btn_regen.update()
+        except Exception: pass
+
+    def set_btn_normal():
+        btn_regen.style = ft.ButtonStyle(bgcolor=ft.Colors.DEEP_PURPLE_400, color=ft.Colors.WHITE) 
+        btn_regen.on_click = lambda e: generate_base(e) 
+        btn_regen.disabled = False
+        # 💥 精准判定真实内容
+        has_content = bool(saved_data.get(state["mode"]))
+        btn_regen.content.value = "重新总结" if has_content else "总结"
+        try: btn_regen.update()
+        except Exception: pass
 
     def get_sys_prompt():
         if state["mode"] == "main": 
@@ -67,15 +95,19 @@ def get_ai_chat_view(app):
     def render_chat():
         chat_list_col.controls.clear()
         
-        base_content = saved_data.get(state["mode"], "")
-        if not base_content:
-            base_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
-            btn_regen.content.value = "总结"
+        # 💥 逻辑大修：先判断有没有真正的历史记录，再去塞占位符
+        raw_content = saved_data.get(state["mode"], "")
+        has_content = bool(raw_content)
+        
+        if has_content:
+            base_content = raw_content
         else:
-            btn_regen.content.value = "重新总结"
+            base_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
             
-        try: btn_regen.update()
-        except Exception: pass
+        if not state["is_streaming"]:
+            btn_regen.content.value = "重新总结" if has_content else "总结"
+            try: btn_regen.update()
+            except Exception: pass
         
         chat_list_col.controls.append(
             ft.Container(
@@ -167,14 +199,11 @@ def get_ai_chat_view(app):
         state["is_streaming"] = True
         # 重新生成大纲时，清空当前频道的追问历史
         state["chats"][state["mode"]].clear() 
-        btn_regen.disabled = True
+        set_btn_streaming() # 💥 切入流式按键状态
 
         if state["mode"] == "characters_pro":
             def pro_task():
-                btn_regen.content.value = "提取名单中..."
-                try: btn_regen.update()
-                except Exception: pass
-                
+                                
                 saved_data[state["mode"]] = "✨ [1/3] 盲眼读心：正在飞速阅读本章，提取出场人物名单...\n\n"
                 render_chat()
 
@@ -188,26 +217,28 @@ def get_ai_chat_view(app):
                 def on_err(err): names_result[0] = f"Error: {err}"; evt.set()
                 
                 AIService.stream_chat(app.ai_config, extract_msg, on_c, on_comp, on_err, is_active)
+                evt.set() 
                 evt.wait()
+
+                # 💥 拦截点 1：提取名单后
+                if state.get("cancel_flag"):
+                    saved_data[state["mode"]] += "\n\n*[已手动终止]*"
+                    state["is_streaming"] = False
+                    set_btn_normal()
+                    render_chat()
+                    return
 
                 names_str = names_result[0].strip()
                 if "Error" in names_str or not names_str or names_str == "无":
                     saved_data[state["mode"]] = f"⚠️ 未能有效提取到人物名单 ({names_str})。梳理终止。"
-                    state["is_streaming"] = False
-                    try:
-                        btn_regen.disabled = False
-                        btn_regen.content.value = "重新总结"
-                        btn_regen.update()
-                    except Exception: pass
+                    state["is_streaming"] = False    
+                    set_btn_normal()                
                     render_chat()
                     return
 
                 saved_data[state["mode"]] = f"✨ [2/3] 时光回溯：已成功锁定本章人物 ({names_str})。正在从全书知识库打捞他们的历史档案 (已开启防剧透隔离)...\n\n"
                 render_chat()
-                btn_regen.content.value = "打捞档案中..."
-                try: btn_regen.update()
-                except Exception: pass
-
+                
                 names = [n.strip() for n in names_str.replace("，", ",").split(",") if n.strip()]
                 rag_context = ""
                 if names:
@@ -223,6 +254,8 @@ def get_ai_chat_view(app):
                             if os.path.exists(db_path):
                                 vdb = VectorDB(db_path)
                                 for name in names:
+                                    # 💥 拦截点 2：强行阻断耗时的数据库循环查询
+                                    if state.get("cancel_flag"): break 
                                     query_emb = AIService.get_embedding(app.ai_config, f"{name}的背景设定与经历")
                                     results = vdb.search(query_emb, top_k=5, max_chapter_idx=target_idx)
                                     if results:
@@ -235,12 +268,17 @@ def get_ai_chat_view(app):
                     except Exception as ex:
                         print(f"人物档案检索失败: {ex}")
 
+                # 💥 拦截点 3：打捞档案后
+                if state.get("cancel_flag"):
+                    saved_data[state["mode"]] += "\n\n*[已手动终止]*"
+                    state["is_streaming"] = False
+                    set_btn_normal()
+                    render_chat()
+                    return
+
                 saved_data[state["mode"]] = f"✨ [3/3] 档案重组：历史档案打捞完毕！正在融合本章剧情，为您撰写极具纵深感的人物梳理报告...\n\n"
                 render_chat()
-                btn_regen.content.value = "撰写报告中..."
-                try: btn_regen.update()
-                except Exception: pass
-
+                
                 system_content = f"{get_sys_prompt()}\n\n请结合以下检索到的【历史档案】和【本章文本】进行综合分析：\n{rag_context}\n\n【本章文本开始】\n{chapter_text}\n【本章文本结束】"
                 final_messages = [{"role": "system", "content": system_content}]
 
@@ -271,31 +309,37 @@ def get_ai_chat_view(app):
                     state["is_streaming"] = False
                     saved_data[state["mode"]] = full
                     app._save_book_summaries()
-                    try:
-                        btn_regen.disabled = False
-                        btn_regen.content.value = "重新总结"
-                        btn_regen.update()
-                    except Exception: pass
+                    set_btn_normal()
+                    
                 def on_error_final(err):
                     state["is_streaming"] = False
-                    saved_data[state["mode"]] = err
-                    try:
-                        btn_regen.disabled = False
-                        btn_regen.content.value = "重新总结"
-                        btn_regen.update()
-                    except Exception: pass
+                    # 💥 拦截点 4：强制将中止信息写入 stream_buffer，让 ui_updater_pro 能够捕获并在屏幕上渲染
+                    if state.get("cancel_flag"):
+                        if stream_buffer[0]:
+                            stream_buffer[0] += "\n\n*[已手动终止]*"
+                        else:
+                            stream_buffer[0] = saved_data[state["mode"]] + "\n\n*[已手动终止]*"
+                    else:
+                        if stream_buffer[0]:
+                            stream_buffer[0] += f"\n\nError: {err}"
+                        else:
+                            stream_buffer[0] = saved_data[state["mode"]] + f"\n\nError: {err}"
+                    
+                    saved_data[state["mode"]] = stream_buffer[0]
+                    set_btn_normal()
 
                 AIService.stream_chat(app.ai_config, final_messages, on_chunk_final, on_complete_final, on_error_final, is_active)
-
+                
+                if state["is_streaming"] and state.get("cancel_flag"):
+                    on_error_final("Abort")              
             threading.Thread(target=pro_task, daemon=True).start()
+
             return 
 
-        btn_regen.content.value = "总结中..."
+        
         saved_data[state["mode"]] = "✨ 大模型正在阅读本章并进行梳理，请稍候...\n\n"
         render_chat()
-        try: btn_regen.update()
-        except Exception: pass
-
+        
         chapter_text = app.engine.get_chapter_text(target_idx)[:15000]
         messages = [{"role": "system", "content": f"{get_sys_prompt()}\n\n【参考文本开始】\n{chapter_text}\n【参考文本结束】"}]
 
@@ -329,25 +373,36 @@ def get_ai_chat_view(app):
             state["is_streaming"] = False
             saved_data[state["mode"]] = full
             app._save_book_summaries()
-            try:
-                btn_regen.disabled = False
-                btn_regen.content.value = "重新总结"
-                btn_regen.update()
-            except Exception: pass
+            set_btn_normal() # 💥 恢复按钮
 
         def on_error(err):
             state["is_streaming"] = False
-            stream_buffer[0] = err
-            saved_data[state["mode"]] = err
-            try:
-                btn_regen.disabled = False
-                btn_regen.content.value = "重新总结"
-                btn_regen.update()
-            except Exception: pass
+            # 💥 强制写入流缓冲区
+            if state.get("cancel_flag"):
+                if stream_buffer[0]:
+                    stream_buffer[0] += "\n\n*[已手动终止]*"
+                else:
+                    stream_buffer[0] = saved_data[state["mode"]] + "\n\n*[已手动终止]*"
+            else:
+                if stream_buffer[0]:
+                    stream_buffer[0] += f"\n\nError: {err}"
+                else:
+                    stream_buffer[0] = saved_data[state["mode"]] + f"\n\nError: {err}"
+            
+            saved_data[state["mode"]] = stream_buffer[0]
+            set_btn_normal()
 
-        threading.Thread(target=AIService.stream_chat, args=(app.ai_config, messages, on_chunk, on_complete, on_error, is_active), daemon=True).start()
+        def run_stream_normal():
+            AIService.stream_chat(app.ai_config, messages, on_chunk, on_complete, on_error, is_active)
+            # 💥 兜底：防止常规总结的静默退出
+            if state["is_streaming"] and state.get("cancel_flag"):
+                on_error("Abort")
+        
+        # 💥 核心修复：清理掉多余的参数，明确把 target 指向我们的兜底函数
+        threading.Thread(target=run_stream_normal, daemon=True).start()
 
     def send_message(e):
+        
         if not app.ai_config.get("key"):
             app.show_snack_bar("⚠️ 请先配置 API Key")
             return
@@ -359,8 +414,9 @@ def get_ai_chat_view(app):
         except Exception: pass
 
         state["is_streaming"] = True
+        set_btn_streaming()
         
-        # 💥 修改点 5：追加对话记录至当前模式专属存储区
+        # 追加对话记录至当前模式专属存储区
         state["chats"][state["mode"]].append({"role": "user", "content": text})
         state["chats"][state["mode"]].append({"role": "assistant", "content": "⏳ 正在检索防剧透知识库并思考中..."})
         render_chat()
@@ -447,17 +503,36 @@ def get_ai_chat_view(app):
                 def on_complete(full):
                     state["is_streaming"] = False
                     state["chats"][state["mode"]][-1]["content"] = full
+                    set_btn_normal() # 💥 恢复按钮
                 
                 def on_error(err):
                     state["is_streaming"] = False
-                    stream_buffer[0] = f"请求失败: {err}"
+                    base_txt = state["chats"][state["mode"]][-1]["content"]
+                    # 💥 强制写入流缓冲区
+                    if state.get("cancel_flag"):
+                        if stream_buffer[0]:
+                            stream_buffer[0] += "\n\n*[已手动终止]*"
+                        else:
+                            stream_buffer[0] = base_txt + "\n\n*[已手动终止]*"
+                    else:
+                        if stream_buffer[0]:
+                            stream_buffer[0] += f"\n\n请求失败: {err}"
+                        else:
+                            stream_buffer[0] = base_txt + f"\n\n请求失败: {err}"
+                    
                     state["chats"][state["mode"]][-1]["content"] = stream_buffer[0]
+                    set_btn_normal()
 
                 AIService.stream_chat(app.ai_config, messages, on_chunk, on_complete, on_error, is_active)
+                
+                # 💥 兜底：防止追问聊天时的静默退出
+                if state["is_streaming"] and state.get("cancel_flag"):
+                    on_error("Abort")
                 
             except Exception as ex:
                 state["is_streaming"] = False
                 state["chats"][state["mode"]][-1]["content"] = f"系统错误: {ex}"
+                set_btn_normal() # 💥 恢复按钮
                 try: app.page.update()
                 except Exception: pass
 
