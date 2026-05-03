@@ -120,9 +120,9 @@ def get_ai_chat_view(app):
         has_content = bool(raw_content)
         
         if has_content:
-            base_content = raw_content
+            display_content = raw_content.replace("\n> ", "\n   ").replace("\n>", "\n   ")
         else:
-            base_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
+            display_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
             
         if not state["is_streaming"]:
             btn_regen.content.value = "重新总结" if has_content else "总结"
@@ -131,7 +131,7 @@ def get_ai_chat_view(app):
         
         chat_list_col.controls.append(
             ft.Container(
-                content=ft.Markdown(base_content, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
+                content=ft.Markdown(display_content, selectable=True, extension_set=ft.MarkdownExtensionSet.GITHUB_WEB),
                 bgcolor="surfaceVariant",
                 padding=12,
                 border_radius=8
