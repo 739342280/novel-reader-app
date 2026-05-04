@@ -379,7 +379,7 @@ def get_ai_settings_view(app):
             
         if not app.current_book_path: return
         try:
-            from core.vector_db import VectorDB
+            from data.vector_db import VectorDB
 
         except ImportError:
             status_text.value = f"当前阅读：《{book_name}》\n⚠️ 未安装 sqlite-vec 扩展库，知识库暂不可用"
@@ -481,7 +481,7 @@ def get_ai_settings_view(app):
                     total_start_time = time.time()
                     from core.chunker import NovelChunker
                     from core.ai_service import AIService
-                    from core.vector_db import VectorDB
+                    from data.vector_db import VectorDB
                     
                     # 💥 架构升级：废弃哈希，直接使用当前书籍的 UUID
                     book_id = app.current_book_id
@@ -768,7 +768,7 @@ def get_ai_settings_view(app):
         
         def do_clear():
             try:
-                from core.vector_db import VectorDB
+                from data.vector_db import VectorDB
             except ImportError:
                 app.show_snack_bar("⚠️ 未安装 sqlite-vec 扩展")
                 return

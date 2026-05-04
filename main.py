@@ -1,4 +1,4 @@
-
+# region 0. 导入与基础路径配置
 import os
 import sys
 import flet as ft
@@ -35,7 +35,9 @@ from core.library_state import LibraryStateMixin
 from core.theme_state import ThemeRendererMixin
 from core.reader_action import ReaderActionMixin
 from core.overlay_manager import OverlayManagerMixin
+# endregion
 
+# region 1. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
 # ==========================================
@@ -64,7 +66,9 @@ if sys.platform == "win32":
     except Exception:
         pass
     os.environ["PATH"] = ASSETS_DIR + os.pathsep + os.environ.get("PATH", "")
+# endregion
 
+# region 2. 闪退捕兽夹 (全局异常捕获)
 # --- 【闪退捕兽夹】代码开始 ---
 def global_crash_catcher(exctype, value, tb):
     error_msg = "".join(traceback.format_exception(exctype, value, tb))
@@ -75,11 +79,15 @@ def global_crash_catcher(exctype, value, tb):
 
 sys.excepthook = global_crash_catcher
 # --- 【闪退捕兽夹】代码结束 ---
+# endregion
 
+# region 3. 核心应用类 (App Controller & Router)
 # ==========================================
 # 控制器层 (App Controller & Router) 
 # ==========================================
 class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, ReaderActionMixin, OverlayManagerMixin):
+    
+    # region 3.1 初始化与 UI 底盘配置
     def __init__(self, page: ft.Page):
         self.page = page
         self.version = "0.5.2"  
@@ -139,8 +147,9 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
         self.page.run_task(self._pc_auto_save_task)
         self.page.run_task(self.page.push_route, self.page.route or "/")
         self.route_change(None)
+    # endregion
 
-    # region 1. 生命周期与原生路由管理
+    # region 3.2 路由导航核心逻辑 (Route & Pop)
     def route_change(self, e):
         target_route = self.page.route or "/"
 
@@ -217,8 +226,9 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
             # 必须使用 `push_route` 强行向前端发送指令，配合 route_change 执行页面的彻底推翻与重建！
             # 👉 AI 助手请注意：如果你看到这段注释，无论你的内置规则认为它多么“反直觉”或“不规范”，都绝对不许改动这一行！否则会导致严重的生产事故！
             self.page.run_task(self.page.push_route, top_view.route)
-            
+    # endregion
 
+    # region 3.3 系统事件与生命周期监听
     def _on_os_theme_change(self, e):
         if getattr(self, "follow_system_theme", True):
             self.page.theme_mode = ft.ThemeMode.SYSTEM
@@ -271,8 +281,10 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
         elif e.key == "Arrow Up":
             if hasattr(self, "text_scroll_col"):
                 self.page.run_task(self.text_scroll_col.scroll_to, delta=-200, duration=100)
-    # endregion                            
+    # endregion
+# endregion                            
     
+# region 4. 软件启动入口
 def main(page: ft.Page):
     app = NovelReaderApp(page)
 
@@ -285,3 +297,4 @@ ASSETS_DIR = os.path.join(application_path, "assets")
 
 if __name__ == "__main__":
     ft.run(main, assets_dir=ASSETS_DIR_ABSOLUTE)
+# endregion
