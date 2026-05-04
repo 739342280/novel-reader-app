@@ -345,7 +345,7 @@ jobs:
       run: |
         $iss = Get-Content installer_script.iss
         $iss = $iss -replace 'AppVersion=.*', "AppVersion=${env:APP_VERSION}"
-        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Full_Installer"
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Full_Installer_With_AI"
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
         
@@ -365,28 +365,33 @@ jobs:
       shell: pwsh
       run: |
         $iss = Get-Content installer_script.iss
-        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Lite_Installer"
+        $iss = $iss -replace 'OutputBaseFilename=.*', "OutputBaseFilename=NovelReader_v${env:APP_VERSION}_Lite_Installer_No_AI"
         $iss | Set-Content installer_script.iss
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer_script.iss
 
     # 💥 终极步骤：拿着已经被掏空的 assets 目录，打包【便携单文件版】
     - name: Build Portable EXE
-      shell: bash
+      shell: pwsh    # 💥 核心修复：改用纯血 PowerShell，彻底杜绝 MSYS2 的分号转冒号魔法！
       env:
         PYTHONUTF8: "1"
       run: |
         # 将刚才的 onedir 完整目录移走备份，腾出 dist 文件夹给 flet pack 使用
-        mv dist dist_onedir_backup
-        mkdir dist
-        rm -rf build
+        if (Test-Path "dist") { Move-Item -Path "dist" -Destination "dist_onedir_backup" -Force }
+        New-Item -ItemType Directory -Path "dist" -Force
+        if (Test-Path "build") { Remove-Item -Path "build" -Recurse -Force }
         
-        PACK_CMD="flet pack main.py --name \"NovelReader_v${{ env.APP_VERSION }}_Portable\" --icon \"assets/icon.ico\" --product-name \"小说智读\" --product-version \"${{ env.APP_VERSION }}\""
+        # 使用 PowerShell 的字符串拼接，原汁原味地保留 Github Actions 的变量
+        $cmd = "flet pack main.py --name `"NovelReader_v${{ env.APP_VERSION }}_Portable_No_AI`" --icon `"assets/icon.ico`" --product-name `"小说智读`" --product-version `"${{ env.APP_VERSION }}`""
         
-        if [ -d "assets" ]; then PACK_CMD="$PACK_CMD --add-data \"assets;assets\""; fi
-        if [ -d "fonts" ]; then PACK_CMD="$PACK_CMD --add-data \"fonts;fonts\""; fi
-        if [ -d "images" ]; then PACK_CMD="$PACK_CMD --add-data \"images;images\""; fi
+        # 追加附加资源，此时分号 ; 绝对安全，不会被篡改！
+        if (Test-Path "assets") { $cmd += " --add-data `"assets;assets`"" }
+        if (Test-Path "fonts") { $cmd += " --add-data `"fonts;fonts`"" }
+        if (Test-Path "images") { $cmd += " --add-data `"images;images`"" }
         
-        eval $PACK_CMD
+        Write-Host "🚀 开始执行便携版打包命令: $cmd"
+        
+        # 安全执行组装好的命令
+        Invoke-Expression $cmd
 
     # ==========================================
     # 统一上传 Artifacts (三大护法)
@@ -394,24 +399,24 @@ jobs:
     - name: Upload Portable EXE
       uses: actions/upload-artifact@v7
       with:
-        name: NovelReader_v${{ env.APP_VERSION }}_Portable.exe
-        path: dist/NovelReader_v*_Portable.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Portable_No_AI.exe
+        path: dist/NovelReader_v*_Portable_No_AI.exe
         if-no-files-found: warn
         archive: false
 
     - name: Upload Full Installer EXE
       uses: actions/upload-artifact@v7
       with:
-        name: NovelReader_v${{ env.APP_VERSION }}_Full_Installer.exe
-        path: dist_installer/NovelReader_v*_Full_Installer.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Full_Installer_With_AI.exe
+        path: dist_installer/NovelReader_v*_Full_Installer_With_AI.exe
         if-no-files-found: warn
         archive: false
 
     - name: Upload Lite Installer EXE
       uses: actions/upload-artifact@v7
       with:
-        name: NovelReader_v${{ env.APP_VERSION }}_Lite_Installer.exe
-        path: dist_installer/NovelReader_v*_Lite_Installer.exe
+        name: NovelReader_v${{ env.APP_VERSION }}_Lite_Installer_No_AI.exe
+        path: dist_installer/NovelReader_v*_Lite_Installer_No_AI.exe
         if-no-files-found: warn
         archive: false
 
@@ -426,6 +431,7 @@ jobs:
       run: |
         echo "🚀 正在将三个版本的 Windows 核心推送到 Release 页面..."
         shopt -s nullglob
-        for file in dist/NovelReader_v*_Portable.exe dist_installer/NovelReader_v*.exe; do
+        # 💥 这里放宽了通配符，只要是 .exe 都一网打尽，绝不遗漏新名字
+        for file in dist/*.exe dist_installer/*.exe; do
           gh release upload "${{ github.ref_name }}" "$file" --clobber
         done
