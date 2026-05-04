@@ -386,8 +386,8 @@ def get_ai_settings_view(app):
             btn_build.disabled = btn_clear.disabled = True
             return
 
-        book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
-        db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}.db")
+        book_id = app.current_book_id
+        db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
         if os.path.exists(db_path):
             try:
                 vdb = VectorDB(db_path)
@@ -483,10 +483,11 @@ def get_ai_settings_view(app):
                     from core.ai_service import AIService
                     from core.vector_db import VectorDB
                     
-                    book_hash = hashlib.md5(path.encode('utf-8')).hexdigest()
+                    # 💥 架构升级：废弃哈希，直接使用当前书籍的 UUID
+                    book_id = app.current_book_id
                     db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
                     os.makedirs(db_dir, exist_ok=True)
-                    db_path = os.path.join(db_dir, f"{book_hash}.db")
+                    db_path = os.path.join(db_dir, f"{book_id}.db")
 
                     # 1. 文本分块
                     safe_update_ui(0, "✂️ 正在进行滑动窗口分块...")
@@ -503,7 +504,7 @@ def get_ai_settings_view(app):
                     # 2. 唤醒底层引擎并进行探针探测
                     # 💥 终极革命：引入 JSONL 本地坚固快照缓存
                     import json
-                    cache_path = os.path.join(db_dir, f"{book_hash}_cache.jsonl")
+                    cache_path = os.path.join(db_dir, f"{book_id}_cache.jsonl") # 💥 换成 book_id
                     emb_cache = {}
                     if os.path.exists(cache_path):
                         safe_update_ui(0.01, "🔄 读取本地断点快照中...")
@@ -772,9 +773,10 @@ def get_ai_settings_view(app):
                 app.show_snack_bar("⚠️ 未安装 sqlite-vec 扩展")
                 return
                 
-            book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
-            db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}.db")
-            cache_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}_cache.jsonl")
+            # 💥 架构升级：清除库的时候也要根据 UUID 来找！
+            book_id = app.current_book_id
+            db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
+            cache_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}_cache.jsonl")
             
             # 💥 暴力粉碎数据库和快照文件
             import gc

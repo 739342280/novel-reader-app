@@ -27,15 +27,58 @@ class LibraryStateMixin:
 
     def _load_bookshelf(self):
         self.bookshelf = StorageManager.load_json("bookshelf.json", default=[])
+        
+        # 💥 终极无感热升级：哈希转 UUID，且不抛弃任何一个配套文件！
+        need_save = False
+        import uuid
+        import hashlib
+        
+        db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
+        toc_dir = StorageManager.get_toc_dir()
+        sum_dir = os.path.join(StorageManager.get_base_dir(), "ai_summaries")
+        
+        for book in self.bookshelf:
+            if 'book_id' not in book:
+                new_id = str(uuid.uuid4())
+                book['book_id'] = new_id
+                need_save = True
+                
+                book_path = book.get('path', '')
+                if book_path:
+                    old_hash = hashlib.md5(book_path.encode('utf-8')).hexdigest()
+                    
+                    # 组装老文件的名字
+                    old_db = os.path.join(db_dir, f"{old_hash}.db")
+                    old_cache = os.path.join(db_dir, f"{old_hash}_cache.jsonl")
+                    old_toc = os.path.join(toc_dir, f"{old_hash}.json")
+                    old_sum = os.path.join(sum_dir, f"{old_hash}.json")
+                    
+                    # 组装新文件的名字
+                    new_db = os.path.join(db_dir, f"{new_id}.db")
+                    new_cache = os.path.join(db_dir, f"{new_id}_cache.jsonl")
+                    new_toc = os.path.join(toc_dir, f"{new_id}.json")
+                    new_sum = os.path.join(sum_dir, f"{new_id}.json")
+                    
+                    # 三路大军，统一改名！
+                    for old_p, new_p in [(old_db, new_db), (old_cache, new_cache), (old_toc, new_toc), (old_sum, new_sum)]:
+                        if os.path.exists(old_p):
+                            try:
+                                os.rename(old_p, new_p)
+                                print(f"[热升级] 成功迁移: {os.path.basename(new_p)}")
+                            except Exception: pass
+
+        if need_save:
+            self._save_bookshelf()
 
     def _save_bookshelf(self):
         StorageManager.save_json("bookshelf.json", self.bookshelf)
 
     def _load_book_summaries(self):
-        self.current_book_summaries = StorageManager.load_book_summaries(self.current_book_path)
+        # 💥 呼叫管家时，传入 ID 而不是 path
+        self.current_book_summaries = StorageManager.load_book_summaries(self.current_book_id)
 
     def _save_book_summaries(self):
-        StorageManager.save_book_summaries(self.current_book_path, self.current_book_summaries)    
+        StorageManager.save_book_summaries(self.current_book_id, self.current_book_summaries)   
 
     def save_current_progress(self):
         if getattr(self, "current_book_path", "") == "":
@@ -395,3 +438,10 @@ class LibraryStateMixin:
             )
             self.bookshelf_grid.controls.append(card)
         self.page.update()
+    
+    @property
+    def current_book_id(self):
+        for book in self.bookshelf:
+            if book.get('path') == getattr(self, 'current_book_path', ''):
+                return book.get('book_id')
+        return None

@@ -32,13 +32,29 @@ class ReaderActionMixin:
         self.current_book_path = path
         
         custom_name = os.path.splitext(os.path.basename(path))[0]
+        book_exists = False
         for b in self.bookshelf:
             if b['path'] == path:
                 custom_name = b.get('name', custom_name)
+                book_exists = True
                 break
         self.current_book_name = custom_name
         
-        toc_cache = StorageManager.load_book_toc(path)
+        # 💥 核心防御：如果是新书，立刻发放 UUID 钢印，确保存储管家有 ID 可用！
+        if not book_exists:
+            import uuid
+            self.bookshelf.insert(0, {
+                "name": self.current_book_name,
+                "path": self.current_book_path,
+                "book_id": str(uuid.uuid4()), 
+                "last_chapter_idx": 0,
+                "last_chapter_title": "未读",
+                "last_scroll_offset": 0.0
+            })
+            self._save_bookshelf()
+        
+        # 💥 呼叫管家时，传入真正的 book_id 而不再是 path！
+        toc_cache = StorageManager.load_book_toc(self.current_book_id)
         if toc_cache:
             self.engine.load_with_cache(path, toc_cache)
             self.on_parse_success()
@@ -53,7 +69,8 @@ class ReaderActionMixin:
         def task():
             try:
                 chaps = self.engine.load_and_analyze(path, self._sync_progress)
-                StorageManager.save_book_toc(path, chaps)
+                # 💥 呼叫管家存文件时，传入真正的 book_id
+                StorageManager.save_book_toc(self.current_book_id, chaps)
                 self.on_parse_success()
             except Exception as e:
                 self.show_snack_bar(f"解析失败: {str(e)}")
@@ -76,17 +93,7 @@ class ReaderActionMixin:
                 target_idx = book.get('last_chapter_idx', -1)
                 target_offset = book.get('last_scroll_offset', 0.0)
                 break
-
-        if not book_exists:
-            self.bookshelf.insert(0, {
-                "name": self.current_book_name,
-                "path": self.current_book_path,
-                "last_chapter_idx": 0,
-                "last_chapter_title": "未读",
-                "last_scroll_offset": 0.0
-            })
-            self._save_bookshelf()
-            
+                   
         self._load_book_summaries()
 
         if target_idx != -1 and target_idx < len(self.engine.chapters_info):

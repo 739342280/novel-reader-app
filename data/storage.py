@@ -53,11 +53,10 @@ class StorageManager:
             print(f"保存文件 {filename} 失败: {e}")
 
     @classmethod
-    def load_book_summaries(cls, book_path):
-        if not book_path: return {}
-        path_hash = hashlib.md5(book_path.encode('utf-8')).hexdigest()
+    def load_book_summaries(cls, book_id): # 💥 参数改为 book_id
+        if not book_id: return {}
         summaries_dir = os.path.join(cls.get_base_dir(), "ai_summaries")
-        path = os.path.join(summaries_dir, f"{path_hash}.json")
+        path = os.path.join(summaries_dir, f"{book_id}.json") # 💥 直接用 ID 做文件名
         if os.path.exists(path):
             try:
                 with open(path, 'r', encoding='utf-8') as f:
@@ -66,15 +65,14 @@ class StorageManager:
         return {}
 
     @classmethod
-    def save_book_summaries(cls, book_path, data):
-        if not book_path: return
+    def save_book_summaries(cls, book_id, data):
+        if not book_id: return
         summaries_dir = os.path.join(cls.get_base_dir(), "ai_summaries")
         if not os.path.exists(summaries_dir):
             try: os.makedirs(summaries_dir, exist_ok=True)
             except Exception: pass
             
-        path_hash = hashlib.md5(book_path.encode('utf-8')).hexdigest()
-        path = os.path.join(summaries_dir, f"{path_hash}.json")
+        path = os.path.join(summaries_dir, f"{book_id}.json")
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)
@@ -93,10 +91,9 @@ class StorageManager:
         return path
 
     @classmethod
-    def load_book_toc(cls, book_path):
-        if not book_path: return None
-        path_hash = hashlib.md5(book_path.encode('utf-8')).hexdigest()
-        path = os.path.join(cls.get_toc_dir(), f"{path_hash}.json")
+    def load_book_toc(cls, book_id):
+        if not book_id: return None
+        path = os.path.join(cls.get_toc_dir(), f"{book_id}.json")
         if os.path.exists(path):
             try:
                 with open(path, 'r', encoding='utf-8') as f:
@@ -105,10 +102,9 @@ class StorageManager:
         return None
 
     @classmethod
-    def save_book_toc(cls, book_path, toc_data):
-        if not book_path or not toc_data: return
-        path_hash = hashlib.md5(book_path.encode('utf-8')).hexdigest()
-        path = os.path.join(cls.get_toc_dir(), f"{path_hash}.json")
+    def save_book_toc(cls, book_id, toc_data):
+        if not book_id or not toc_data: return
+        path = os.path.join(cls.get_toc_dir(), f"{book_id}.json")
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(toc_data, f, ensure_ascii=False, indent=4)

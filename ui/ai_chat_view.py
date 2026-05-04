@@ -309,8 +309,8 @@ def get_ai_chat_view(app):
                         from data.storage import StorageManager
                         try:
                             from core.vector_db import VectorDB
-                            book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
-                            db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}.db")
+                            book_id = app.current_book_id # 💥 直接向总台要身份证！
+                            db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
                             
                             if os.path.exists(db_path):
                                 vdb = VectorDB(db_path)
@@ -492,8 +492,8 @@ def get_ai_chat_view(app):
                 rag_context = ""
                 try:
                     from core.vector_db import VectorDB
-                    book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
-                    db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}.db")
+                    book_id = app.current_book_id # 💥 直接向总台要身份证！
+                    db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
                     
                     if os.path.exists(db_path):
                         vdb = VectorDB(db_path)
