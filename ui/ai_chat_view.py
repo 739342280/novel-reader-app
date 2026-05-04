@@ -581,24 +581,12 @@ def get_ai_chat_view(app):
             app.show_snack_bar("⚠️ 暂无内容可复制")
             return
 
-        # 2. 执行三层兼容复制逻辑
         success = False
         
-        # --- 第一层：尝试 Flet 原生 API（安卓端必须靠这个） ---
-        # 我们用循环尝试所有可能的 Flet 方法名，防止版本差异
-        for method_name in ["set_clipboard", "set_clipboard_data", "set_clipboard_text"]:
-            if hasattr(app.page, method_name):
-                try:
-                    getattr(app.page, method_name)(content_to_copy)
-                    success = True
-                    break
-                except: continue
-        
-        # --- 第二层：Windows 专项修复（防乱码 + 支持超长文本） ---
-        if not success and sys.platform == "win32":
+        # --- 核心修复：根据不同平台精准分发复制任务 ---
+        if sys.platform == "win32":
+            # Windows 端：必须优先使用 PowerShell 强制 UTF-8 管道流（彻底杜绝中文乱码与长度限制）
             try:
-                # 💥 这里的核心：强制指定 UTF8 编码通过管道喂给 PowerShell 的 Set-Clipboard
-                # 这种方式不经过 shell 的字符转义，不会乱码，支持几万字的巨长章节
                 process = subprocess.Popen(
                     ['powershell', '-NoProfile', '-Command', 
                      '[Console]::InputEncoding = [System.Text.Encoding]::UTF8; $input | Set-Clipboard'],
@@ -610,13 +598,26 @@ def get_ai_chat_view(app):
                     success = True
             except Exception as ex:
                 print(f"Windows PS Copy Error: {ex}")
+        else:
+            # 移动端（Android/iOS/Linux）：Flet 的原生 API 在手机上容易静默失败
+            # 💥 必须优先调用你底座原本封装好的 _execute_copy 方法！
+            if hasattr(app, '_execute_copy'):
+                try:
+                    app._execute_copy(content_to_copy)
+                    success = True
+                except Exception as ex:
+                    print(f"Mobile execute_copy Error: {ex}")
 
-        # --- 第三层：最后的回底方案 ---
+        # --- 终极兜底：如果上面的首选方案都失败了，再尝试 Flet 原生 API ---
         if not success:
-            try:
-                app._execute_copy(content_to_copy)
-                success = True
-            except: pass
+            for method_name in ["set_clipboard", "set_clipboard_data", "set_clipboard_text"]:
+                if hasattr(app.page, method_name):
+                    try:
+                        getattr(app.page, method_name)(content_to_copy)
+                        success = True
+                        break
+                    except: 
+                        continue
 
         # 3. UI 反馈
         if success:
