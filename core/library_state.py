@@ -136,9 +136,51 @@ class LibraryStateMixin:
         self._save_bookshelf()
         self.route_change(None)
 
-    def remove_from_bookshelf(self, path):
+    def remove_from_bookshelf(self, path, hard_delete=False):
+        # 💥 1. 找到这本书的 UUID
+        target_book_id = None
+        for b in self.bookshelf:
+            if b['path'] == path:
+                target_book_id = b.get('book_id')
+                break
+                
+        # 2. 从内存数组和 JSON 配置文件中抹除它
         self.bookshelf = [b for b in self.bookshelf if b['path'] != path]
         self._save_bookshelf()
+        
+        # 💥 3. 执行真正的物理大扫除
+        if hard_delete:
+            import os
+            from data.storage import StorageManager
+            
+            # (1) 删本体 TXT
+            try:
+                if os.path.exists(path):
+                    os.remove(path)
+            except Exception as e: print(f"清理本体失败: {e}")
+                
+            if target_book_id:
+                # (2) 删数据库 .db 和快照缓存
+                try:
+                    db_path = os.path.join(StorageManager.get_db_dir(), f"{target_book_id}.db")
+                    cache_path = os.path.join(StorageManager.get_db_dir(), f"{target_book_id}_cache.jsonl")
+                    if os.path.exists(db_path): os.remove(db_path)
+                    if os.path.exists(cache_path): os.remove(cache_path)
+                except Exception as e: print(f"清理数据库失败: {e}")
+                    
+                # (3) 删目录缓存 .json
+                try:
+                    toc_path = os.path.join(StorageManager.get_toc_dir(), f"{target_book_id}.json")
+                    if os.path.exists(toc_path): os.remove(toc_path)
+                except Exception as e: print(f"清理目录缓存失败: {e}")
+                    
+                # (4) 删 AI 总结 .json
+                try:
+                    sum_path = os.path.join(StorageManager.get_summaries_dir(), f"{target_book_id}.json")
+                    if os.path.exists(sum_path): os.remove(sum_path)
+                except Exception as e: print(f"清理总结缓存失败: {e}")
+                
+        # 最后，刷新视图
         self.route_change(None)
 
     # ==========================================
@@ -421,7 +463,7 @@ class LibraryStateMixin:
                 on_click=self.trigger_file_picker, 
                 content=ft.Column([
                     ft.Icon(ft.Icons.ADD, size=48, color=ft.Colors.BLUE),
-                    ft.Text("导入本地TXT", size=13, color=ft.Colors.GREY)
+                    ft.Text("导入书籍 / .nra 库", size=13, color=ft.Colors.GREY)
                 ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER)
             )
         )

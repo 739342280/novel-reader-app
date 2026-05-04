@@ -31,9 +31,24 @@ class DialogManager:
             app._close_dialog()
 
         def confirm_delete(e):
-            app.remove_from_bookshelf(path)
-            app._close_dialog()
-            app.show_snack_bar(f"✅ 《{current_name}》已移出书架")
+            # 1. 弹出二次确认警告框
+            def do_hard_delete(e_inner):
+                app._universal_close(confirm_dlg)
+                app._close_dialog()
+                # 💥 呼叫底层清道夫：要求连同物理文件一起粉碎！
+                app.remove_from_bookshelf(path, hard_delete=True)
+                app.show_snack_bar(f"🗑️ 《{current_name}》及其相关的知识库数据已彻底删除。")
+
+            confirm_dlg = ft.AlertDialog(
+                title=ft.Row([ft.Icon(ft.Icons.WARNING_AMBER, color="red"), ft.Text("高危操作警告", color="red", weight="bold")]),
+                content=ft.Text(f"您确定要彻底删除《{current_name}》吗？\n\n此操作不仅会将其移出书架，还会物理删除它的 TXT 原文件、AI 总结记录，以及耗费大量算力生成的向量数据库！\n\n该操作不可逆，请谨慎选择！"),
+                actions=[
+                    ft.TextButton("取消", on_click=lambda _: app._universal_close(confirm_dlg)),
+                    ft.ElevatedButton("无情粉碎", style=ft.ButtonStyle(bgcolor=ft.Colors.RED_700, color=ft.Colors.WHITE), on_click=do_hard_delete)
+                ],
+                actions_alignment=ft.MainAxisAlignment.END,
+            )
+            app._universal_open(confirm_dlg)
 
         async def on_export_txt(e):
             app._close_dialog()
