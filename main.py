@@ -1,10 +1,6 @@
 
 import os
 import sys
-if getattr(sys, 'frozen', False):
-    # 当检测到程序是被打包成 .exe 运行时，
-    # 强行将工作目录切换到它解压的系统临时文件夹 (sys._MEIPASS)
-    os.chdir(sys._MEIPASS)
 import flet as ft
 import threading
 import asyncio
@@ -14,6 +10,17 @@ import zipfile
 from datetime import datetime
 import traceback
 import ctypes  # 【新增】必须导入 ctypes 以调用 Windows 底层 API
+
+# 💥 终极护盾：获取静态资源的【绝对物理路径】
+if getattr(sys, 'frozen', False):
+    # 如果是打包后的便携版 EXE，基准路径就是解压的系统临时文件夹
+    base_path = sys._MEIPASS
+else:
+    # 如果是本地开发环境，基准路径就是 main.py 所在的当前目录
+    base_path = os.path.abspath(os.path.dirname(__file__))
+
+# 拼装出完整的 assets 绝对路径！
+ASSETS_DIR_ABSOLUTE = os.path.join(base_path, "assets")
 
 from core.engine import NovelEngine
 from data.storage import StorageManager
@@ -277,4 +284,4 @@ else:
 ASSETS_DIR = os.path.join(application_path, "assets")
 
 if __name__ == "__main__":
-    ft.run(main, assets_dir=ASSETS_DIR)
+    ft.run(main, assets_dir=ASSETS_DIR_ABSOLUTE)
