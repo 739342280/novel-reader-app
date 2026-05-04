@@ -120,7 +120,7 @@ def get_ai_chat_view(app):
         has_content = bool(raw_content)
         
         if has_content:
-            display_content = raw_content.replace("\n> ", "\n   ").replace("\n>", "\n   ")
+            display_content = raw_content.replace("\n> ", "\n   ").replace("\n>", "\n   ").replace("---", "")
         else:
             display_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
             
