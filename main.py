@@ -90,7 +90,7 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
     # region 3.1 初始化与 UI 底盘配置
     def __init__(self, page: ft.Page):
         self.page = page
-        self.version = "0.5.2"  
+        self.version = "0.5.3"  
         self.author = "手背儿"
         self.page.title = f"小说智读 - v{self.version}"
         
