@@ -1,6 +1,7 @@
 import flet as ft
 import asyncio
 import threading
+import re
 from core.ai_service import AIService
 
 def get_ai_chat_view(app):
@@ -121,6 +122,7 @@ def get_ai_chat_view(app):
         
         if has_content:
             display_content = raw_content.replace("\n> ", "\n   ").replace("\n>", "\n   ").replace("---", "")
+            display_content = re.sub(r'^#+\s+(.*)$', r'**\1**\n', display_content, flags=re.MULTILINE)
         else:
             display_content = "请选择上方选项卡，然后点击下方按钮开始分析本章。\n\n*(注意：请确保已在首页设置中配置了 API Key)*"
             
@@ -478,17 +480,16 @@ def get_ai_chat_view(app):
                 summary_context = f"\n\n【参考资料 C：初步分析】\n{prev_summary}\n(注：以上是你之前生成的初步总结，仅供参考，若与原文冲突，请坚决以原文为准。)" if prev_summary else ""
 
                 # 为追问环节增加一个适配层，告诉 AI 现在是对话模式，可以参考历史
-                base_prompt = get_sys_prompt()
+                chat_prompt = app.ai_config.get("prompt_chat", "你是一个深度了解本书剧情的阅读助手。请结合下方提供的参考资料，准确、自然地解答用户的追问。")
                 rag_instruction = ""
                 if rag_context:
                     rag_instruction = (
                         "\n\n【重要指令：全书关联】\n"
-                        "当前用户正在进行追问。虽然你的基本职责由上方系统提示词定义，但现在请你打破'仅限本章'的限制，"
-                        "充分利用下方提供的【全书知识库检索片段】来回答。如果用户问及之前的剧情或人物背景，请以检索到的档案为准。"
+                        "用户当前的问题可能跨越了多章内容。请优先以【全书知识库检索片段】中的历史档案为准来解答。严禁剧透档案中未发生的后续情节。"
                     )
                     
                 # 👇 这里是核心修复：把 {get_sys_prompt()} 替换成了 {base_prompt}{rag_instruction}
-                system_content = f"{base_prompt}{rag_instruction}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
+                system_content = f"{chat_prompt}{rag_instruction}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
                 messages = [{"role": "system", "content": system_content}]
                 
                 

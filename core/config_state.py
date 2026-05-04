@@ -41,8 +41,8 @@ class ConfigStateMixin:
             ),
             # 人物提示词默认值
             "prompt_char": (
-                "请提取本章【最具存在感、对剧情有实际推动的 3-5 个人物】。\n\n"
-                "**【输出要求：过滤无用路人，极致精简，总字数300字以内】**\n"
+                "请提取本章【最具存在感、对剧情有实际推动的 5-7 个人物】。\n\n"
+                "**【输出要求：过滤无用路人，极致精简，总字数400字以内】**\n"
                 "请严格按照以下“情报卡片”格式单行输出：\n\n"
                 "- **[人物名]**（阵营/身份）：【当前状态】——【本章核心动作/态度】。与主角关系：xxx。\n"
                 "- **[人物名]**（阵营/身份）：...\n\n"
@@ -59,6 +59,17 @@ class ConfigStateMixin:
                 "💡 **【暗流推测】**：一针见血地指出这可能暗示了什么后文走向，或暴露了什么隐藏逻辑。\n\n"
                 "（注：如果本章属于平铺直叙的过渡章，没有明显伏笔，请直接回复“本章未见明显伏笔。”不要牵强附会。）"
             ),
+            # 追问专属提示词
+            "prompt_chat": (
+                "你是一个深度了解本书剧情的“高级陪读顾问”。\n\n"
+                "【核心任务】\n"
+                "请结合下方提供的【参考资料】，准确、自然地解答用户的追问。\n\n"
+                "【回答准则】\n"
+                "1. 直接回答用户的问题，无需采用任何固定的总结格式。\n"
+                "2. 严格以提供的原文和历史档案为事实依据，严禁凭空捏造或剧透未发生的剧情。\n"
+                "3. 如果参考资料中没有相关信息，请坦诚告知“当前资料不足以回答该问题”。"
+            ),
+            
             "embed_mode": "云端 API",
             "embed_url": "https://api.deepseek.com/v1/embeddings",
             "embed_key": "",
@@ -76,7 +87,7 @@ class ConfigStateMixin:
     def _load_config_from_appdata(self):
         data = StorageManager.load_json("ai_config.json")
         if data:
-            keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_char_pro", "prompt_clue", 
+            keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_char_pro", "prompt_clue", "prompt_chat", 
                             "embed_mode", "embed_url", "embed_key", "embed_model", 
                             "local_embed_path", "local_model_path", "top_k", "build_batch_size", 
                             "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch"]
