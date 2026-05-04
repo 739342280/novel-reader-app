@@ -1,6 +1,11 @@
-import flet as ft
+
 import os
 import sys
+if getattr(sys, 'frozen', False):
+    # 当检测到程序是被打包成 .exe 运行时，
+    # 强行将工作目录切换到它解压的系统临时文件夹 (sys._MEIPASS)
+    os.chdir(sys._MEIPASS)
+import flet as ft
 import threading
 import asyncio
 import shutil
