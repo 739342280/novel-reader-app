@@ -308,7 +308,7 @@ def get_ai_chat_view(app):
                         import os
                         from data.storage import StorageManager
                         try:
-                            from core.vector_db import VectorDB
+                            from data.vector_db import VectorDB
                             book_id = app.current_book_id # 💥 直接向总台要身份证！
                             db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
                             
@@ -491,7 +491,7 @@ def get_ai_chat_view(app):
                 
                 rag_context = ""
                 try:
-                    from core.vector_db import VectorDB
+                    from data.vector_db import VectorDB
                     book_id = app.current_book_id # 💥 直接向总台要身份证！
                     db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_id}.db")
                     

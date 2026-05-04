@@ -1,14 +1,16 @@
 # ==============================================================================
-# 文件：core/engine.py[cite: 28]
-# 职责：文本解析与小说结构化引擎 (Text Parsing & Structural Engine)[cite: 28]
+# 文件：data/storage.py
+# 职责：底层硬盘 I/O 大管家 (File System / Storage Manager)
 # 
 # 详细功能介绍：
-# 1. 智能编码读取：内置多编码探测（UTF-8, GBK, UTF-16 等），确保导入各种老旧 TXT 文本时不会乱码报错[cite: 28]。
-# 2. 章节正则扫描：使用高性能正则表达式匹配“第X章”、“卷X”等常见网文目录特征，瞬间将百万字长文切分为结构化的章节数组[cite: 28]。
-# 3. 缓存秒开支持：提供 `load_with_cache` 方法，允许直接读取已固化的目录缓存，避开重复正则计算，实现万章小说的秒速打开[cite: 28]。
-# 4. 按需内存提取：通过 `get_chapter_text` 方法，利用起止索引坐标精准从内存池中截取单章文本，极大地节省了运行内存[cite: 28]。
-#
-# 架构定位：底层数据清洗工厂。负责把无序的 TXT 纯文本，转化为 UI 和 AI 都能理解的“章节块”结构[cite: 28]。
+# 1. 跨平台路径归一化：动态识别当前运行环境（Windows 桌面端 / Android 移动端 / Flet 独立沙盒），
+#    极其精准地计算出安全、可写的全局根目录 (get_base_dir)。
+# 2. JSON 持久化基座：封装了所有 .json 文件的读写操作（如全局配置、书架数据），并做好防奔溃处理。
+# 3. RAG 知识库配件管理：完全基于书籍的唯一标识 (book_id) 来存取配套的静态文件，包含：
+#    - ai_summaries/：存放每本书各章节的 AI 总结与追问历史对话。
+#    - tocs/：存放已解析书籍的章节目录缓存，实现二次打开“秒进”阅读页。
+# 
+# 架构定位：这是一个纯静态工具类 (Static Utility Class)，无状态，只负责和操作系统的底层硬盘打交道。
 # ==============================================================================
 import os
 import sys
@@ -64,11 +66,35 @@ class StorageManager:
         except Exception as e: 
             print(f"保存文件 {filename} 失败: {e}")
 
+    # ==========================
+    # 专属目录获取助手 (Path Helpers)
+    # ==========================
     @classmethod
-    def load_book_summaries(cls, book_id): # 💥 参数改为 book_id
+    def get_db_dir(cls):
+        """获取向量数据库的专属目录"""
+        path = os.path.join(cls.get_base_dir(), "vector_dbs")
+        if not os.path.exists(path):
+            try: os.makedirs(path, exist_ok=True)
+            except Exception: pass
+        return path
+
+    @classmethod
+    def get_summaries_dir(cls):
+        """获取 AI 总结的专属目录"""
+        path = os.path.join(cls.get_base_dir(), "ai_summaries")
+        if not os.path.exists(path):
+            try: os.makedirs(path, exist_ok=True)
+            except Exception: pass
+        return path
+
+    # ==========================
+    # AI 总结读写
+    # ==========================
+    @classmethod
+    def load_book_summaries(cls, book_id): 
         if not book_id: return {}
-        summaries_dir = os.path.join(cls.get_base_dir(), "ai_summaries")
-        path = os.path.join(summaries_dir, f"{book_id}.json") # 💥 直接用 ID 做文件名
+        # 💥 架构优化：直接呼叫专属助手获取路径
+        path = os.path.join(cls.get_summaries_dir(), f"{book_id}.json") 
         if os.path.exists(path):
             try:
                 with open(path, 'r', encoding='utf-8') as f:
@@ -79,12 +105,8 @@ class StorageManager:
     @classmethod
     def save_book_summaries(cls, book_id, data):
         if not book_id: return
-        summaries_dir = os.path.join(cls.get_base_dir(), "ai_summaries")
-        if not os.path.exists(summaries_dir):
-            try: os.makedirs(summaries_dir, exist_ok=True)
-            except Exception: pass
-            
-        path = os.path.join(summaries_dir, f"{book_id}.json")
+        # 💥 架构优化：直接呼叫专属助手获取路径
+        path = os.path.join(cls.get_summaries_dir(), f"{book_id}.json")
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 json.dump(data, f, ensure_ascii=False, indent=4)

@@ -46,9 +46,9 @@ class LibraryStateMixin:
         import uuid
         import hashlib
         
-        db_dir = os.path.join(StorageManager.get_base_dir(), "vector_dbs")
+        db_dir = StorageManager.get_db_dir()
         toc_dir = StorageManager.get_toc_dir()
-        sum_dir = os.path.join(StorageManager.get_base_dir(), "ai_summaries")
+        sum_dir = StorageManager.get_summaries_dir()
         
         for book in self.bookshelf:
             if 'book_id' not in book:
@@ -333,7 +333,7 @@ class LibraryStateMixin:
         try:
             files = await ft.FilePicker().pick_files(
                 file_type=ft.FilePickerFileType.CUSTOM, 
-                allowed_extensions=["txt"]
+                allowed_extensions=["txt", "nra"] # 💥 开放 .nra 权限
             )
             
             if files and len(files) > 0:
@@ -342,6 +342,11 @@ class LibraryStateMixin:
                 
                 if not picked_path:
                     self.show_snack_bar("获取文件路径失败，请尝试换一个目录或系统文件管理器导入。")
+                    return
+
+                # 💥 新增：分流处理 .nra 智能知识库包
+                if picked_path.lower().endswith('.nra'):
+                    self.page.run_task(self._process_nra_import, picked_path)
                     return
 
                 if picked_path.lower().endswith('.txt'):
@@ -458,3 +463,163 @@ class LibraryStateMixin:
             if book.get('path') == getattr(self, 'current_book_path', ''):
                 return book.get('book_id')
         return None
+    
+    # ==========================================
+    # 📦 .nra 知识库 打包与导出引擎
+    # ==========================================
+    async def export_nra_package(self, book_path, current_name):
+        book_id = None
+        for b in self.bookshelf:
+            if b['path'] == book_path:
+                book_id = b.get('book_id')
+                break
+        
+        if not book_id:
+            self.show_snack_bar("⚠️ 无法获取书籍 ID，请先打开该书一次。")
+            return
+            
+        db_path = os.path.join(StorageManager.get_db_dir(), f"{book_id}.db")
+        if not os.path.exists(db_path):
+            self.show_snack_bar("⚠️ 本书尚未建立向量库，无法打包 .nra，请使用普通 TXT 导出。")
+            return
+            
+        saved_path = await ft.FilePicker().save_file(
+            file_type=ft.FilePickerFileType.CUSTOM,
+            allowed_extensions=["nra"], 
+            file_name=f"{current_name}_智能知识库.nra"
+        )
+        
+        if not saved_path: return
+        
+        self.show_snack_bar("📦 正在打包知识库，请稍候...")
+        
+        def pack_task():
+            import zipfile
+            import json
+            from datetime import datetime
+            try:
+                # 使用 ZIP_DEFLATED 进行无损高压，巨幅缩减体积
+                with zipfile.ZipFile(saved_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                    # 1. 塞入纯文本
+                    zipf.write(book_path, "book.txt")
+                    # 2. 塞入底层数据库
+                    zipf.write(db_path, "index.db")
+                    
+                    # 3. 塞入目录缓存（如果有）
+                    toc_path = os.path.join(StorageManager.get_toc_dir(), f"{book_id}.json")
+                    if os.path.exists(toc_path): zipf.write(toc_path, "toc.json")
+                    
+                    # 4. 塞入 AI 总结和聊天记录（如果有）
+                    sum_path = os.path.join(StorageManager.get_summaries_dir(), f"{book_id}.json")
+                    if os.path.exists(sum_path): zipf.write(sum_path, "summary.json")
+                    
+                    # 5. 生成基因图谱 (Manifest)
+                    current_mode = self.ai_config.get("embed_mode", "")
+                    current_model = self.ai_config.get("embed_model", "") if current_mode == "云端 API" else os.path.basename(self.ai_config.get("local_model_path", ""))
+                    
+                    manifest = {
+                        "book_name": current_name,
+                        "original_filename": os.path.basename(book_path),
+                        "export_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "vector_info": {
+                            "mode": current_mode,
+                            "model_name": current_model
+                        }
+                    }
+                    zipf.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=4))
+                    
+                self.show_snack_bar(f"✅ 《{current_name}》知识库已成功打包为 .nra！")
+            except Exception as e:
+                self.show_snack_bar(f"❌ 打包失败: {e}")
+                
+        threading.Thread(target=pack_task, daemon=True).start()
+
+    # ==========================================
+    # 📥 .nra 知识库 解包与挂载引擎
+    # ==========================================
+    async def _process_nra_import(self, nra_path):
+        self.show_snack_bar("📥 正在解压并挂载知识库，请稍候...")
+        
+        def import_task():
+            import tempfile
+            import zipfile
+            import json
+            import uuid
+            
+            temp_dir = tempfile.mkdtemp()
+            try:
+                # 1. 暴力拆包
+                with zipfile.ZipFile(nra_path, 'r') as zipf:
+                    zipf.extractall(temp_dir)
+                    
+                # 2. 验尸（读取基因图谱）
+                manifest_path = os.path.join(temp_dir, "manifest.json")
+                if not os.path.exists(manifest_path):
+                    self.show_snack_bar("❌ 无效的 .nra 包：缺少 manifest.json 基因图谱")
+                    return
+                    
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest = json.load(f)
+                    
+                book_name = manifest.get("book_name", "未知书籍")
+                original_txt_name = manifest.get("original_filename", f"{book_name}.txt")
+                v_model = manifest.get("vector_info", {}).get("model_name", "未知")
+                
+                # 🛡️ 3. 维度安全校验 (目前仅作强提醒，不强行阻断，给用户切回模型的机会)
+                current_mode = self.ai_config.get("embed_mode", "")
+                current_model = self.ai_config.get("embed_model", "") if current_mode == "云端 API" else os.path.basename(self.ai_config.get("local_model_path", ""))
+                
+                if current_model != v_model:
+                    self.show_snack_bar(f"⚠️ 警告：当前模型 ({current_model}) 与知识库原模型 ({v_model}) 不符！请前往设置切换，否则追问将崩溃或乱码。")
+                
+                # 4. 办理新身份证落户！
+                new_id = str(uuid.uuid4())
+                books_dir = os.path.join(StorageManager.get_base_dir(), "books")
+                os.makedirs(books_dir, exist_ok=True)
+                
+                # 本体防重名处理（如果电脑里已经有一本同名 txt）
+                target_txt_path = os.path.join(books_dir, original_txt_name)
+                counter = 1
+                while os.path.exists(target_txt_path):
+                    name, ext = os.path.splitext(original_txt_name)
+                    target_txt_path = os.path.join(books_dir, f"{name}({counter}){ext}")
+                    counter += 1
+                    
+                # 搬运本体
+                shutil.copy2(os.path.join(temp_dir, "book.txt"), target_txt_path)
+                
+                # 5. 配套资产全面挂载新 UUID 护照！
+                db_src = os.path.join(temp_dir, "index.db")
+                if os.path.exists(db_src):
+                    db_dir = StorageManager.get_db_dir()
+                    shutil.copy2(db_src, os.path.join(db_dir, f"{new_id}.db"))
+                    
+                toc_src = os.path.join(temp_dir, "toc.json")
+                if os.path.exists(toc_src):
+                    shutil.copy2(toc_src, os.path.join(StorageManager.get_toc_dir(), f"{new_id}.json"))
+                    
+                sum_src = os.path.join(temp_dir, "summary.json")
+                if os.path.exists(sum_src):
+                    sum_dir = StorageManager.get_summaries_dir()
+                    shutil.copy2(sum_src, os.path.join(sum_dir, f"{new_id}.json"))
+                    
+                # 6. 正式登记到书架
+                self.bookshelf.insert(0, {
+                    "name": book_name,
+                    "path": target_txt_path,
+                    "book_id": new_id,
+                    "last_chapter_idx": 0,
+                    "last_chapter_title": "未读",
+                    "last_scroll_offset": 0.0
+                })
+                self._save_bookshelf()
+                self.refresh_bookshelf_ui()
+                self.show_snack_bar(f"🎉 知识库《{book_name}》导入并装配成功！")
+                
+            except Exception as e:
+                self.show_snack_bar(f"❌ 导入 .nra 失败: {e}")
+            finally:
+                # 环保卫士：无论成功与否，无情抹除临时解压文件
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                
+        threading.Thread(target=import_task, daemon=True).start()

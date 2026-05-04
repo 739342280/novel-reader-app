@@ -35,27 +35,36 @@ class DialogManager:
             app._close_dialog()
             app.show_snack_bar(f"✅ 《{current_name}》已移出书架")
 
-        async def on_export(e):
+        async def on_export_txt(e):
             app._close_dialog()
             await app.trigger_export_picker(path, current_name)
+            
+        # 💥 新增：响应打包 .nra 的事件
+        async def on_export_nra(e):
+            app._close_dialog()
+            await app.export_nra_package(path, current_name)
 
-        export_btn = ft.ElevatedButton(
-            content=ft.Row(
-                [ft.Icon(ft.Icons.DOWNLOAD), ft.Text("导出书籍到本地")], 
-                alignment=ft.MainAxisAlignment.CENTER
-            ),
-            on_click=on_export,
+        export_txt_btn = ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.DESCRIPTION), ft.Text("仅导出 TXT 纯文本")], alignment=ft.MainAxisAlignment.CENTER),
+            on_click=on_export_txt,
             style=ft.ButtonStyle(bgcolor=ft.Colors.BLUE_50, color=ft.Colors.BLUE_900)
+        )
+        
+        export_nra_btn = ft.ElevatedButton(
+            content=ft.Row([ft.Icon(ft.Icons.ALL_INBOX), ft.Text("打包为 .nra 知识库")], alignment=ft.MainAxisAlignment.CENTER),
+            on_click=on_export_nra,
+            style=ft.ButtonStyle(bgcolor=ft.Colors.PURPLE_50, color=ft.Colors.PURPLE_900)
         )
 
         app.global_dialog.title = ft.Text("书籍管理", size=18, weight=ft.FontWeight.BOLD, color="onSurface")
         app.global_dialog.content = ft.Column([
             rename_tf,
             ft.Container(height=5),
-            export_btn,
+            export_txt_btn,
+            export_nra_btn, # 💥 塞入新按钮
             ft.Container(height=5),
-            ft.Text("注：移出书架不会删除原文件，导出则会另存一份副本", size=12, color=ft.Colors.GREY)
-        ], tight=True) 
+            ft.Text("注：.nra 将包含小说文本、向量数据库及 AI 总结。", size=12, color=ft.Colors.GREY)
+        ], tight=True)
         
         app.global_dialog.actions = [
             ft.TextButton(content=ft.Text("保存名称"), on_click=on_save),
