@@ -47,18 +47,56 @@ def get_ai_chat_view(app):
             "clues": []
         },             
         "is_streaming": False,
-        "cancel_flag": False # 💥 新增：用于拦截大模型输出的开关
+        "cancel_flag": False, 
+        "anti_spoiler": app.ai_config.get("anti_spoiler", True)  
     }
 
     # 聊天列表区（拉伸铺满）
     chat_list_col = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=15, expand=True)
     
+    init_anti_spoiler = state["anti_spoiler"]
+    init_hint = "追问AI全书细节 (已启用防剧透)..." if init_anti_spoiler else "追问AI后续剧情 (已开启上帝视角，全书自由检索)..."
+    init_icon = ft.Icons.SHIELD if init_anti_spoiler else ft.Icons.SHIELD_OUTLINED
+    init_color = "blue" if init_anti_spoiler else "orange"
+    init_tooltip = "防剧透：已开启 (仅检索本章及以前)" if init_anti_spoiler else "上帝视角：已开启 (将跨越章节限制，可能剧透)"
+
     chat_input = ft.TextField(
-        hint_text="追问AI全书细节 (已启用全书防剧透知识库)...", 
+        hint_text=init_hint, # 使用记忆的提示词
         text_size=13,
         expand=True, dense=True, 
         content_padding=10, border_radius=20,
         on_submit=lambda _: send_message(None)
+    )
+
+    def toggle_spoiler(e):
+        state["anti_spoiler"] = not state["anti_spoiler"]
+        
+        # 💥 核心修复 3：用户每次点击切换后，立刻将新状态写入全局配置并保存到本地磁盘！
+        app.ai_config["anti_spoiler"] = state["anti_spoiler"]
+        if hasattr(app, '_save_config_to_appdata'):
+            app._save_config_to_appdata()
+            
+        if state["anti_spoiler"]:
+            spoiler_toggle_btn.icon = ft.Icons.SHIELD
+            spoiler_toggle_btn.icon_color = "blue"
+            spoiler_toggle_btn.tooltip = "防剧透：已开启 (仅检索本章及以前)"
+            chat_input.hint_text = "追问AI全书细节 (已启用防剧透)..."
+        else:
+            spoiler_toggle_btn.icon = ft.Icons.SHIELD_OUTLINED 
+            spoiler_toggle_btn.icon_color = "orange"
+            spoiler_toggle_btn.tooltip = "上帝视角：已开启 (将跨越章节限制，可能剧透)"
+            chat_input.hint_text = "追问AI后续剧情 (已开启上帝视角，全书自由检索)..."
+            
+        try:
+            spoiler_toggle_btn.update()
+            chat_input.update()
+        except Exception: pass
+
+    spoiler_toggle_btn = ft.IconButton(
+        icon=init_icon,         # 使用记忆的图标
+        icon_color=init_color,  # 使用记忆的颜色
+        tooltip=init_tooltip,   # 使用记忆的悬浮提示
+        on_click=toggle_spoiler
     )
     
     send_btn = ft.IconButton(icon=ft.Icons.SEND, icon_color="onSurface", on_click=lambda _: send_message(None))
@@ -462,7 +500,8 @@ def get_ai_chat_view(app):
                         query_emb = AIService.get_embedding(app.ai_config, text)
                         
                         user_top_k = app.ai_config.get("top_k", 5)
-                        results = vdb.search(query_emb, top_k=user_top_k, max_chapter_idx=target_idx)
+                        search_limit_idx = target_idx if state["anti_spoiler"] else 999999
+                        results = vdb.search(query_emb, top_k=user_top_k, max_chapter_idx=search_limit_idx)
                         
                         if results:
                             rag_context = "\n【以下是从全书知识库检索到的相关片段，供参考】：\n"
@@ -483,10 +522,19 @@ def get_ai_chat_view(app):
                 chat_prompt = app.ai_config.get("prompt_chat", "你是一个深度了解本书剧情的阅读助手。请结合下方提供的参考资料，准确、自然地解答用户的追问。")
                 rag_instruction = ""
                 if rag_context:
-                    rag_instruction = (
-                        "\n\n【重要指令：全书关联】\n"
-                        "用户当前的问题可能跨越了多章内容。请优先以【全书知识库检索片段】中的历史档案为准来解答。严禁剧透档案中未发生的后续情节。"
-                    )
+                    if state["anti_spoiler"]:
+                        # 开启了防剧透（蓝盾）
+                        rag_instruction = (
+                            "\n\n【重要指令：全书关联 (防剧透模式)】\n"
+                            "用户当前的问题可能涉及之前的剧情。请充分挖掘并利用下方提供的【全书知识库检索片段】进行综合解答。\n"
+                            "⚠️ 核心纪律：你的认知必须严格停留在当前的阅读进度。你可以自由且详尽地使用当前及之前章节的所有已知情报，但绝对严禁提及、暗示或剧透任何尚未发生的后续情节！"
+                        )
+                    else:
+                        # 开启了上帝视角（橙盾）
+                        rag_instruction = (
+                            "\n\n【重要指令：全书关联 (上帝视角模式)】\n"
+                            "⚠️ 用户已开启上帝视角，明确允许剧透！请充分利用【全书知识库检索片段】中包含的未来情节来解答用户的疑问，不用顾忌任何防剧透规则，大胆揭秘后续发展！"
+                        )
                     
                 # 👇 这里是核心修复：把 {get_sys_prompt()} 替换成了 {base_prompt}{rag_instruction}
                 system_content = f"{chat_prompt}{rag_instruction}\n{rag_context}\n\n【参考资料 B：当前阅读章节原文】\n{chapter_text}{summary_context}"
@@ -652,7 +700,7 @@ def get_ai_chat_view(app):
                 alignment=ft.MainAxisAlignment.SPACE_AROUND
             ),
             ft.Row(
-                [chat_input, send_btn], 
+                [chat_input, spoiler_toggle_btn, send_btn],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN
             )
         ], tight=True, spacing=10),

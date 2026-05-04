@@ -66,7 +66,7 @@ class ConfigStateMixin:
                 "请结合下方提供的【参考资料】，准确、自然地解答用户的追问。\n\n"
                 "【回答准则】\n"
                 "1. 直接回答用户的问题，无需采用任何固定的总结格式。\n"
-                "2. 严格以提供的原文和历史档案为事实依据，严禁凭空捏造或剧透未发生的剧情。\n"
+                "2. 严格以提供的原文和历史档案为事实依据，严禁凭空捏造资料中没有的情节。\n"
                 "3. 如果参考资料中没有相关信息，请坦诚告知“当前资料不足以回答该问题”。"
             ),
             
@@ -81,7 +81,8 @@ class ConfigStateMixin:
             "n_ubatch": 512,        # 默认 512
             "build_batch_size": 15, # 默认 15
             "hardware_mode": "强制GPU模式", # 默认硬件模式
-            "snack_duration": 3000
+            "snack_duration": 3000,
+            "anti_spoiler": True    # 💥 新增：防剧透默认开关状态
         }
 
     def _load_config_from_appdata(self):
@@ -90,7 +91,7 @@ class ConfigStateMixin:
             keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_char_pro", "prompt_clue", "prompt_chat", 
                             "embed_mode", "embed_url", "embed_key", "embed_model", 
                             "local_embed_path", "local_model_path", "top_k", "build_batch_size", 
-                            "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch"]
+                            "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch", "anti_spoiler"]
             for k in keys_to_load:
                 if k in data: 
                     self.ai_config[k] = data[k]
