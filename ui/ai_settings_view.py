@@ -428,7 +428,15 @@ def get_ai_settings_view(app):
             app.show_snack_bar("⚠️ 请先在首页打开一本小说")
             return
 
-        # 快照当前书籍信息（防止在建库过程中用户切换书籍）
+        # 💥 新增：暂停建库的触发器
+        def pause_build(e):
+            app.cancel_build_flag = True # 升起中止旗帜
+            btn_build.content.value = "⏳ 正在安全暂停..."
+            btn_build.disabled = True # 防止狂点
+            try: btn_build.update()
+            except Exception: pass
+
+        # 快照当前书籍信息
         target_book_path = app.current_book_path
         target_book_name = app.current_book_name
         target_chapters = app.engine.chapters_info.copy()
@@ -437,12 +445,15 @@ def get_ai_settings_view(app):
             nonlocal target_book_path, target_book_name, target_chapters
 
             app.is_building_index = True
+            app.cancel_build_flag = False # 每次建库前清空旗帜
             app.build_progress_value = 0
             app.build_progress_text = "正在初始化引擎..."
 
-            # 更新 UI 按钮初始状态
-            btn_build.content.value = "⏳ 后台建库中..."
-            btn_build.disabled = btn_clear.disabled = True
+            # 💥 核心修改：建库开始后，把建库按钮临时变成【暂停】按钮！
+            btn_build.content.value = "⏸ 暂停建库"
+            btn_build.on_click = pause_build # 临时替换点击事件
+            btn_build.disabled = False # 必须保持可用，用户才能点暂停
+            btn_clear.disabled = True
             prog_bar.visible = prog_text.visible = True
             prog_bar.value = 0
             prog_text.value = app.build_progress_text
@@ -558,6 +569,11 @@ def get_ai_settings_view(app):
                     cache_file = open(cache_path, 'a', encoding='utf-8')
                     
                     for batch_idx in range(0, total, batch_size):
+                        # 💥 核心拦截：每开始一个新批次前，先看看用户有没有点暂停
+                        if getattr(app, 'cancel_build_flag', False):
+                            safe_update_ui(batch_idx / total, "⚠️ 正在安全切断建库进程...")
+                            break # 安全跳出循环
+                            
                         batch = all_chunks[batch_idx:batch_idx+batch_size]
                         
                         db_data = []
@@ -617,11 +633,29 @@ def get_ai_settings_view(app):
 
                     cache_file.close()
 
-                    # 💥 补上被我误删的耗时计算逻辑
+                    # 💥 新增：被暂停时的优雅退场逻辑
+                    if getattr(app, 'cancel_build_flag', False):
+                        app.is_building_index = False
+                        time.sleep(0.5)
+                        if hasattr(app, '_active_ui'):
+                            try:
+                                ui = app._active_ui
+                                ui['status_text'].value = f"当前阅读：《{name}》\n⚠️ 索引暂停：已快照 {batch_idx} / {total} 块"
+                                ui['status_card'].bgcolor = ft.Colors.with_opacity(0.15, ft.Colors.ORANGE)
+                                ui['btn_build'].content.value = "▶️ 继续建库"
+                                ui['btn_build'].on_click = on_build_click # 恢复原本的建库事件
+                                ui['btn_build'].disabled = False
+                                ui['btn_clear'].disabled = False
+                                app.page.update()
+                            except Exception: pass
+                        app.show_snack_bar("⏸ 建库已暂停！进度已绝对安全地存入快照。")
+                        return # 直接退出线程，不再执行下方的“完成”印章
+
+                    # === 以下为未被暂停，正常建库完成的逻辑 ===
                     total_cost_sec = time.time() - total_start_time
                     mins, secs = divmod(total_cost_sec, 60)
                     cost_str = f"{int(mins)}分{secs:.1f}秒" if mins > 0 else f"{secs:.1f}秒"
-                    
+
                     # 💥 完工后修改钢印：状态改为"已完成"
                     vdb.set_meta("status", "completed")
 
@@ -650,6 +684,7 @@ def get_ai_settings_view(app):
                             
                             ui['prog_bar'].visible = False
                             ui['prog_text'].visible = False
+                            ui['btn_build'].on_click = on_build_click # 💥 异常兜底：务必把点击事件切回来
 
                             # 不要再去单独 update 它们了！太容易出错！
                             # 直接召唤最高神，一键刷新整个页面！
