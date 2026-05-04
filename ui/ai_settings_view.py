@@ -29,6 +29,42 @@ def get_ai_settings_view(app):
     prompt_char_tf = ft.TextField(label="系统提示词 (人物模式)", value=app.ai_config.get("prompt_char", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=INPUT_WIDTH)
     prompt_clue_tf = ft.TextField(label="系统提示词 (伏笔模式)", value=app.ai_config.get("prompt_clue", ""), multiline=True, min_lines=3, max_lines=5, text_size=13, dense=True, width=INPUT_WIDTH)
     
+    # 💥 新增：一键恢复默认提示词逻辑
+    def restore_default_prompts(e):
+        # 巧妙借用底座配置类，获取最纯净的“出厂设置”
+        from core.config_state import ConfigStateMixin
+        class TempConfig(ConfigStateMixin):
+            def __init__(self):
+                self.init_config_state()
+        defaults = TempConfig().ai_config
+        
+        # 1. 更新屏幕上可见的三个输入框
+        prompt_tf.value = defaults.get("prompt", "")
+        prompt_char_tf.value = defaults.get("prompt_char", "")
+        prompt_clue_tf.value = defaults.get("prompt_clue", "")
+        
+        # 2. 静默更新隐藏的提示词（它们目前没有独立 UI）
+        app.ai_config["prompt_char_pro"] = defaults.get("prompt_char_pro", "")
+        app.ai_config["prompt_chat"] = defaults.get("prompt_chat", "")
+        
+        try:
+            prompt_tf.update()
+            prompt_char_tf.update()
+            prompt_clue_tf.update()
+        except Exception: pass
+        
+        app.show_snack_bar("✅ 已载入最新系统内置提示词，请点击右上角【保存】生效！")
+
+    # 💥 新增：重置按钮 UI（靠右排列，弱化视觉防止误触）
+    btn_restore_prompts = ft.TextButton(
+        icon=ft.Icons.RESTORE,
+        content=ft.Text("恢复系统内置提示词"), # 💥 核心修复：用 content=ft.Text() 替代 text=
+        icon_color="grey700",
+        style=ft.ButtonStyle(color="grey700"),
+        on_click=restore_default_prompts
+    )
+    restore_row = ft.Row([btn_restore_prompts], alignment=ft.MainAxisAlignment.CENTER, width=INPUT_WIDTH)
+
     expansion_prompts = ft.ExpansionTile(
         title=ft.Text("高级提示词设置 (人物/伏笔)", size=13, weight="bold"),
         subtitle=ft.Text("通常无需修改，除非您想自定义分析深度", size=11, color="grey"),
@@ -59,6 +95,7 @@ def get_ai_settings_view(app):
                     content=ft.Column([
                         ft.Row([ft.Icon(ft.Icons.EDIT, size=16), ft.Text("模型指令配置", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
                         prompt_tf,
+                        restore_row,
                         expansion_prompts
                     ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER), # 💥 改为居中
                     padding=15
@@ -453,101 +490,138 @@ def get_ai_settings_view(app):
                     if total == 0: raise Exception("提取不到书籍文本内容")
 
                     # 2. 唤醒底层引擎并进行探针探测
-                    safe_update_ui(0.05, f"🔍 正在初始化推理引擎与探针探测 (总块数: {total})...")
-                    first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
-                    dim = len(first_emb)
+                    # 💥 终极革命：引入 JSONL 本地坚固快照缓存
+                    import json
+                    cache_path = os.path.join(db_dir, f"{book_hash}_cache.jsonl")
+                    emb_cache = {}
+                    if os.path.exists(cache_path):
+                        safe_update_ui(0.01, "🔄 读取本地断点快照中...")
+                        try:
+                            with open(cache_path, 'r', encoding='utf-8') as f:
+                                for line in f:
+                                    if not line.strip(): continue
+                                    data = json.loads(line)
+                                    emb_cache[data["id"]] = data["emb"]
+                        except Exception as e: 
+                            print(f"读取快照失败: {e}")
 
-                    # 💥 探针结果分析与 UI 互动
-                    if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "强制GPU模式":
-                        engine = getattr(AIService, '_local_engine', None)
-                        if engine:
-                            import sys
-                            if sys.platform == "win32":
-                                # 💻 电脑端独立子进程架构，无探针，直接秒进全速建库
-                                safe_update_ui(0.05, "⚡ 桌面端 GPU 引擎就绪，全速建库中...")
-                            else:
-                                # 📱 安卓端原生探针逻辑
-                                reason = getattr(engine, 'vulkan_disable_reason', '')
-                                if reason:  
-                                    # 💥 测试阶段：无视探针报错，头铁硬上 GPU！
-                                    app.show_snack_bar(f"⚠️ 探针报错: {reason}\n(已开启极限测试，将无视报错强行调用 GPU)")
-                                    safe_update_ui(0.05, "⚡ 强行 GPU 点火，2秒后开始突围...")
-                                    time.sleep(2) # 留 2 秒时间给你看清提示
-                                else:
-                                    # 探测成功：正常流程
-                                    app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
-                                    safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
-                                    time.sleep(2)
-
-                    # 3. 断点续传与数据库初始化逻辑
-                    vdb = VectorDB(db_path)
-                    start_chunk_idx = 0 # 默认从 0 开始
-                    
-                    status_info = vdb.get_index_status()
-                    # 判断是不是“继续建库”（UI 按钮上的字或者状态是 building）
-                    is_resuming = status_info.get("status") == "building"
-
-                    if is_resuming:
-                        safe_update_ui(0.1, "🔄 检测到历史记录，正在恢复断点...")
-                        # 获取已经存进去的切块数量
-                        start_chunk_idx = status_info.get("chunk_count", 0)
-                        # 如果某种原因越界了，重头来
-                        if start_chunk_idx >= total:
-                            start_chunk_idx = 0
-                            is_resuming = False
-                            vdb.clear_index()
+                    # 2. 唤醒底层引擎并进行探针探测
+                    if emb_cache:
+                        # 如果有快照，直接从快照里获取模型维度，跳过探测动画秒进
+                        dim = len(next(iter(emb_cache.values())))
                     else:
-                        # 全新或者强制重新建库
-                        vdb.clear_index() 
-                        
+                        safe_update_ui(0.05, f"🔍 正在初始化推理引擎与探针探测 (总块数: {total})...")
+                        first_emb = AIService.get_embedding(app.ai_config, all_chunks[0][1])
+                        dim = len(first_emb)
+
+                        # 探针结果分析与 UI 互动
+                        if app.ai_config.get("embed_mode") == "本地模型" and app.ai_config.get("hardware_mode") == "强制GPU模式":
+                            engine = getattr(AIService, '_local_engine', None)
+                            if engine:
+                                import sys
+                                if sys.platform == "win32":
+                                    safe_update_ui(0.05, "⚡ 桌面端 GPU 引擎就绪，全速建库中...")
+                                else:
+                                    reason = getattr(engine, 'vulkan_disable_reason', '')
+                                    if reason:  
+                                        app.show_snack_bar(f"⚠️ 探针报错: {reason}\n(已开启极限测试，将强行调用 GPU)")
+                                        safe_update_ui(0.05, "⚡ 强行 GPU 点火，2秒后开始突围...")
+                                        time.sleep(2)
+                                    else:
+                                        app.show_snack_bar("⚡ 探针探测通过！Vulkan GPU 加速已就绪。")
+                                        safe_update_ui(0.05, "⚡ GPU 引擎点火成功，2秒后开始全速建库...")
+                                        time.sleep(2)
+
+                    # 💥 3. 放弃修补，直接物理毁灭旧库，保证 SQLite 100% 纯净无损
+                    safe_update_ui(0.08, "🧹 净化底层数据库环境...")
+                    import gc
+                    vdb = VectorDB(db_path)
+                    if hasattr(vdb, 'conn'): 
+                        vdb.conn.close()
+                    vdb = None
+                    gc.collect()
+                    try: 
+                        os.remove(db_path)
+                    except Exception: pass
+                    
+                    # 重生：创建全新纯洁的数据库
+                    vdb = VectorDB(db_path)
                     vdb.init_tables(dim)
                     vdb.set_meta("status", "building")
                     vdb.set_meta("total_chunks", str(total))
 
-                    # 4. 批量向量化
+                    # 4. 批量向量化 (带缓存穿透)
                     batch_size = app.ai_config.get("build_batch_size", 15)
                     total_batches = (total + batch_size - 1) // batch_size
                     
-                    # 💥 根据 start_chunk_idx 计算我们需要从第几个 batch 开始循环
-                    start_batch_idx = (start_chunk_idx // batch_size) * batch_size
+                    # 打开快照文件，准备追加写入新进度
+                    cache_file = open(cache_path, 'a', encoding='utf-8')
                     
-                    for batch_idx in range(start_batch_idx, total, batch_size):
+                    for batch_idx in range(0, total, batch_size):
                         batch = all_chunks[batch_idx:batch_idx+batch_size]
                         
-                        # 💥 因为批次可能是从中间截断的，我们需要剔除掉这个 batch 里已经建过库的块
-                        # 例如：batch_size=15，但数据库里已经有了 18 块。
-                        # 那么当前 batch 是 [15:30]，我们需要剔除掉 15, 16, 17，只处理 [18:30]
-                        filtered_batch = []
-                        for i_b, (ch_idx, text) in enumerate(batch):
-                            absolute_idx = batch_idx + i_b
-                            if absolute_idx >= start_chunk_idx:
-                                filtered_batch.append((ch_idx, text))
-                        
-                        if not filtered_batch:
-                            continue # 这个 batch 的内容全存过了，直接跳过
-
-                        current_batch_num = batch_idx // batch_size + 1
-                        percent = batch_idx / total
-                        current_end = min(batch_idx + batch_size, total)
-                        
-                        safe_update_ui(percent, f"🧠 推理中 (批次 {current_batch_num}/{total_batches} | 第 {batch_idx+1}-{current_end}/{total} 块)")
-
-                        batch_texts = [c[1] for c in filtered_batch]
-                        start_time = time.time()
-                        batch_embs = AIService.get_embeddings(app.ai_config, batch_texts)
-                        cost = time.time() - start_time
-
                         db_data = []
-                        for i_b, (ch_idx, text) in enumerate(filtered_batch):
-                            db_data.append((ch_idx, text, batch_embs[i_b]))
+                        need_api_texts = []
+                        need_api_indices = []
+                        batch_result_map = {} # 保持原汁原味的顺序
+                        
+                        # 扫描本批次，谁在快照里，谁需要大模型算？
+                        for i_b, (ch_idx, text) in enumerate(batch):
+                            abs_idx = batch_idx + i_b
+                            if abs_idx in emb_cache:
+                                batch_result_map[abs_idx] = (ch_idx, text, emb_cache[abs_idx])
+                            else:
+                                need_api_texts.append(text)
+                                need_api_indices.append((ch_idx, abs_idx))
+                                
+                        if need_api_texts:
+                            current_batch_num = batch_idx // batch_size + 1
+                            percent = batch_idx / total
+                            current_end = min(batch_idx + batch_size, total)
+                            safe_update_ui(percent, f"🧠 推理中 (批次 {current_batch_num}/{total_batches} | 第 {batch_idx+1}-{current_end}/{total} 块)")
 
-                        safe_update_ui(percent + (0.1 / total_batches), f"💾 写入索引 (本批次耗时 {cost:.1f}s)...")
+                            start_time = time.time()
+                            new_embs = AIService.get_embeddings(app.ai_config, need_api_texts)
+                            cost = time.time() - start_time
+
+                            if not new_embs or len(new_embs) != len(need_api_texts):
+                                cache_file.close()
+                                raise Exception("大模型返回的向量数量缺失，已阻断写入以保护快照免受污染。")
+
+                            for i, emb in enumerate(new_embs):
+                                if not emb or not isinstance(emb, list) or len(emb) < 10:
+                                    cache_file.close()
+                                    raise Exception(f"检测到损坏的空向量 (本批次第{i+1}条)，已强行拦截写入！")
+                                
+                                ch_idx, abs_idx = need_api_indices[i]
+                                text = need_api_texts[i]
+                                batch_result_map[abs_idx] = (ch_idx, text, emb)
+                                
+                                # 💥 写入绝对安全的文本快照！防断电防强退！
+                                cache_file.write(json.dumps({"id": abs_idx, "emb": emb}, ensure_ascii=False) + "\n")
+                                cache_file.flush()
+                                os.fsync(cache_file.fileno())
+
+                            safe_update_ui(percent + (0.1 / total_batches), f"💾 写入纯净索引 (本批次耗时 {cost:.1f}s)...")
+                        else:
+                            # 全是快照命中，进度条飞速闪过
+                            percent = batch_idx / total
+                            safe_update_ui(percent, f"⚡ 快照闪速恢复中 (第 {batch_idx+1}-{batch_idx+len(batch)} 块)...")
+
+                        # 按正确顺序组装 db_data 并秒插纯净数据库
+                        for i_b in range(len(batch)):
+                            abs_idx = batch_idx + i_b
+                            db_data.append(batch_result_map[abs_idx])
+                            
                         vdb.insert_chunks(db_data)
 
-                    # 💥 补上漏掉的耗时计算逻辑
+                    cache_file.close()
+
+                    # 💥 补上被我误删的耗时计算逻辑
                     total_cost_sec = time.time() - total_start_time
                     mins, secs = divmod(total_cost_sec, 60)
                     cost_str = f"{int(mins)}分{secs:.1f}秒" if mins > 0 else f"{secs:.1f}秒"
+                    
                     # 💥 完工后修改钢印：状态改为"已完成"
                     vdb.set_meta("status", "completed")
 
@@ -665,18 +739,31 @@ def get_ai_settings_view(app):
                 
             book_hash = hashlib.md5(app.current_book_path.encode('utf-8')).hexdigest()
             db_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}.db")
-            if os.path.exists(db_path):
+            cache_path = os.path.join(StorageManager.get_base_dir(), "vector_dbs", f"{book_hash}_cache.jsonl")
+            
+            # 💥 暴力粉碎数据库和快照文件
+            import gc
+            try:
                 vdb = VectorDB(db_path)
-                vdb.clear_index()
-                status_text.value = f"当前阅读：《{book_name}》\n索引状态：未建立"
-                status_card.bgcolor = "surfaceVariant"
-                btn_build.content.value = "🚀 向量建库"
-                app.show_snack_bar("🧹 索引已清除")
-                try: 
-                    status_text.update()
-                    status_card.update()
-                    btn_build.update()
-                except Exception: pass
+                if hasattr(vdb, 'conn'): vdb.conn.close()
+                vdb = None
+                gc.collect()
+            except Exception: pass
+            
+            try: os.remove(db_path)
+            except Exception: pass
+            try: os.remove(cache_path)
+            except Exception: pass
+
+            status_text.value = f"当前阅读：《{book_name}》\n索引状态：未建立"
+            status_card.bgcolor = "surfaceVariant"
+            btn_build.content.value = "🚀 向量建库"
+            app.show_snack_bar("🧹 索引及快照缓存已彻底清除")
+            try: 
+                status_text.update()
+                status_card.update()
+                btn_build.update()
+            except Exception: pass
 
         def close_clear(e):
             confirm_dlg.open = False
