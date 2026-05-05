@@ -892,6 +892,64 @@ def get_ai_settings_view(app):
     tab3_container = ft.Container(content=tab3_col, padding=20)
 
     # ==========================================
+    # 💥 新增 Tab 4: 听书设置中心
+    # ==========================================
+    tts_voice_dd = ft.Dropdown(
+        label="发音人选择",
+        options=[
+            ft.dropdown.Option("zh-CN-XiaoxiaoNeural", "晓晓 (温柔女声 - 推荐)"),
+            ft.dropdown.Option("zh-CN-YunxiNeural", "云希 (清朗男声 - 听书主力)"),
+            ft.dropdown.Option("zh-CN-YunjianNeural", "云健 (影视解说男声)"),
+            ft.dropdown.Option("zh-CN-XiaoyiNeural", "晓伊 (知性女声)")
+        ],
+        value=app.ai_config.get("tts_voice", "zh-CN-XiaoxiaoNeural"),
+        text_size=13, dense=True, width=INPUT_WIDTH
+    )
+
+    # 读取并解析当前的语速设置 (例如将 "+20%" 解析为 20)
+    current_rate_str = app.ai_config.get("tts_rate", "+0%")
+    try:
+        current_rate_val = int(current_rate_str.replace("%", "").replace("+", ""))
+    except Exception:
+        current_rate_val = 0
+
+    tts_rate_text = ft.Text(f"朗读语速: {current_rate_str}", size=13, color="onSurface")
+
+    def on_tts_rate_change(e):
+        val = int(round(e.control.value))
+        sign = "+" if val >= 0 else ""
+        tts_rate_text.value = f"朗读语速: {sign}{val}%"
+        try: tts_rate_text.update()
+        except Exception: pass
+
+    # 语速滑块：范围 -50 到 100，分成 15 档，每档 10%
+    tts_rate_slider = ft.Slider(
+        min=-50, max=100, divisions=15, 
+        value=current_rate_val, label="{value}%", 
+        on_change=on_tts_rate_change, width=INPUT_WIDTH
+    )
+
+    tab4_container = ft.Container(
+        content=ft.Column([
+            ft.Card(
+                content=ft.Container(
+                    content=ft.Column([
+                        ft.Row([ft.Icon(ft.Icons.RECORD_VOICE_OVER, size=16), ft.Text("基础发音配置", weight="bold")], spacing=10, alignment=ft.MainAxisAlignment.CENTER),
+                        tts_voice_dd,
+                        ft.Divider(height=5, thickness=0.5, color="transparent"),
+                        tts_rate_text,
+                        tts_rate_slider,
+                        ft.Text("💡 提示: 负数表示减速，正数表示加速。Edge-TTS 建议在 -20% 到 +30% 之间调整听感最佳。", size=11, color="grey", text_align=ft.TextAlign.CENTER)
+                    ], spacing=15, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    padding=15
+                ),
+                elevation=1
+            )
+        ], spacing=15, scroll=ft.ScrollMode.AUTO, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+        padding=20
+    )
+
+    # ==========================================
     # 保存逻辑与控制器装配
     # ==========================================
     def save(e):
@@ -906,25 +964,40 @@ def get_ai_settings_view(app):
         app.ai_config["embed_key"] = embed_key_tf.value.strip()
         app.ai_config["embed_model"] = embed_model_tf.value.strip()
         # app.ai_config["local_model_path"] = local_model_dd.value if local_model_dd.value else ""
-        # 💥 替换为从文本框取值
+        # 替换为从文本框取值
         app.ai_config["local_model_path"] = local_model_tf.value.strip()
-        # 💥 保存硬件模式
+        # 保存硬件模式
         app.ai_config["hardware_mode"] = hardware_mode_dd.value
         
-        # 💥 修复一：安全提取滑块值，防止空指针或类型异常
+        # 安全提取滑块值，防止空指针或类型异常
         app.ai_config["build_batch_size"] = int(round(float(batch_size_slider.value)))
         app.ai_config["n_parallel"] = int(round(float(parallel_slider.value)))
         app.ai_config["n_gpu_layers"] = int(round(float(gpu_layers_slider.value)))
         app.ai_config["top_k"] = int(round(float(top_k_slider.value)))
         
-        # 💥 修复二：给脆弱的字典映射加上兜底逻辑，防止它中断整个保存进程
+        # 给脆弱的字典映射加上兜底逻辑，防止它中断整个保存进程
         app.ai_config["n_ubatch"] = ubatch_map[int(round(ubatch_slider.value))]
+        
+        # 💥 新增：保存听书配置
+        app.ai_config["tts_voice"] = tts_voice_dd.value
+        rate_val = int(round(float(tts_rate_slider.value)))
+        rate_sign = "+" if rate_val >= 0 else ""
+        app.ai_config["tts_rate"] = f"{rate_sign}{rate_val}%"
         
         # 写入硬盘
         app._save_config_to_appdata()
-        app.show_snack_bar("✅ AI 配置已保存")
+        
+        # 💥 核心修复：热重载机制！如果当前正在听书，强行重启引擎以立刻应用新配置
+        if getattr(app, "is_tts_playing", False):
+            app.stop_tts()  # 瞬间掐断旧声音，清空 3 段旧缓存
+            import time
+            time.sleep(0.1) # 给底层混音器 0.1 秒的喘息释放时间
+            app.start_tts() # 引擎重新点火，读取新声音，无缝衔接当前进度！
+            app.show_snack_bar("🔄 听书引擎已热重载，新发音配置已生效！")
+        else:
+            app.show_snack_bar("✅ AI 配置已保存")
 
-    # 💥 核心修复：创建一个专门用来动态装载内容的容器
+    # 一个专门用来动态装载内容的容器
     content_area = ft.Container(content=tab1_container, expand=True)
 
     # 监听原生 TabBar 的滑动/点击切换，手动更新下方的内容容器
@@ -937,21 +1010,26 @@ def get_ai_settings_view(app):
         elif idx == 2:
             content_area.content = tab3_container
             refresh_db_status() # 切换到知识库时自动刷新状态
-        
+        elif idx == 3:
+            content_area.content = tab4_container  # 💥 接入听书设置面板
+            
         try: content_area.update()
         except Exception: pass
 
     # 💥 核心修复：添加 Flet 0.84.0 强制要求的 length 参数
     settings_tabs = ft.Tabs(
-        length=3, # 💥 必须明确告诉控制器这里有 3 个选项卡
+        length=4, # 💥 必须明确告诉控制器这里现在有 4 个选项卡！
         selected_index=0,
         on_change=handle_tab_change,
         content=ft.TabBar(
             tab_alignment=ft.TabAlignment.CENTER, 
+            # 允许超出屏幕时横向滚动（防止 4 个挤在一排太拥挤）
+            scrollable=True,  # 💥 核心修复：去掉了 is_
             tabs=[
                 ft.Tab(label="对话模型", icon=ft.Icons.CHAT),
                 ft.Tab(label="向量引擎", icon=ft.Icons.HUB),
                 ft.Tab(label="全书知识库", icon=ft.Icons.STORAGE),
+                ft.Tab(label="听书设置", icon=ft.Icons.HEADSET), 
             ]
         )
     )
