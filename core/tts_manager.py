@@ -171,10 +171,22 @@ class TTSManagerMixin:
                 # 💥 新增：拿到新的一段音频，立刻把高亮焦点移过来！
                 self.page.run_task(self._update_tts_highlight)
 
-                # 完美保留的神级滑动联动逻辑！
-                if hasattr(self, "text_scroll_col") and getattr(self, "current_max_scroll_extent", 0.0) > 0:
-                    progress = self.tts_current_chunk_idx / max(1, len(self.tts_chunks))
-                    await self.text_scroll_col.scroll_to(offset=self.current_max_scroll_extent * progress, duration=500)
+                # ==========================================
+                # 💥 架构升级：抛弃脆弱的像素百分比计算，启用精准锚点追踪！
+                # ==========================================
+                if hasattr(self, "text_scroll_col"):
+                    try:
+                        render_id = getattr(self, "current_render_id", 0)
+                        target_key = f"chunk_{render_id}_{self.tts_current_chunk_idx}"
+                        
+                        # 💥 终极修复：把 key= 改为 Flet 官方正确的 API 参数名 scroll_key=
+                        scroll_result = self.text_scroll_col.scroll_to(scroll_key=target_key, duration=500)
+                        
+                        if asyncio.iscoroutine(scroll_result):
+                            await scroll_result
+                            
+                    except Exception as e:
+                        print(f"TTS 滚动定位失败: {e}")
 
                 # 播放内存中的 MP3 字节流
                 audio_io = io.BytesIO(audio_data)

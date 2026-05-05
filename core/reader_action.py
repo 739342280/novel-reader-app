@@ -155,10 +155,18 @@ class ReaderActionMixin:
         
         self.reader_text_controls = []
         self.chapter_title_control = None
+
+        # ==========================================
+        # 💥 强力修复 1：生成唯一的章节渲染 ID，彻底杜绝 Flet 翻页时的幽灵 Key 冲突！
+        # ==========================================
+        self.current_render_id = getattr(self, "current_render_id", 0) + 1
+        render_id = self.current_render_id
         
+        # 💥 1. 标题部分：将 render_id 缝合进 key 中
         if paragraphs:
             title_text = paragraphs.pop(0)
             self.chapter_title_control = ft.Container(
+                key=ft.ScrollKey(f"chunk_{render_id}_0"),  # 👈 【核心修复】必须用 ft.ScrollKey 包裹！
                 content=ft.Text(
                     title_text,
                     size=self.font_size + 2,  
@@ -168,23 +176,29 @@ class ReaderActionMixin:
                     color=current_text_color,
                     text_align=ft.TextAlign.LEFT 
                 ),
-                padding=ft.Padding(left=0, top=0, right=0, bottom=15) 
+                padding=ft.Padding(left=0, top=0, right=16, bottom=15) 
             )
 
-            for p in paragraphs:
+            # 💥 2. 正文部分：同样缝合 render_id
+            for i, p in enumerate(paragraphs):
                 self.reader_text_controls.append(
-                    ft.Text(
-                        p, 
-                        size=self.font_size, 
-                        style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
-                        font_family=self.font_family, 
-                        color=current_text_color   
+                    ft.Container(
+                        key=ft.ScrollKey(f"chunk_{render_id}_{i + 1}"), # 👈 【核心修复】必须用 ft.ScrollKey 包裹！
+                        content=ft.Text(
+                            p, 
+                            size=self.font_size, 
+                            style=ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing),
+                            font_family=self.font_family, 
+                            color=current_text_color   
+                        ),
+                        padding=ft.Padding(left=0, top=0, right=16, bottom=0) 
                     )
                 )
 
         prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
         next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
 
+        # 💥 3. 底部按钮：也补齐 right=16
         if next_valid != -1:
             self.inline_next_btn = ft.Container(
                 content=ft.TextButton(
@@ -194,43 +208,36 @@ class ReaderActionMixin:
                     style=ft.ButtonStyle(color=current_text_color)
                 ),
                 alignment=ft.Alignment(0, 0),
-                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+                padding=ft.Padding(top=30, bottom=50, left=0, right=16) # 👈 修改右边距
             )
         else:
             self.inline_next_btn = ft.Container(
                 content=ft.Text("— 已经是最后一章了 —", color=current_text_color, size=13),
                 alignment=ft.Alignment(0, 0),
-                padding=ft.Padding(top=30, bottom=50, left=0, right=0)
+                padding=ft.Padding(top=30, bottom=50, left=0, right=16) # 👈 修改右边距
             )
 
+        # 💥 4. 拍扁层级：废弃 inner_text_col，将控件直接组装
         controls_to_add = []
         if self.chapter_title_control:
             controls_to_add.append(self.chapter_title_control)
         controls_to_add.extend(self.reader_text_controls)
         controls_to_add.append(self.inline_next_btn)
-
-        self.inner_text_col = ft.Column(
-            controls=controls_to_add,
-            spacing=self.paragraph_spacing
-        )
-
+        
+        # 让 scroll_col 没有任何外层限制，霸占全部宽度，让滚动条死死贴边！
         self.text_scroll_col = ft.Column(
-            controls=[
-                ft.Container(
-                    content=self.inner_text_col,
-                    padding=ft.Padding(left=0, top=0, right=16, bottom=0)
-                )
-            ],
+            controls=controls_to_add,
+            spacing=self.paragraph_spacing,
             expand=True, 
             scroll=ft.ScrollMode.AUTO,
             on_scroll=self._on_text_scroll, 
             key="text_scroll_col",
             opacity=0,                                                            
-            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)      
+            animate_opacity=ft.Animation(300, ft.AnimationCurve.EASE_IN_OUT)    
         )
         
         if hasattr(self, "text_panel"):
-            self.text_panel.content = self.text_scroll_col
+            self.text_panel.content = self.text_scroll_col # 直接赋值，绝不套 Container！
 
         if hasattr(self, "btn_prev"): self.btn_prev.disabled = prev_valid == -1
         if hasattr(self, "btn_next"): self.btn_next.disabled = next_valid == -1
