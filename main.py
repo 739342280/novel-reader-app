@@ -35,6 +35,7 @@ from core.library_state import LibraryStateMixin
 from core.theme_state import ThemeRendererMixin
 from core.reader_action import ReaderActionMixin
 from core.overlay_manager import OverlayManagerMixin
+from core.tts_manager import TTSManagerMixin
 # endregion
 
 # region 1. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
@@ -85,7 +86,7 @@ sys.excepthook = global_crash_catcher
 # ==========================================
 # 控制器层 (App Controller & Router) 
 # ==========================================
-class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, ReaderActionMixin, OverlayManagerMixin):
+class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, ReaderActionMixin, OverlayManagerMixin, TTSManagerMixin):
     
     # region 3.1 初始化与 UI 底盘配置
     def __init__(self, page: ft.Page):
@@ -131,7 +132,7 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
         self.global_dialog = ft.AlertDialog(title=ft.Text(""))
         self.snack_counter = 0
         self._last_dismiss_time = 0
-        self.active_dialogs = []        
+        self.active_dialogs = []    
         
         # --- 5. 生命周期拉起与路由挂载 ---
         self._load_config_from_appdata() # 这个方法现在由 ConfigStateMixin 提供

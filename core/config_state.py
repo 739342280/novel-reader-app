@@ -93,7 +93,9 @@ class ConfigStateMixin:
             "build_batch_size": 15, # 默认 15
             "hardware_mode": "强制GPU模式", # 默认硬件模式
             "snack_duration": 3000,
-            "anti_spoiler": True    # 💥 新增：防剧透默认开关状态
+            "anti_spoiler": True,    # 防剧透默认开关状态
+            "tts_voice": "zh-CN-XiaoxiaoNeural", # 微软晓晓 (柔和自然女声)
+            "tts_rate": "+0%"                    # 正常语速
         }
 
     def _load_config_from_appdata(self):
@@ -102,7 +104,8 @@ class ConfigStateMixin:
             keys_to_load = ["url", "key", "model", "prompt", "prompt_char", "prompt_char_pro", "prompt_clue", "prompt_chat", 
                             "embed_mode", "embed_url", "embed_key", "embed_model", 
                             "local_embed_path", "local_model_path", "top_k", "build_batch_size", 
-                            "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch", "anti_spoiler"]
+                            "n_parallel", "snack_duration", "hardware_mode", "n_gpu_layers", "n_ubatch", "anti_spoiler", 
+                            "tts_voice", "tts_rate"]
             for k in keys_to_load:
                 if k in data: 
                     self.ai_config[k] = data[k]

@@ -300,11 +300,17 @@ def get_reader_view(app):
         style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12))
     )
 
+    # 💥 新增：高颜值的听书切换按钮
+    app.btn_tts = ft.ElevatedButton(
+        content=ft.Text("听书"), icon=ft.Icons.HEADSET, on_click=app.toggle_tts,
+        style=ft.ButtonStyle(padding=ft.Padding.symmetric(horizontal=12), color=ft.Colors.WHITE, bgcolor=ft.Colors.TEAL_500)
+    )
+
     app.reader_bottom_bar = ft.Container(
         bottom=0, left=0, right=0, padding=10, bgcolor="surface",
         shadow=ft.BoxShadow(blur_radius=8, color="#40000000", offset=ft.Offset(0, -2)), 
         content=ft.Column([
-            ft.Row([app.btn_prev, app.btn_next], alignment=ft.MainAxisAlignment.SPACE_AROUND),
+            ft.Row([app.btn_prev, app.btn_tts, app.btn_next], alignment=ft.MainAxisAlignment.SPACE_AROUND),
             ft.Row([
                 app.btn_toc,
                 app.theme_btn,
