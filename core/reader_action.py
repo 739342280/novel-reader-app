@@ -162,7 +162,7 @@ class ReaderActionMixin:
         self.current_render_id = getattr(self, "current_render_id", 0) + 1
         render_id = self.current_render_id
         
-        # 💥 1. 标题部分：将 render_id 缝合进 key 中
+        #1. 标题部分：将 render_id 缝合进 key 中
         if paragraphs:
             title_text = paragraphs.pop(0)
             self.chapter_title_control = ft.Container(
@@ -176,10 +176,10 @@ class ReaderActionMixin:
                     color=current_text_color,
                     text_align=ft.TextAlign.LEFT 
                 ),
-                padding=ft.Padding(left=0, top=0, right=16, bottom=15) 
+                margin=ft.Margin(left=0, top=0, right=16, bottom=15) 
             )
 
-            # 💥 2. 正文部分：同样缝合 render_id
+            # 2. 正文部分：同样缝合 render_id
             for i, p in enumerate(paragraphs):
                 self.reader_text_controls.append(
                     ft.Container(
@@ -191,14 +191,14 @@ class ReaderActionMixin:
                             font_family=self.font_family, 
                             color=current_text_color   
                         ),
-                        padding=ft.Padding(left=0, top=0, right=16, bottom=0) 
+                        margin=ft.Margin(left=0, top=0, right=16, bottom=0) 
                     )
                 )
 
         prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
         next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
 
-        # 💥 3. 底部按钮：也补齐 right=16
+        # 3. 底部按钮：也补齐 right=16
         if next_valid != -1:
             self.inline_next_btn = ft.Container(
                 content=ft.TextButton(
