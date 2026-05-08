@@ -223,7 +223,8 @@ jobs:
         mv .git ../.git_backup
         
         # 💥 瘦身绝杀 2：顺手干掉其他对手机毫无用处的开发文档
-        rm -rf .github README.md installer_script.iss requirements.txt
+        # 🚨 核心修复：绝对不能删除 requirements.txt！Flet 打包引擎全靠它来下载 flet-audio 等依赖！
+        rm -rf .github README.md installer_script.iss
         
         # 正常执行打包命令
         flet build apk --product "小说智读" --build-version "${{ env.APP_VERSION }}" --build-number ${{ github.run_number }} --org "com.shoubeier" --split-per-abi --android-signing-key-store /tmp/release.keystore --android-signing-key-alias novelkey --android-signing-key-store-password novel2026 --android-signing-key-password novel2026
