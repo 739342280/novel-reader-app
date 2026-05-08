@@ -106,6 +106,17 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
             self.page.window.icon = "icon.png"
         except Exception: pass
 
+        # ==========================================
+        # 💥 优化 1：开机自动大扫除，瞬间清理所有遗留的临时音频垃圾！
+        # ==========================================
+        temp_audio_dir = os.path.join(ASSETS_DIR_ABSOLUTE, "temp_audio")
+        if os.path.exists(temp_audio_dir):
+            try:
+                shutil.rmtree(temp_audio_dir)
+            except Exception: pass
+        os.makedirs(temp_audio_dir, exist_ok=True)
+        # ==========================================
+
         # --- 1. 全局引擎与 UI 底盘配置 ---
         self.engine = NovelEngine()
         self.page.fonts = {

@@ -125,7 +125,9 @@ class TTSManagerMixin:
             try: self.page.run_task(self.tts_audio_player.pause)
             except Exception: pass
             
-            # 设置事件，防止消费者协程的 await wait() 永久阻塞
+            # 💥 核心修复：真正落实“唤醒事件”，立刻打断消费者的 60 秒死等，让其瞬间释放！
+            if hasattr(self, "tts_audio_completed_event"):
+                self.tts_audio_completed_event.set()
             
         # 变回青色听书按钮
         if hasattr(self, "btn_tts"):
@@ -201,15 +203,13 @@ class TTSManagerMixin:
                 self.page.run_task(self._update_tts_highlight)
 
                 # 滚动定位
-                # 💥 核心修复 2：增加 getattr(..., "page", None) 判断。
-                # 只有当控件确实存活且挂载在当前页面上时，才执行滚动！
                 if hasattr(self, "text_scroll_col") and getattr(self.text_scroll_col, "page", None) is not None:
                     try:
                         render_id = getattr(self, "current_render_id", 0)
                         target_key = f"chunk_{render_id}_{self.tts_current_chunk_idx}"
-                        scroll_result = self.text_scroll_col.scroll_to(scroll_key=target_key, duration=500)
-                        if asyncio.iscoroutine(scroll_result):
-                            await scroll_result
+                        # 💥 极速优化 1：改为页面后台任务去执行滑动。
+                        # 这样滚动和发声会同时进行，彻底消除 500ms 的线程阻塞！
+                        self.page.run_task(self.text_scroll_col.scroll_to, scroll_key=target_key, duration=500)
                     except Exception as e:
                         print(f"TTS 滚动定位失败: {e}")
 
@@ -251,20 +251,20 @@ class TTSManagerMixin:
                 # 1. 彻底释放并销毁旧播放器资源
                 if getattr(self, "tts_audio_player", None):
                     try:
-                        # 💥 致命修复 1：必须加上 await 唤醒底层音频驱动去真正执行暂停和释放！
                         await self.tts_audio_player.pause()
                         if hasattr(self.tts_audio_player, "release"):
                             await self.tts_audio_player.release()
                     except Exception as e:
-                        print(f"释放旧播放器失败: {e}")
+                        pass
                     
-                    # 💥 致命修复 2：必须将废弃的播放器从服务列表中“连根拔起”，绝不留内存隐患！
                     if self.tts_audio_player in getattr(self.page, "services", []):
                         self.page.services.remove(self.tts_audio_player)
                         
-                await asyncio.sleep(0.2)
+                # 💥 极速优化 2：彻底拔除 0.5s 的硬等待！
+                # 仅保留极短的 0.02 秒让 Flet 消化底层的垃圾回收事件
+                await asyncio.sleep(0.02)
 
-                # 2. 创建全新的 Audio 控件
+                # 2. 瞬间创建全新的 Audio 控件
                 self.tts_audio_player = fta.Audio(
                     src=f"temp_audio/{filename}",
                     autoplay=True,
@@ -272,10 +272,10 @@ class TTSManagerMixin:
                     volume=1.0,
                     release_mode=fta.ReleaseMode.STOP,
                 )
-                # 重新挂载到干净的页面服务中
                 self.page.services.append(self.tts_audio_player)
                 self.page.update()
-                await asyncio.sleep(0.3)      # 等待前端完成挂载和加载
+                
+                # 💡 注意：连 0.3s 也删了，让它一挂载完立刻去自动发声！
 
                 # 3. 准备等待播放完成
                 self.tts_audio_completed_event.clear()
