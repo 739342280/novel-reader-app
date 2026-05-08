@@ -162,9 +162,18 @@ class ReaderActionMixin:
         self.current_render_id = getattr(self, "current_render_id", 0) + 1
         render_id = self.current_render_id
         
-        #1. 标题部分：将 render_id 缝合进 key 中
+        # 💥 新增：预计算段落字数边界，用于“窗口拉伸等比锚点还原”
+        self.chunk_char_bounds = []
+        accumulated_chars = 0
+
+        # 1. 标题部分：将 render_id 缝合进 key 中
         if paragraphs:
             title_text = paragraphs.pop(0)
+            
+            # 记录第 0 块 (标题) 包含的累计字数
+            accumulated_chars += len(title_text)
+            self.chunk_char_bounds.append((0, accumulated_chars))
+            
             self.chapter_title_control = ft.Container(
                 key=ft.ScrollKey(f"chunk_{render_id}_0"),  # 👈 【核心修复】必须用 ft.ScrollKey 包裹！
                 content=ft.Text(
@@ -181,6 +190,10 @@ class ReaderActionMixin:
 
             # 2. 正文部分：同样缝合 render_id
             for i, p in enumerate(paragraphs):
+                # 记录第 1~N 块 (正文) 包含的累计字数
+                accumulated_chars += len(p)
+                self.chunk_char_bounds.append((i + 1, accumulated_chars))
+                
                 self.reader_text_controls.append(
                     ft.Container(
                         key=ft.ScrollKey(f"chunk_{render_id}_{i + 1}"), # 👈 【核心修复】必须用 ft.ScrollKey 包裹！
@@ -194,6 +207,9 @@ class ReaderActionMixin:
                         margin=ft.Margin(left=0, top=0, right=16, bottom=0) 
                     )
                 )
+
+        # 防止除零错误，最少给个 1
+        self.total_chapter_chars = max(accumulated_chars, 1) 
 
         prev_valid = self._find_valid_chapter(idx - 1, -1) if idx > 0 else -1
         next_valid = self._find_valid_chapter(idx + 1, 1) if idx < len(self.engine.chapters_info)-1 else -1
@@ -288,6 +304,45 @@ class ReaderActionMixin:
                     self.info_progress.value = f"{current_total_pct:.1f}%"
                     try: self.info_progress.update()
                     except Exception: pass
+
+        # 💥 新增：动态估算当前屏幕顶端显示的段落索引
+        if hasattr(self, "chunk_char_bounds") and self.chunk_char_bounds:
+            # 当前阅读的章节内进度百分比 × 总字数 = 当前视野所在的字数位置
+            target_char = chap_pct * getattr(self, "total_chapter_chars", 1)
+            
+            current_top_idx = 0
+            for idx_val, bound in self.chunk_char_bounds:
+                if target_char <= bound:
+                    current_top_idx = idx_val
+                    break
+            self.current_top_chunk_idx = current_top_idx
+
+    # ==========================================
+    # 💥 新增功能：窗口拉伸等比锚点自适应还原机制
+    # ==========================================
+    def _on_window_resized(self, e):
+        # 只有在阅读页时，才处理尺寸重置锚点
+        if getattr(self.page, "route", "/") == "/reader":
+            self.page.run_task(self._debounced_realign)
+
+    async def _debounced_realign(self):
+        # 💥 防抖机制 (Debounce)：利用自增 Token，保证只在拖拽结束时执行一次打靶
+        self._resize_token = getattr(self, "_resize_token", 0) + 1
+        current_token = self._resize_token
+        
+        await asyncio.sleep(0.3) # 等待 300 毫秒，确认用户完全停止拉伸窗口
+        
+        if current_token == getattr(self, "_resize_token", 0):
+            if hasattr(self, "text_scroll_col") and hasattr(self, "current_top_chunk_idx"):
+                render_id = getattr(self, "current_render_id", 0)
+                target_key = f"chunk_{render_id}_{self.current_top_chunk_idx}"
+                try:
+                    # 瞬间打靶，将该段落重新顶回第一行！
+                    scroll_result = self.text_scroll_col.scroll_to(scroll_key=target_key, duration=0)
+                    if asyncio.iscoroutine(scroll_result):
+                        await scroll_result
+                except Exception:
+                    pass
 
     def filter_toc(self, e=None):
         if e is not None and getattr(e, "name", "") != "change":

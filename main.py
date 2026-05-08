@@ -161,6 +161,12 @@ class NovelReaderApp(ConfigStateMixin, LibraryStateMixin, ThemeRendererMixin, Re
         self.page.on_app_lifecycle_state_change = self._on_app_lifecycle
         self.page.on_route_change = self.route_change
         self.page.on_view_pop = self.view_pop
+        
+        # 💥 新增窗口重置监听：用于阅读页的自适应排版锚点追踪
+        try: self.page.on_resized = self._on_window_resized
+        except Exception: pass
+        try: self.page.on_resize = self._on_window_resized # 兼容旧版 Flet 写法
+        except Exception: pass
 
         self.page.run_task(self._update_clock_task)
         self.page.run_task(self._pc_auto_save_task)
