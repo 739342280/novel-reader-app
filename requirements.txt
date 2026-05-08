@@ -2,3 +2,4 @@ flet==0.84.0
 requests
 sqlite-vec
 edge-tts
+flet-audio
