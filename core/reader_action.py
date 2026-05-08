@@ -384,6 +384,11 @@ class ReaderActionMixin:
             self.save_current_progress()
             if getattr(self, "is_immersive", False):
                 self.toggle_immersive(None)
+            
+            # 💥 核心修复 1：退出阅读页时，如果 TTS 还在播放，必须强制终止！
+            # 防止后台继续播放并试图操控已经销毁的 UI
+            if getattr(self, "is_tts_playing", False):
+                self.stop_tts()
                 
         self.page.run_task(self.page.push_route, "/")
     

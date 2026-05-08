@@ -56,8 +56,10 @@ class ThemeRendererMixin:
         
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
-                ctrl.font_family = self.font_family
-                try: ctrl.update()
+                # 穿透盒子找文字
+                target = ctrl.content if isinstance(ctrl, ft.Container) else ctrl
+                target.font_family = self.font_family
+                try: target.update()
                 except Exception: pass
 
         if hasattr(self, "chapter_title_control") and self.chapter_title_control:
@@ -118,8 +120,9 @@ class ThemeRendererMixin:
                     
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
-                    ctrl.size = self.font_size
-                    try: ctrl.update()
+                    target = ctrl.content if isinstance(ctrl, ft.Container) else ctrl
+                    target.size = self.font_size
+                    try: target.update()
                     except Exception: pass
             if hasattr(self, "font_size_text"):
                 self.font_size_text.value = str(self.font_size)
@@ -139,8 +142,9 @@ class ThemeRendererMixin:
                     
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
-                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: ctrl.update()
+                    target = ctrl.content if isinstance(ctrl, ft.Container) else ctrl
+                    target.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: target.update()
                     except Exception: pass
             if hasattr(self, "line_height_text"):
                 self.line_height_text.value = f"{self.line_height:.1f}"
@@ -151,9 +155,9 @@ class ThemeRendererMixin:
         new_spacing = int(self.paragraph_spacing + delta)
         if 0 <= new_spacing <= 50:
             self.paragraph_spacing = new_spacing
-            if hasattr(self, "inner_text_col"):
-                self.inner_text_col.spacing = self.paragraph_spacing
-                try: self.inner_text_col.update()
+            if hasattr(self, "text_scroll_col"):
+                self.text_scroll_col.spacing = self.paragraph_spacing
+                try: self.text_scroll_col.update()
                 except Exception: pass
             if hasattr(self, "para_spacing_text"):
                 self.para_spacing_text.value = str(self.paragraph_spacing)
@@ -173,8 +177,9 @@ class ThemeRendererMixin:
                     
             if hasattr(self, "reader_text_controls"):
                 for ctrl in self.reader_text_controls:
-                    ctrl.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
-                    try: ctrl.update()
+                    target = ctrl.content if isinstance(ctrl, ft.Container) else ctrl
+                    target.style = ft.TextStyle(height=self.line_height, letter_spacing=self.letter_spacing)
+                    try: target.update()
                     except Exception: pass
             if hasattr(self, "letter_spacing_text"):
                 self.letter_spacing_text.value = f"{self.letter_spacing:.1f}"
@@ -316,9 +321,10 @@ class ThemeRendererMixin:
             
         if hasattr(self, "reader_text_controls"):
             for ctrl in self.reader_text_controls:
-                if ctrl.color != text_c:
-                    ctrl.color = text_c
-                    try: ctrl.update()
+                target = ctrl.content if isinstance(ctrl, ft.Container) else ctrl
+                if getattr(target, "color", None) != text_c:
+                    target.color = text_c
+                    try: target.update()
                     except Exception: pass
 
         if hasattr(self, "inline_next_btn") and self.inline_next_btn:

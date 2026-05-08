@@ -10,6 +10,7 @@ import zipfile
 from datetime import datetime
 import traceback
 import ctypes  # 【新增】必须导入 ctypes 以调用 Windows 底层 API
+import flet_audio as fta
 
 # 💥 终极护盾：获取静态资源的【绝对物理路径】
 if getattr(sys, 'frozen', False):
@@ -42,6 +43,12 @@ from core.tts_manager import TTSManagerMixin
 # ==========================================
 # 0. 跨平台路径寻址与 DLL 强制注册 (针对 Win11 环境修复)
 # ==========================================
+
+# 💥 新增：注册 flet_audio 扩展，让前端认识 Audio 控件
+def main(page: ft.Page):
+    page.add_extension(fta)
+    app = NovelReaderApp(page)
+
 if getattr(sys, 'frozen', False):
     application_path = os.path.dirname(sys.executable)
 else:
